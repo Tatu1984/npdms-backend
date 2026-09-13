@@ -1,0 +1,354 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: npdms-monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'npdms-production'
+        region: 'ap-south-1'
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # NPDMS API pods
+      - job_name: 'npdms-api'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - npdms
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+      # PostgreSQL
+      - job_name: 'postgresql'
+        static_configs:
+          - targets:
+              - postgresql-primary.npdms.svc.cluster.local:9187
+              - postgresql-replica-0.npdms.svc.cluster.local:9187
+              - postgresql-replica-1.npdms.svc.cluster.local:9187
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: (.+):9187
+            target_label: instance
+
+      # Redis
+      - job_name: 'redis'
+        static_configs:
+          - targets:
+              - redis-0.redis-headless.npdms.svc.cluster.local:9121
+              - redis-1.redis-headless.npdms.svc.cluster.local:9121
+              - redis-2.redis-headless.npdms.svc.cluster.local:9121
+              - redis-3.redis-headless.npdms.svc.cluster.local:9121
+              - redis-4.redis-headless.npdms.svc.cluster.local:9121
+              - redis-5.redis-headless.npdms.svc.cluster.local:9121
+
+  alerts.yml: |
+    groups:
+      - name: npdms.rules
+        rules:
+          # API Alerts
+          - alert: NPDMSAPIDown
+            expr: up{job="npdms-api"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NPDMS API instance down"
+              description: "NPDMS API instance {{ $labels.instance }} has been down for more than 1 minute."
+
+          - alert: NPDMSAPIHighLatency
+            expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="npdms-api"}[5m])) by (le)) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "NPDMS API high latency"
+              description: "NPDMS API 95th percentile latency is above 2 seconds."
+
+          - alert: NPDMSAPIHighErrorRate
+            expr: sum(rate(http_requests_total{job="npdms-api", status=~"5.."}[5m])) / sum(rate(http_requests_total{job="npdms-api"}[5m])) > 0.05
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "NPDMS API high error rate"
+              description: "NPDMS API error rate is above 5%."
+
+          # Database Alerts
+          - alert: PostgreSQLDown
+            expr: pg_up == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PostgreSQL instance down"
+              description: "PostgreSQL instance {{ $labels.instance }} is down."
+
+          - alert: PostgreSQLReplicationLag
+            expr: pg_replication_lag > 60
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL replication lag"
+              description: "PostgreSQL replication lag is {{ $value }} seconds."
+
+          - alert: PostgreSQLHighConnections
+            expr: pg_stat_activity_count / pg_settings_max_connections > 0.8
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL high connection usage"
+              description: "PostgreSQL connection usage is above 80%."
+
+          - alert: PostgreSQLDiskSpaceLow
+            expr: pg_database_size_bytes / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql"} > 0.85
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PostgreSQL disk space low"
+              description: "PostgreSQL disk usage is above 85%."
+
+          # Redis Alerts
+          - alert: RedisDown
+            expr: redis_up == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis instance down"
+              description: "Redis instance {{ $labels.instance }} is down."
+
+          - alert: RedisHighMemoryUsage
+            expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Redis high memory usage"
+              description: "Redis memory usage is above 90%."
+
+          - alert: RedisClusterNodeDown
+            expr: redis_cluster_state == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Redis cluster node down"
+              description: "Redis cluster is in a failed state."
+
+          # Security Alerts
+          - alert: HighAuthFailures
+            expr: sum(rate(security_auth_failures_total[5m])) > 10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High authentication failures"
+              description: "More than 10 authentication failures per second detected."
+
+          - alert: SuspiciousActivity
+            expr: sum(rate(security_suspicious_requests_total[5m])) > 5
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Suspicious activity detected"
+              description: "High rate of suspicious requests detected."
+
+          # Backup Alerts
+          - alert: BackupFailed
+            expr: time() - backup_last_success_timestamp > 86400
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Backup failed"
+              description: "No successful backup in the last 24 hours."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: npdms-monitoring
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.47.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=30d'
+            - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
+          ports:
+            - containerPort: 9090
+              name: web
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: web
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: npdms-monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: npdms-monitoring
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: web
+  selector:
+    app.kubernetes.io/name: prometheus
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: npdms-monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: npdms-monitoring

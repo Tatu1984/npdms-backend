@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: npdms
+  labels:
+    app.kubernetes.io/name: npdms
+    app.kubernetes.io/component: infrastructure
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: npdms-monitoring
+  labels:
+    app.kubernetes.io/name: npdms-monitoring
+    app.kubernetes.io/component: monitoring

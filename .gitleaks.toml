@@ -1,0 +1,76 @@
+# Gitleaks configuration for NPDMS
+# https://github.com/gitleaks/gitleaks
+
+title = "NPDMS Gitleaks Configuration"
+
+[extend]
+# Use default gitleaks rules as base
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for NPDMS"
+
+# Allow specific file paths
+paths = [
+    # Config examples and templates
+    '''\.env\.example$''',
+    '''\.env\.template$''',
+    '''\.gitleaks\.toml$''',
+    # Test files
+    '''mock.*\.(go|py)$''',
+    '''_test\.go$''',
+    '''tests/.*\.py$''',
+    # Documentation files (contain example values)
+    '''.*\.md$''',
+    '''docs/.*''',
+    # Infrastructure templates use variable substitution
+    '''docker-compose.*\.yaml$''',
+    '''docker-compose.*\.yml$''',
+    '''deploy/.*''',
+    '''infrastructure/.*''',
+    # Scripts may have examples
+    '''scripts/.*''',
+    # Build outputs (should not be tracked anyway)
+    '''\.next/.*''',
+    '''node_modules/.*''',
+    '''dist/.*''',
+    '''build/.*''',
+]
+
+# Allow specific regex patterns that are known false positives
+regexes = [
+    # Environment variable references (not actual secrets)
+    '''\$\{[A-Z_]+\}''',
+    '''\$[A-Z_]+''',
+    # Template placeholders
+    '''\{\{[a-zA-Z_]+\}\}''',
+    '''<[a-zA-Z-]+>''',
+    '''<your-[a-zA-Z-]+>''',
+    # Placeholder/example patterns
+    '''user:pass@''',
+    '''your[-_]?api[-_]?key''',
+    '''your[-_]?secret''',
+    '''placeholder''',
+    '''example[-_]?password''',
+    '''changeme''',
+    '''xxxxxxxxx+''',
+    '''\*\*\*\*''',
+    # Test/mock data
+    '''test[-_]?secret''',
+    '''mock[-_]?token''',
+    '''fake[-_]?api[-_]?key''',
+    # Regex patterns in code (for parsing URLs)
+    '''\[\^[:\]]+\]''',
+    # Bucket names (not secrets)
+    '''[A-Z_]+BUCKET=[a-zA-Z0-9-]+''',
+]
+
+# Stop words - common words that trigger false positives
+stopwords = [
+    "password",
+    "secret",
+    "token",
+    "example",
+    "placeholder",
+    "npdms-evidence",
+]

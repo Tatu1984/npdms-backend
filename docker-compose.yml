@@ -1,0 +1,476 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: npdms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: npdms
+      POSTGRES_PASSWORD: npdms_secret_2024
+      POSTGRES_DB: npdms
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U npdms -d npdms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: npdms-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # HashiCorp Vault for secrets management
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: npdms-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: npdms-dev-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault_data:/vault/data
+      - ./deploy/vault/config.hcl:/vault/config/config.hcl:ro
+      - ./deploy/vault/policies:/vault/policies:ro
+    command: server -dev
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - security
+      - full
+
+  # MinIO for file storage (evidence photos, documents)
+  minio:
+    image: minio/minio:latest
+    container_name: npdms-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: npdms_admin
+      MINIO_ROOT_PASSWORD: npdms_minio_secret_2024
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Redpanda (Kafka-compatible message broker)
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: npdms-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      - --smp 1
+      - --memory 1G
+      - --mode dev-container
+      - --default-log-level=warn
+    ports:
+      - "19092:19092"   # Kafka external
+      - "18082:18082"   # Pandaproxy external
+      - "18081:18081"   # Schema registry external
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "--exit-when-unhealthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - messaging
+      - full
+
+  # Redpanda Console (Kafka UI)
+  redpanda-console:
+    image: redpandadata/console:latest
+    container_name: npdms-redpanda-console
+    restart: unless-stopped
+    environment:
+      - KAFKA_BROKERS=redpanda:9092
+      - KAFKA_SCHEMAREGISTRY_ENABLED=true
+      - KAFKA_SCHEMAREGISTRY_URLS=http://redpanda:8081
+    ports:
+      - "8085:8080"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    profiles:
+      - messaging
+      - full
+
+  # API Gateway (Go backend)
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: npdms-api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://npdms:npdms_secret_2024@postgres:5432/npdms?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=npdms_admin
+      - MINIO_SECRET_KEY=npdms_minio_secret_2024
+      - JWT_SECRET=${JWT_SECRET:-npdms_jwt_secret_key_change_in_production}
+      - ML_FIR_CLASSIFIER_URL=http://ml-fir-classifier:8001
+      - ML_SEMANTIC_SEARCH_URL=http://ml-semantic-search:8002
+      - ML_CRIME_PREDICTION_URL=http://ml-crime-prediction:8003
+      - PORT=8080
+      - ENV=development
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./services/api:/app
+    profiles:
+      - full
+
+  # ML Service: FIR Classifier
+  ml-fir-classifier:
+    build:
+      context: ./services/ml
+      dockerfile: Dockerfile
+      target: fir_classifier
+    container_name: npdms-ml-fir-classifier
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TRANSFORMERS_CACHE=/app/cache
+    volumes:
+      - ml_models_cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - ml
+      - full
+
+  # ML Service: Semantic Search
+  ml-semantic-search:
+    build:
+      context: ./services/ml
+      dockerfile: Dockerfile
+      target: semantic_search
+    container_name: npdms-ml-semantic-search
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SENTENCE_TRANSFORMERS_HOME=/app/cache
+    volumes:
+      - ml_models_cache:/app/cache
+      - ml_faiss_index:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - ml
+      - full
+
+  # ML Service: Crime Prediction
+  ml-crime-prediction:
+    build:
+      context: ./services/ml
+      dockerfile: Dockerfile
+      target: crime_prediction
+    container_name: npdms-ml-crime-prediction
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - ml
+      - full
+
+  # ML Service: OCR (Evidence Photo Text Extraction)
+  ml-ocr:
+    build:
+      context: ./services/ml
+      dockerfile: Dockerfile
+      target: ocr_service
+    container_name: npdms-ml-ocr
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ml_models_cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - ml
+      - full
+
+  # ML Service: Voice Transcription
+  ml-transcription:
+    build:
+      context: ./services/ml
+      dockerfile: Dockerfile
+      target: transcription
+    container_name: npdms-ml-transcription
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ml_models_cache:/app/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - ml
+      - full
+
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: npdms-neo4j
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=neo4j/npdms_neo4j_2024
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+    ports:
+      - "7474:7474"   # HTTP
+      - "7687:7687"   # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - graph
+      - full
+
+  # OpenSearch for Full-Text Search
+  opensearch:
+    image: opensearchproject/opensearch:2.11.1
+    container_name: npdms-opensearch
+    restart: unless-stopped
+    environment:
+      - cluster.name=npdms-cluster
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'cluster_name'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - search
+      - full
+
+  # OpenSearch Dashboards
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.1
+    container_name: npdms-opensearch-dashboards
+    restart: unless-stopped
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    ports:
+      - "5601:5601"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    profiles:
+      - search
+      - full
+
+  # Monitoring: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: npdms-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    profiles:
+      - monitoring
+      - full
+
+  # Monitoring: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: npdms-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+      - full
+
+  # Monitoring: PostgreSQL Exporter
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: npdms-postgres-exporter
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://npdms:npdms_secret_2024@postgres:5432/npdms?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    profiles:
+      - monitoring
+      - full
+
+  # Monitoring: Redis Exporter
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: npdms-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    profiles:
+      - monitoring
+      - full
+
+  # Monitoring: Node Exporter (System Metrics)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: npdms-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - '/:/host:ro,rslave'
+    profiles:
+      - monitoring
+      - full
+
+volumes:
+  postgres_data:
+  redis_data:
+  vault_data:
+  minio_data:
+  redpanda_data:
+  ml_models_cache:
+  ml_faiss_index:
+  prometheus_data:
+  grafana_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_plugins:
+  opensearch_data:
+
+networks:
+  default:
+    name: npdms-network

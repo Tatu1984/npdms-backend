@@ -1,0 +1,352 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-scripts
+  namespace: npdms
+data:
+  backup-postgresql.sh: |
+    #!/bin/bash
+    set -e
+
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="npdms_backup_${TIMESTAMP}"
+    S3_BUCKET="${S3_BUCKET_BACKUPS:-npdms-backups}"
+    RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+
+    echo "Starting PostgreSQL backup: ${BACKUP_NAME}"
+
+    # Create backup directory
+    mkdir -p /backup
+
+    # Perform pg_dump with custom format for parallel restore
+    pg_dump \
+      -h "${DB_HOST}" \
+      -U "${DB_USER}" \
+      -d "${DB_NAME}" \
+      -Fc \
+      -Z 9 \
+      --verbose \
+      -f "/backup/${BACKUP_NAME}.dump"
+
+    # Calculate checksum
+    sha256sum "/backup/${BACKUP_NAME}.dump" > "/backup/${BACKUP_NAME}.sha256"
+
+    # Create manifest
+    cat > "/backup/${BACKUP_NAME}.manifest.json" << EOF
+    {
+      "backup_name": "${BACKUP_NAME}",
+      "timestamp": "${TIMESTAMP}",
+      "database": "${DB_NAME}",
+      "type": "full",
+      "format": "custom",
+      "compression": "zlib-9"
+    }
+    EOF
+
+    # Upload to S3
+    echo "Uploading to S3: s3://${S3_BUCKET}/postgresql/"
+    aws s3 cp "/backup/${BACKUP_NAME}.dump" "s3://${S3_BUCKET}/postgresql/${BACKUP_NAME}.dump" \
+      --storage-class STANDARD_IA \
+      --metadata "backup-type=postgresql,database=${DB_NAME}"
+
+    aws s3 cp "/backup/${BACKUP_NAME}.sha256" "s3://${S3_BUCKET}/postgresql/${BACKUP_NAME}.sha256"
+    aws s3 cp "/backup/${BACKUP_NAME}.manifest.json" "s3://${S3_BUCKET}/postgresql/${BACKUP_NAME}.manifest.json"
+
+    # Cleanup old backups (local)
+    rm -f /backup/*
+
+    # Cleanup old backups (S3 - keep last RETENTION_DAYS)
+    echo "Cleaning up backups older than ${RETENTION_DAYS} days"
+    aws s3 ls "s3://${S3_BUCKET}/postgresql/" | while read -r line; do
+      file_date=$(echo $line | awk '{print $1}')
+      file_name=$(echo $line | awk '{print $4}')
+      if [ -n "$file_date" ] && [ -n "$file_name" ]; then
+        days_old=$(( ($(date +%s) - $(date -d "$file_date" +%s)) / 86400 ))
+        if [ "$days_old" -gt "$RETENTION_DAYS" ]; then
+          echo "Deleting old backup: $file_name"
+          aws s3 rm "s3://${S3_BUCKET}/postgresql/$file_name"
+        fi
+      fi
+    done
+
+    echo "Backup completed successfully: ${BACKUP_NAME}"
+
+  backup-redis.sh: |
+    #!/bin/bash
+    set -e
+
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="redis_backup_${TIMESTAMP}"
+    S3_BUCKET="${S3_BUCKET_BACKUPS:-npdms-backups}"
+
+    echo "Starting Redis backup: ${BACKUP_NAME}"
+
+    mkdir -p /backup
+
+    # Trigger BGSAVE on all Redis nodes
+    for i in 0 1 2 3 4 5; do
+      redis-cli -h redis-${i}.redis-headless.npdms.svc.cluster.local -a "${REDIS_PASSWORD}" BGSAVE || true
+    done
+
+    # Wait for BGSAVE to complete
+    sleep 30
+
+    # Copy RDB files from each node
+    for i in 0 1 2 3 4 5; do
+      kubectl cp "npdms/redis-${i}:/data/dump.rdb" "/backup/redis-${i}-dump.rdb" || true
+      kubectl cp "npdms/redis-${i}:/data/appendonly.aof" "/backup/redis-${i}-appendonly.aof" || true
+    done
+
+    # Create tarball
+    cd /backup
+    tar -czvf "${BACKUP_NAME}.tar.gz" *.rdb *.aof 2>/dev/null || tar -czvf "${BACKUP_NAME}.tar.gz" *.rdb
+
+    # Upload to S3
+    aws s3 cp "/backup/${BACKUP_NAME}.tar.gz" "s3://${S3_BUCKET}/redis/${BACKUP_NAME}.tar.gz" \
+      --storage-class STANDARD_IA
+
+    # Cleanup
+    rm -rf /backup/*
+
+    echo "Redis backup completed: ${BACKUP_NAME}"
+
+  backup-evidence.sh: |
+    #!/bin/bash
+    set -e
+
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="evidence_sync_${TIMESTAMP}"
+    SOURCE_BUCKET="${S3_BUCKET_EVIDENCE:-npdms-evidence}"
+    BACKUP_BUCKET="${S3_BUCKET_BACKUPS:-npdms-backups}"
+
+    echo "Starting evidence sync: ${BACKUP_NAME}"
+
+    # Sync evidence bucket to backup location
+    aws s3 sync \
+      "s3://${SOURCE_BUCKET}/" \
+      "s3://${BACKUP_BUCKET}/evidence/" \
+      --storage-class GLACIER_IR \
+      --only-show-errors
+
+    echo "Evidence sync completed"
+
+  restore-postgresql.sh: |
+    #!/bin/bash
+    set -e
+
+    BACKUP_NAME="${1:-}"
+    S3_BUCKET="${S3_BUCKET_BACKUPS:-npdms-backups}"
+
+    if [ -z "$BACKUP_NAME" ]; then
+      echo "Usage: restore-postgresql.sh <backup_name>"
+      echo "Available backups:"
+      aws s3 ls "s3://${S3_BUCKET}/postgresql/" | grep ".dump" | awk '{print $4}'
+      exit 1
+    fi
+
+    echo "Starting PostgreSQL restore from: ${BACKUP_NAME}"
+
+    mkdir -p /restore
+
+    # Download backup
+    aws s3 cp "s3://${S3_BUCKET}/postgresql/${BACKUP_NAME}" "/restore/${BACKUP_NAME}"
+    aws s3 cp "s3://${S3_BUCKET}/postgresql/${BACKUP_NAME%.dump}.sha256" "/restore/${BACKUP_NAME%.dump}.sha256"
+
+    # Verify checksum
+    cd /restore
+    sha256sum -c "${BACKUP_NAME%.dump}.sha256"
+
+    # Restore database
+    echo "Restoring database..."
+    pg_restore \
+      -h "${DB_HOST}" \
+      -U "${DB_USER}" \
+      -d "${DB_NAME}" \
+      --clean \
+      --if-exists \
+      --verbose \
+      --jobs=4 \
+      "/restore/${BACKUP_NAME}"
+
+    # Cleanup
+    rm -rf /restore/*
+
+    echo "Restore completed successfully"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgresql-backup
+  namespace: npdms
+  labels:
+    app.kubernetes.io/name: postgresql-backup
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 7200  # 2 hours
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgresql-backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-sa
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command: ["/bin/bash", "/scripts/backup-postgresql.sh"]
+              env:
+                - name: DB_HOST
+                  value: postgresql-primary.npdms.svc.cluster.local
+                - name: DB_USER
+                  value: npdms
+                - name: DB_NAME
+                  value: npdms
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: DB_PASSWORD
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: S3_ACCESS_KEY
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: S3_SECRET_KEY
+                - name: S3_BUCKET_BACKUPS
+                  value: npdms-backups
+                - name: BACKUP_RETENTION_DAYS
+                  value: "30"
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "2Gi"
+                  cpu: "1000m"
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: backup-volume
+                  mountPath: /backup
+          volumes:
+            - name: scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backup-volume
+              emptyDir:
+                sizeLimit: 100Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgresql-wal-backup
+  namespace: npdms
+  labels:
+    app.kubernetes.io/name: postgresql-wal-backup
+spec:
+  schedule: "*/15 * * * *"  # Every 15 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgresql-wal-backup
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-sa
+          containers:
+            - name: wal-backup
+              image: postgres:15-alpine
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  # Archive WAL files to S3
+                  pg_receivewal \
+                    -h postgresql-primary.npdms.svc.cluster.local \
+                    -U replicator \
+                    -D /wal \
+                    --slot=wal_backup \
+                    --compress=9 \
+                    --synchronous &
+
+                  sleep 300  # Run for 5 minutes
+
+                  # Upload archived WALs to S3
+                  for wal in /wal/*.gz; do
+                    if [ -f "$wal" ]; then
+                      aws s3 cp "$wal" "s3://${S3_BUCKET_BACKUPS}/postgresql/wal/"
+                      rm "$wal"
+                    fi
+                  done
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: DB_PASSWORD
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: S3_ACCESS_KEY
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: npdms-secrets
+                      key: S3_SECRET_KEY
+                - name: S3_BUCKET_BACKUPS
+                  value: npdms-backups
+              volumeMounts:
+                - name: wal-volume
+                  mountPath: /wal
+          volumes:
+            - name: wal-volume
+              emptyDir:
+                sizeLimit: 10Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-sa
+  namespace: npdms
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backup-role
+  namespace: npdms
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec"]
+    verbs: ["get", "list", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-rolebinding
+  namespace: npdms
+subjects:
+  - kind: ServiceAccount
+    name: backup-sa
+    namespace: npdms
+roleRef:
+  kind: Role
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io

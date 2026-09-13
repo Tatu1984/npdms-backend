@@ -1,0 +1,91 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'npdms-production'
+    environment: 'mdc'
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - 'alerts.yml'
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Go API metrics
+  - job_name: 'npdms-api'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['api:8080']
+        labels:
+          service: 'api'
+          app: 'npdms'
+
+  # PostgreSQL metrics (via postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'postgres'
+          app: 'npdms'
+
+  # Redis metrics (via redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+        labels:
+          service: 'redis'
+          app: 'npdms'
+
+  # MinIO metrics
+  - job_name: 'minio'
+    metrics_path: '/minio/v2/metrics/cluster'
+    scheme: http
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          service: 'minio'
+          app: 'npdms'
+
+  # ML Services metrics
+  - job_name: 'ml-fir-classifier'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ml-fir-classifier:8001']
+        labels:
+          service: 'ml-classifier'
+          app: 'npdms'
+
+  - job_name: 'ml-semantic-search'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ml-semantic-search:8002']
+        labels:
+          service: 'ml-search'
+          app: 'npdms'
+
+  - job_name: 'ml-crime-prediction'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['ml-crime-prediction:8003']
+        labels:
+          service: 'ml-prediction'
+          app: 'npdms'
+
+  # Node exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'node'
+          app: 'npdms'
