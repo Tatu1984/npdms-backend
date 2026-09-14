@@ -109,12 +109,22 @@ func SessionValidationMiddleware(rdb *redis.Client, config ZeroTrustConfig) gin.
 			return
 		}
 
+		// Session identity must be stable for the life of a sign-in. Minting a
+		// fresh random token whenever the client omits X-Session-Token made every
+		// request register a new session, so any client that does not echo the
+		// header back — curl, and the web app — exhausted the concurrent-session
+		// cap within a handful of calls and locked itself out.
+		//
+		// The bearer token already identifies the sign-in, so the session id is
+		// derived from it: one login is one session, however many requests it makes.
 		sessionToken := c.GetHeader("X-Session-Token")
 		if sessionToken == "" {
-			// Generate new session token
-			sessionToken = generateSessionToken()
-			c.Header("X-Session-Token", sessionToken)
+			sessionToken = sessionIDFromBearer(c.GetHeader("Authorization"))
 		}
+		if sessionToken == "" {
+			sessionToken = generateSessionToken()
+		}
+		c.Header("X-Session-Token", sessionToken)
 
 		// Validate session
 		sessionKey := fmt.Sprintf("session:%s:%s", userID, sessionToken)
@@ -145,6 +155,32 @@ func SessionValidationMiddleware(rdb *redis.Client, config ZeroTrustConfig) gin.
 		c.Set("sessionToken", sessionToken)
 		c.Next()
 	}
+}
+
+// sessionIDFromBearer derives a stable, non-reversible session id from the
+// access token. It never returns the token itself, so the id can be stored in
+// Redis and echoed in a response header without exposing the credential.
+func sessionIDFromBearer(authorization string) string {
+	const prefix = "Bearer "
+	if len(authorization) <= len(prefix) || !strings.EqualFold(authorization[:len(prefix)], prefix) {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(authorization[len(prefix):]))
+	return hex.EncodeToString(sum[:16])
+}
+
+// ReleaseSession removes a session from the user's active set. Called on logout
+// so the concurrent-session cap reflects sign-ins that have actually ended.
+func ReleaseSession(ctx context.Context, rdb *redis.Client, userID, authorizationHeader string) {
+	if rdb == nil {
+		return
+	}
+	sessionToken := sessionIDFromBearer(authorizationHeader)
+	if sessionToken == "" {
+		return
+	}
+	rdb.SRem(ctx, fmt.Sprintf("user_sessions:%s", userID), sessionToken)
+	rdb.Del(ctx, fmt.Sprintf("session:%s:%s", userID, sessionToken))
 }
 
 // DeviceVerificationMiddleware verifies device consistency

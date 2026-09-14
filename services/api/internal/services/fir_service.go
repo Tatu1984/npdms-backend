@@ -55,6 +55,12 @@ func (s *FIRService) Create(ctx context.Context, fir *models.FIR, userID uuid.UU
 	fir.RegisteredBy = &userID
 	fir.Status = models.FIRStatusRegistered
 
+	// Priority is a Postgres enum with no empty member, so an omitted value has
+	// to become a real one here rather than reaching the insert as "".
+	if fir.Priority == "" {
+		fir.Priority = models.PriorityMedium
+	}
+
 	if err := s.firRepo.Create(ctx, fir); err != nil {
 		return err
 	}

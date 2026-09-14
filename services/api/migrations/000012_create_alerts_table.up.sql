@@ -19,15 +19,17 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 
 -- Create indexes for alerts
-CREATE INDEX idx_alerts_type ON alerts(type);
-CREATE INDEX idx_alerts_scope ON alerts(scope);
-CREATE INDEX idx_alerts_acknowledged ON alerts(acknowledged);
-CREATE INDEX idx_alerts_issued_at ON alerts(issued_at);
-CREATE INDEX idx_alerts_expires_at ON alerts(expires_at);
-CREATE INDEX idx_alerts_station_id ON alerts(station_id);
-CREATE INDEX idx_alerts_priority ON alerts(priority);
-CREATE INDEX idx_alerts_active ON alerts(expires_at) WHERE expires_at > NOW();
-CREATE INDEX idx_alerts_unacknowledged ON alerts(acknowledged, expires_at) WHERE acknowledged = FALSE AND expires_at > NOW();
+CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(type);
+CREATE INDEX IF NOT EXISTS idx_alerts_scope ON alerts(scope);
+CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);
+CREATE INDEX IF NOT EXISTS idx_alerts_issued_at ON alerts(issued_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_expires_at ON alerts(expires_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_station_id ON alerts(station_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_priority ON alerts(priority);
+-- NOW() cannot appear in an index predicate: the index would go stale as the
+-- clock advances. Index the column and let the planner apply the time filter.
+CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(expires_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_unacknowledged ON alerts(acknowledged, expires_at) WHERE acknowledged = FALSE;
 
 -- Create updated_at trigger for alerts
 CREATE TRIGGER update_alerts_updated_at

@@ -1,0 +1,939 @@
+openapi: 3.1.0
+
+info:
+  title: NPDMS — Kolkata Police Digital Intelligence Platform
+  version: "1.0.0"
+  description: |
+    The platform API. This is the system of record; every client reaches the
+    platform only through it.
+
+    This document specifies the endpoints whose behaviour is settled. Others are
+    implemented and callable but still moving as each phase is made functional —
+    see `docs/api/routes.txt` for the full registered surface, and
+    `docs/api/CONTRACT.md` for the conventions every endpoint follows.
+  contact:
+    name: Platform team
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+  - url: http://{edgeServer}:8080/api/v1
+    description: Edge server on the station network
+    variables:
+      edgeServer:
+        default: npdms-edge
+        description: Hostname or address of the edge server
+
+tags:
+  - name: Authentication
+  - name: Investigation
+    description: Phase 01 — the investigation workspace
+  - name: Intelligence
+    description: Server-side lookups, audited and centrally controlled
+  - name: Operations
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: admin }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  refreshToken: { type: string }
+                  expiresIn: { type: integer, example: 3600 }
+                  user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Sign out and release the session
+      description: |
+        Blacklists the token and frees the session slot. A client that does not
+        call this holds a slot until the token expires, and an officer can reach
+        the concurrent-session cap across their own stale sessions.
+      security: []
+      responses:
+        "200":
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        "200":
+          description: New access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /investigation:
+    get:
+      tags: [Investigation]
+      summary: List investigation workspaces
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1, minimum: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: search, in: query, schema: { type: string }, description: Matches case number, title or offence }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/WorkspaceStatus" } }
+        - { name: priority, in: query, schema: { $ref: "#/components/schemas/Severity" } }
+        - { name: stationId, in: query, schema: { type: string, format: uuid } }
+        - name: mine
+          in: query
+          schema: { type: integer, enum: [1] }
+          description: Restrict to workspaces the caller investigates or supervises
+      responses:
+        "200":
+          description: A page of workspaces
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Workspace" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+    post:
+      tags: [Investigation]
+      summary: Open a workspace
+      description: |
+        Creating a workspace immediately runs the case rules, so the response
+        already reflects the gaps the new file has.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [caseNumber, title]
+              properties:
+                caseNumber: { type: string, example: PS-BHW/2024/0412 }
+                title: { type: string }
+                titleBn: { type: string, description: Bengali title }
+                firId: { type: string, format: uuid }
+                caseId: { type: string, format: uuid }
+                offence: { type: string }
+                sections:
+                  type: array
+                  items: { type: string }
+                  example: ["BNS 309", "BNS 310"]
+                stationId: { type: string, format: uuid }
+                ioId: { type: string, format: uuid }
+                supervisorId: { type: string, format: uuid }
+                priority: { $ref: "#/components/schemas/Severity" }
+                nextCourtDate: { type: string, format: date }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: A workspace already exists for that case number
+
+  /investigation/{id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: Get one workspace
+      responses:
+        "200":
+          description: The workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Investigation]
+      summary: Update a workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                offence: { type: string }
+                sections: { type: array, items: { type: string } }
+                status: { $ref: "#/components/schemas/WorkspaceStatus" }
+                priority: { $ref: "#/components/schemas/Severity" }
+                nextCourtDate: { type: string, format: date }
+                ioId: { type: string, format: uuid }
+                supervisorId: { type: string, format: uuid }
+                reassignReason:
+                  type: string
+                  description: Recorded in the audit trail when the officer changes
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+
+  /investigation/{id}/brief:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: Assemble the case brief
+      description: |
+        A compilation of what has been recorded — chronology, persons, evidence,
+        contradictions, open gaps and open tasks. Not generated prose: every
+        line corresponds to a stored record.
+      responses:
+        "200":
+          description: The brief
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspace: { $ref: "#/components/schemas/Workspace" }
+                  timeline: { type: array, items: { $ref: "#/components/schemas/TimelineEntry" } }
+                  persons: { type: array, items: { $ref: "#/components/schemas/Person" } }
+                  contradictions: { type: array, items: { $ref: "#/components/schemas/Contradiction" } }
+                  gaps: { type: array, items: { $ref: "#/components/schemas/Gap" } }
+                  openTasks: { type: array, items: { $ref: "#/components/schemas/Task" } }
+                  generatedAt: { type: string, format: date-time }
+
+  /investigation/{id}/persons:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: List persons on the case
+      responses:
+        "200":
+          description: Persons
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Person" } }
+    post:
+      tags: [Investigation]
+      summary: Add a person
+      description: Adding a witness opens a gap until a statement is recorded against them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: { type: string }
+                nameBn: { type: string }
+                role: { $ref: "#/components/schemas/PersonRole" }
+                age: { type: integer }
+                gender: { type: string }
+                address: { type: string }
+                phone: { type: string }
+                aliases: { type: array, items: { type: string } }
+                vehicles: { type: array, items: { type: string } }
+                riskNote: { type: string }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Person" }
+
+  /investigation/{id}/persons/{personId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - { name: personId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Investigation]
+      summary: Update a person
+      description: |
+        Raising `statementsCount` is what records that a statement has been
+        taken, and is what closes the witness-statement gap on the next rule run.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: "#/components/schemas/PersonRole" }
+                statementsCount: { type: integer, minimum: 0 }
+                phone: { type: string }
+                address: { type: string }
+                riskNote: { type: string }
+      responses:
+        "200":
+          description: The updated person list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Person" } }
+    delete:
+      tags: [Investigation]
+      summary: Remove a person
+      responses:
+        "204": { description: Removed }
+
+  /investigation/{id}/timeline:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: Get the chronology
+      responses:
+        "200":
+          description: Entries in time order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/TimelineEntry" } }
+    post:
+      tags: [Investigation]
+      summary: Add a chronology entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [occurredAt, title]
+              properties:
+                occurredAt: { type: string, format: date-time }
+                title: { type: string }
+                titleBn: { type: string }
+                detail: { type: string }
+                kind: { $ref: "#/components/schemas/TimelineKind" }
+                sources:
+                  type: array
+                  items: { $ref: "#/components/schemas/SourceInput" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TimelineEntry" }
+
+  /investigation/{id}/timeline/{entryId}/review:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - { name: entryId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Investigation]
+      summary: Accept or reject an entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string, enum: [accepted, rejected] }
+                note: { type: string }
+      responses:
+        "200":
+          description: Reviewed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  reviewState: { $ref: "#/components/schemas/ReviewState" }
+
+  /investigation/{id}/contradictions:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: List recorded contradictions
+      responses:
+        "200":
+          description: Contradictions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Contradiction" } }
+    post:
+      tags: [Investigation]
+      summary: Record a contradiction between two sources
+      description: Recorded as an investigative lead. It stays `pending` until an officer accepts it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, statementALabel, statementAClaim, statementBLabel, statementBClaim]
+              properties:
+                title: { type: string }
+                statementALabel: { type: string }
+                statementAClaim: { type: string }
+                statementBLabel: { type: string }
+                statementBClaim: { type: string }
+                severity: { $ref: "#/components/schemas/Severity" }
+                sources: { type: array, items: { $ref: "#/components/schemas/SourceInput" } }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contradiction" }
+
+  /investigation/{id}/gaps:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: List open gaps
+      parameters:
+        - { name: includeClosed, in: query, schema: { type: integer, enum: [1] } }
+      responses:
+        "200":
+          description: Gaps, most severe first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Gap" } }
+    post:
+      tags: [Investigation]
+      summary: Record a gap an officer has identified
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                detail: { type: string }
+                kind: { $ref: "#/components/schemas/GapKind" }
+                severity: { $ref: "#/components/schemas/Severity" }
+                dueBy: { type: string, format: date }
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Gap" }
+
+  /investigation/{id}/gaps/recompute:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      tags: [Investigation]
+      summary: Re-run the case rules
+      description: |
+        Applies every deterministic rule to the current record. A rule that now
+        holds raises or updates its gap; one that no longer holds closes it.
+        Gaps an officer created are never touched, and a dismissed gap stays
+        dismissed. Safe to call at any time; it is called automatically whenever
+        the record changes.
+      responses:
+        "200":
+          description: The open gaps after the run
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Gap" } }
+
+  /investigation/{id}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: List tasks
+      responses:
+        "200":
+          description: Tasks, unfinished first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Task" } }
+    post:
+      tags: [Investigation]
+      summary: Raise a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                detail: { type: string }
+                assigneeId: { type: string, format: uuid }
+                dueDate: { type: string, format: date }
+                priority: { $ref: "#/components/schemas/Severity" }
+                gapId: { type: string, format: uuid, description: Gap this task is meant to close }
+                contradictionId: { type: string, format: uuid }
+      responses:
+        "201":
+          description: Raised
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+
+  /investigation/{id}/tasks/{taskId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Investigation]
+      summary: Update a task
+      description: |
+        Setting `status` to `done` re-runs the case rules. A gap the officer
+        raised is closed with the task; a rule-derived gap closes only if its
+        condition is genuinely resolved, so completing the task does not let the
+        file claim to be complete while the material is still missing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                assigneeId: { type: string, format: uuid }
+                dueDate: { type: string, format: date }
+                priority: { $ref: "#/components/schemas/Severity" }
+                status: { type: string, enum: [open, in-progress, blocked, done] }
+                completionNote: { type: string }
+      responses:
+        "200":
+          description: The updated task list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Task" } }
+
+  /investigation/{id}/evidence:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [Investigation]
+      summary: List evidence linked to the workspace
+      responses:
+        "200":
+          description: Linked evidence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        evidenceId: { type: string, format: uuid }
+                        evidenceNumber: { type: string }
+                        description: { type: string }
+                        note: { type: string }
+                        linkedAt: { type: string, format: date-time }
+    post:
+      tags: [Investigation]
+      summary: Link an evidence item
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evidenceId]
+              properties:
+                evidenceId: { type: string, format: uuid }
+                note: { type: string }
+      responses:
+        "200":
+          description: The updated link list
+
+  /intel/ip/{ip}:
+    get:
+      tags: [Intelligence]
+      summary: Resolve an IP address
+      description: |
+        Performed by the server, not the client: egress is controlled, the query
+        is written to the audit trail, and an air-gapped deployment can disable
+        it centrally.
+
+        A private or loopback address is classified locally and never sent to an
+        external provider. When lookup is unavailable the response carries
+        `available: false` with a reason, rather than failing — an investigator
+        needs to distinguish "could not ask" from "no such registration".
+      parameters:
+        - { name: ip, in: path, required: true, schema: { type: string }, example: 103.21.58.12 }
+        - name: purpose
+          in: query
+          schema: { type: string }
+          description: Case or authorisation reference, recorded with the query
+      responses:
+        "200":
+          description: What is known about the address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IPIntel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /health:
+    get:
+      tags: [Operations]
+      summary: Liveness
+      security: []
+      responses:
+        "200":
+          description: The process is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: healthy }
+                  service: { type: string }
+                  timestamp: { type: string, format: date-time }
+
+  /ready:
+    get:
+      tags: [Operations]
+      summary: Readiness
+      description: Reports whether the database and Redis are reachable. Use for load-balancer checks.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+                  checks:
+                    type: object
+                    properties:
+                      database: { type: string }
+                      redis: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    WorkspaceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Investigation workspace id
+
+  responses:
+    BadRequest:
+      description: Malformed or failing validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, invalid or expired token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such record, or not visible to this officer
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, message, code]
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable slug. Branch on this, never on `message`.
+          example: validation_error
+        message: { type: string, description: For a person; may be reworded at any time }
+        code: { type: integer, example: 400 }
+
+    Page:
+      type: object
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        totalPages: { type: integer }
+
+    Severity:
+      type: string
+      enum: [low, medium, high, critical]
+
+    ReviewState:
+      type: string
+      enum: [pending, accepted, rejected]
+
+    Origin:
+      type: string
+      enum: [officer, supervisor, derived, ai]
+      description: |
+        Who or what produced the record. `derived` means a deterministic rule,
+        named in `ruleKey`. `ai` means a model suggested it and it must be
+        presented as advisory and reviewed before being acted on.
+
+    WorkspaceStatus:
+      type: string
+      enum: [active, supervisory-review, chargesheet, closed]
+
+    PersonRole:
+      type: string
+      enum: [accused, suspect, witness, complainant, victim]
+
+    TimelineKind:
+      type: string
+      enum: [movement, communication, incident, transaction, detection, report]
+
+    GapKind:
+      type: string
+      enum: [witness, forensic, timeline, document, digital, seizure]
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        name: { type: string }
+        role: { type: string, example: INSPECTOR }
+        badgeNumber: { type: string }
+        stationId: { type: string, format: uuid }
+        stationName: { type: string }
+
+    Workspace:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        caseNumber: { type: string }
+        firNumber: { type: string }
+        title: { type: string }
+        titleBn: { type: string }
+        offence: { type: string }
+        sections: { type: array, items: { type: string } }
+        stationName: { type: string }
+        ioName: { type: string }
+        supervisorName: { type: string }
+        status: { $ref: "#/components/schemas/WorkspaceStatus" }
+        priority: { $ref: "#/components/schemas/Severity" }
+        registeredOn: { type: string, format: date }
+        nextCourtDate: { type: string, format: date }
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Computed by the server from tasks completed and gaps outstanding. Do not recompute client-side.
+        counts:
+          type: object
+          description: Computed on read, so it cannot drift from the sub-resources.
+          properties:
+            evidence: { type: integer }
+            witnesses: { type: integer }
+            persons: { type: integer }
+            timeline: { type: integer }
+            contradictions: { type: integer }
+            gaps: { type: integer }
+            openTasks: { type: integer }
+            totalTasks: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Person:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        nameBn: { type: string }
+        aliases: { type: array, items: { type: string } }
+        role: { $ref: "#/components/schemas/PersonRole" }
+        age: { type: integer }
+        address: { type: string }
+        phone: { type: string }
+        vehicles: { type: array, items: { type: string } }
+        riskNote: { type: string }
+        statementsCount:
+          type: integer
+          description: Statements recorded under BNSS 180. A witness with none holds a gap open.
+
+    SourceInput:
+      type: object
+      required: [label]
+      properties:
+        label: { type: string, example: Showroom DVR CH-01 }
+        type:
+          type: string
+          enum: [document, statement, cctv, call, transaction, forensic, circular]
+        locator: { type: string, description: Timestamp, page or row within the source }
+        evidenceId: { type: string, format: uuid }
+
+    Source:
+      allOf:
+        - $ref: "#/components/schemas/SourceInput"
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+
+    TimelineEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        title: { type: string }
+        titleBn: { type: string }
+        detail: { type: string }
+        kind: { $ref: "#/components/schemas/TimelineKind" }
+        origin: { $ref: "#/components/schemas/Origin" }
+        confidence: { type: number, minimum: 0, maximum: 1, description: Present only when origin is ai }
+        reviewState: { $ref: "#/components/schemas/ReviewState" }
+        sources: { type: array, items: { $ref: "#/components/schemas/Source" } }
+
+    Contradiction:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        statementALabel: { type: string }
+        statementAClaim: { type: string }
+        statementBLabel: { type: string }
+        statementBClaim: { type: string }
+        severity: { $ref: "#/components/schemas/Severity" }
+        origin: { $ref: "#/components/schemas/Origin" }
+        reviewState: { $ref: "#/components/schemas/ReviewState" }
+        resolutionNote: { type: string }
+        sources: { type: array, items: { $ref: "#/components/schemas/Source" } }
+
+    Gap:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ruleKey:
+          type: string
+          description: |
+            Present when a deterministic rule raised this gap. The rule closes it
+            automatically once its condition no longer holds.
+          example: witness-statement-missing
+        title: { type: string }
+        titleBn: { type: string }
+        detail: { type: string, description: States what the rule examined }
+        kind: { $ref: "#/components/schemas/GapKind" }
+        severity: { $ref: "#/components/schemas/Severity" }
+        origin: { $ref: "#/components/schemas/Origin" }
+        status: { type: string, enum: [open, closed, dismissed] }
+        dueBy: { type: string, format: date }
+
+    Task:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        gapId: { type: string, format: uuid }
+        contradictionId: { type: string, format: uuid }
+        title: { type: string }
+        detail: { type: string }
+        assigneeId: { type: string, format: uuid }
+        assigneeName: { type: string }
+        dueDate: { type: string, format: date }
+        priority: { $ref: "#/components/schemas/Severity" }
+        status: { type: string, enum: [open, in-progress, blocked, done] }
+        origin: { $ref: "#/components/schemas/Origin" }
+        completionNote: { type: string }
+        completedAt: { type: string, format: date-time }
+
+    IPIntel:
+      type: object
+      properties:
+        ip: { type: string }
+        version: { type: string, enum: [IPv4, IPv6] }
+        city: { type: string }
+        region: { type: string }
+        country: { type: string }
+        countryCode: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        timezone: { type: string }
+        asn: { type: string }
+        organisation: { type: string }
+        isPrivate: { type: boolean, description: Classified locally; never sent to an external provider }
+        isLoopback: { type: boolean }
+        source: { type: string, description: Where the answer came from, for provenance }
+        retrievedAt: { type: string, format: date-time }
+        cached: { type: boolean }
+        available:
+          type: boolean
+          description: False when the lookup could not be made. Distinguish this from an address having no registration.
+        note: { type: string }

@@ -1,0 +1,129 @@
+# NPDMS — single-node edge deployment (MDC / AI Edge server)
+#
+# Everything the platform needs on one box: API, Postgres, Redis, object
+# storage. No cloud dependency, no external database, no message bus.
+#
+# The repository root also carries a docker-compose.yml with Vault, Redpanda,
+# Neo4j, OpenSearch and the ML services. That file describes the full research
+# stack; it is not what an edge server should run. Use this one.
+#
+#   cp .env.example .env      # then edit the secrets
+#   docker compose up -d
+#   docker compose exec api /app/api --version
+#
+# Images are pinned by digest-friendly tags so a box can be provisioned from a
+# local registry mirror without reaching the internet.
+
+name: npdms-edge
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-npdms}
+      POSTGRES_USER: ${POSTGRES_USER:-npdms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      # Tuned for an edge box rather than a shared server.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Bootstrap SQL is mounted read-only and applied by scripts/bootstrap-db.sh,
+      # not by the image's entrypoint — the migration chain needs two passes.
+      - ../../services/db/init:/opt/npdms/db-init:ro
+      - ../../services/api/migrations:/opt/npdms/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-npdms} -d ${POSTGRES_DB:-npdms}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Data stays on the box. Never expose Postgres beyond the host.
+    ports:
+      - "127.0.0.1:5432:5432"
+    shm_size: 256mb
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-512mb}
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
+  api:
+    build:
+      context: ../../services/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-npdms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-npdms}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-npdms}
+      MINIO_USE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      PORT: "8080"
+      ENV: ${ENV:-production}
+      GIN_MODE: release
+      MAX_CONCURRENT_SESSIONS: ${MAX_CONCURRENT_SESSIONS:-5}
+      # Disable on an air-gapped box: the API then reports lookups as
+      # unavailable rather than each client failing on its own.
+      IP_INTEL_ENABLED: ${IP_INTEL_ENABLED:-true}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    # Bind to the host interface so the station LAN can reach the API. Put a
+    # reverse proxy with TLS in front before anything leaves the building.
+    ports:
+      - "${API_BIND:-0.0.0.0}:8080:8080"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local

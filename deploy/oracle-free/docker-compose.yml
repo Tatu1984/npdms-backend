@@ -1,0 +1,143 @@
+# NPDMS — Oracle Cloud Always Free (VM.Standard.E2.1.Micro)
+#
+# One OCPU-eighth and 1 GB of RAM. That is a demonstration and staging box, not
+# a deployment for live case data — use `deploy/edge/` for the MDC server.
+#
+# What is different from the edge profile, and why:
+#
+#   - No MinIO. Evidence files go on the local disk through the filesystem
+#     storage backend, which behaves identically and saves roughly 200 MB.
+#   - Plain Postgres instead of PostGIS. Only the traffic hotspot index needs
+#     the extension, and that index is reported as skipped rather than failing.
+#   - Postgres and Redis are tuned down hard. The defaults assume a machine with
+#     memory to spare; this one has none.
+#   - Memory limits are declared per service, so one container cannot take the
+#     whole box down with it.
+#
+# Budget, roughly:
+#   postgres ~180 MB · redis ~80 MB · api ~60 MB · docker ~80 MB · OS ~150 MB
+#   ≈ 550 MB of 1 GB, with the 2 GB swapfile from setup.sh as the safety net.
+
+name: npdms-free
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-npdms}
+      POSTGRES_USER: ${POSTGRES_USER:-npdms}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      # Sized for 1 GB total, not for this container alone.
+      - -c
+      - shared_buffers=96MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - max_connections=25
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=80MB
+      # The API pool is small; more parallelism would only add memory pressure.
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - max_worker_processes=4
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-npdms} -d ${POSTGRES_DB:-npdms}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    ports:
+      - "127.0.0.1:5432:5432"
+    shm_size: 64mb
+    mem_limit: 320m
+    memswap_limit: 640m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory ${REDIS_MAXMEMORY:-64mb}
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    # Redis here holds sessions and rate-limit counters, both of which are
+    # rebuildable. Persistence is switched off to save memory and disk churn;
+    # losing it signs everyone out and costs nothing else.
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
+    mem_limit: 96m
+
+  api:
+    build:
+      context: ../../services/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-npdms}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-npdms}?sslmode=disable
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      CUSTODY_SIGNING_KEY: ${CUSTODY_SIGNING_KEY:?CUSTODY_SIGNING_KEY must be set}
+
+      # Evidence files on local disk — no object store to run.
+      STORAGE_BACKEND: filesystem
+      STORAGE_PATH: /data/evidence
+
+      # MinIO is absent. The API already degrades gracefully, but these are set
+      # so nothing spends startup time reaching for a host that is not there.
+      MINIO_ENDPOINT: disabled
+      MINIO_ACCESS_KEY: disabled
+      MINIO_SECRET_KEY: disabled
+
+      PORT: "8080"
+      ENV: ${ENV:-staging}
+      GIN_MODE: release
+      MAX_CONCURRENT_SESSIONS: ${MAX_CONCURRENT_SESSIONS:-5}
+      IP_INTEL_ENABLED: ${IP_INTEL_ENABLED:-true}
+
+      # Keep the Go heap modest on a 1 GB box.
+      GOMEMLIMIT: 192MiB
+      GOGC: "50"
+    volumes:
+      - evidence_data:/data/evidence
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    ports:
+      # Bound to loopback by default. Put a TLS proxy in front rather than
+      # exposing the API directly; set API_BIND=0.0.0.0 only for a quick demo.
+      - "${API_BIND:-127.0.0.1}:8080:8080"
+    mem_limit: 256m
+
+volumes:
+  postgres_data:
+    driver: local
+  evidence_data:
+    driver: local

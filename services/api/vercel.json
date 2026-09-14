@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "go build -ldflags='-s -w' -o $VERCEL_OUTPUT_FILE .",
+  "regions": ["bom1"],
+  "env": {
+    "STORAGE_BACKEND": "filesystem",
+    "STORAGE_PATH": "/tmp/evidence",
+    "MINIO_ENDPOINT": "disabled",
+    "MINIO_ACCESS_KEY": "disabled",
+    "MINIO_SECRET_KEY": "disabled",
+    "ENV": "production",
+    "GIN_MODE": "release",
+    "IP_INTEL_ENABLED": "true"
+  }
+}

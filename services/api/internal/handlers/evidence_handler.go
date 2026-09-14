@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -74,6 +75,9 @@ func (h *EvidenceHandler) Create(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
 	if err := h.evidenceService.Create(c.Request.Context(), &evidence, userID); err != nil {
+		// The cause is logged rather than discarded: a swallowed error here is
+		// indistinguishable from a validation problem, and costs a debugging session.
+		log.Printf("evidence create failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "creation_failed",
 			Message: "Failed to create evidence",

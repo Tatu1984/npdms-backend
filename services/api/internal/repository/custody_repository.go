@@ -1,0 +1,437 @@
+package repository
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/npdms/api/internal/models"
+)
+
+// CustodyRepository backs Phase 02.
+type CustodyRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewCustodyRepository(db *pgxpool.Pool) *CustodyRepository {
+	return &CustodyRepository{db: db}
+}
+
+const evidenceSelect = `
+	SELECT e.id, e.evidence_number, e.case_id, e.fir_id, e.evidence_type::text, e.description,
+	       e.collection_location, e.collection_date, e.collected_by, COALESCE(cb.name, ''),
+	       e.storage_location, e.container_type, e.seal_number, e.condition, e.status::text,
+	       e.object_key, e.original_filename, e.content_type, e.file_size, e.storage_backend,
+	       e.sha256, e.hash_algorithm, e.uploaded_by, COALESCE(ub.name, ''), e.uploaded_at,
+	       e.integrity_state, e.last_verified_at, e.blockchain_anchor_tx,
+	       e.created_at, e.updated_at,
+	       (SELECT COUNT(*) FROM evidence_custody c WHERE c.evidence_id = e.id) AS transfers,
+	       COALESCE((SELECT COALESCE(u.name, c.to_location)
+	                 FROM evidence_custody c
+	                 LEFT JOIN users u ON c.to_user = u.id
+	                 WHERE c.evidence_id = e.id
+	                 ORDER BY c.sequence_number DESC NULLS LAST, c.created_at DESC
+	                 LIMIT 1), COALESCE(e.storage_location, '')) AS current_holder
+	FROM evidence e
+	LEFT JOIN users cb ON e.collected_by = cb.id
+	LEFT JOIN users ub ON e.uploaded_by = ub.id
+`
+
+func scanEvidence(row pgx.Row) (*models.EvidenceRecord, error) {
+	var r models.EvidenceRecord
+	var status *string
+	err := row.Scan(
+		&r.ID, &r.EvidenceNumber, &r.CaseID, &r.FIRID, &r.EvidenceType, &r.Description,
+		&r.CollectionLocation, &r.CollectionDate, &r.CollectedBy, &r.CollectedByName,
+		&r.StorageLocation, &r.ContainerType, &r.SealNumber, &r.Condition, &status,
+		&r.File.ObjectKey, &r.File.OriginalFilename, &r.File.ContentType, &r.File.FileSize,
+		&r.File.StorageBackend, &r.File.SHA256, &r.File.HashAlgorithm, &r.File.UploadedBy,
+		&r.File.UploadedByName, &r.File.UploadedAt,
+		&r.IntegrityState, &r.LastVerifiedAt, &r.BlockchainAnchorTx,
+		&r.CreatedAt, &r.UpdatedAt, &r.TransferCount, &r.CurrentHolder,
+	)
+	if err != nil {
+		return nil, err
+	}
+	r.Status = status
+	return &r, nil
+}
+
+type EvidenceFilter struct {
+	Search    string
+	CaseID    *uuid.UUID
+	Integrity string
+	Page      int
+	PageSize  int
+}
+
+func (r *CustodyRepository) List(ctx context.Context, f EvidenceFilter) ([]models.EvidenceRecord, int64, error) {
+	var where []string
+	var args []interface{}
+	n := 1
+
+	if f.Search != "" {
+		where = append(where, fmt.Sprintf(
+			"(e.evidence_number ILIKE $%d OR e.description ILIKE $%d OR e.seal_number ILIKE $%d)", n, n, n))
+		args = append(args, "%"+f.Search+"%")
+		n++
+	}
+	if f.CaseID != nil {
+		where = append(where, fmt.Sprintf("e.case_id = $%d", n))
+		args = append(args, *f.CaseID)
+		n++
+	}
+	if f.Integrity != "" {
+		where = append(where, fmt.Sprintf("e.integrity_state = $%d", n))
+		args = append(args, f.Integrity)
+		n++
+	}
+
+	clause := ""
+	if len(where) > 0 {
+		clause = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	var total int64
+	if err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM evidence e"+clause, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize < 1 {
+		f.PageSize = 20
+	}
+
+	query := evidenceSelect + clause +
+		fmt.Sprintf(" ORDER BY e.created_at DESC LIMIT $%d OFFSET $%d", n, n+1)
+	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []models.EvidenceRecord{}
+	for rows.Next() {
+		item, err := scanEvidence(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *item)
+	}
+	return out, total, rows.Err()
+}
+
+func (r *CustodyRepository) Get(ctx context.Context, id uuid.UUID) (*models.EvidenceRecord, error) {
+	return scanEvidence(r.db.QueryRow(ctx, evidenceSelect+" WHERE e.id = $1", id))
+}
+
+// AttachFile records the stored object against the item and marks it verified:
+// the hash was taken from the bytes as they were written, so at this instant
+// the recorded digest and the stored file are known to agree.
+func (r *CustodyRepository) AttachFile(ctx context.Context, id uuid.UUID, objectKey, filename, contentType, backend, sha256 string, size int64, uploadedBy *uuid.UUID) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE evidence
+		SET object_key = $1, original_filename = $2, content_type = $3,
+		    storage_backend = $4, sha256 = $5, file_size = $6,
+		    hash_algorithm = 'SHA-256', uploaded_by = $7, uploaded_at = NOW(),
+		    integrity_state = 'verified', last_verified_at = NOW(), last_verified_by = $7,
+		    updated_at = NOW()
+		WHERE id = $8
+	`, objectKey, filename, contentType, backend, sha256, size, uploadedBy, id)
+	return err
+}
+
+/* --------------------------------- custody -------------------------------- */
+
+func (r *CustodyRepository) CustodyChain(ctx context.Context, evidenceID uuid.UUID) ([]models.CustodyEvent, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT c.id, c.evidence_id,
+		       -- The position is computed rather than read: the initial custody row
+		       -- is written by evidence creation without a sequence number, and a
+		       -- chain that starts at 0 reads as though a leg were missing.
+		       ROW_NUMBER() OVER (ORDER BY c.sequence_number NULLS FIRST, c.created_at)::int,
+		       c.from_user, COALESCE(fu.name, ''), c.from_location,
+		       c.to_user, COALESCE(tu.name, ''), c.to_location,
+		       c.purpose, c.seal_number, c.seal_intact, c.condition_note, c.notes,
+		       c.signed_by, COALESCE(su.name, ''), c.signed_at, c.signature, c.hash_at_transfer,
+		       c.transfer_date, c.created_at
+		FROM evidence_custody c
+		LEFT JOIN users fu ON c.from_user = fu.id
+		LEFT JOIN users tu ON c.to_user = tu.id
+		LEFT JOIN users su ON c.signed_by = su.id
+		WHERE c.evidence_id = $1
+		ORDER BY c.sequence_number NULLS FIRST, c.created_at
+	`, evidenceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.CustodyEvent{}
+	for rows.Next() {
+		var e models.CustodyEvent
+		if err := rows.Scan(&e.ID, &e.EvidenceID, &e.SequenceNumber,
+			&e.FromUserID, &e.FromName, &e.FromLocation,
+			&e.ToUserID, &e.ToName, &e.ToLocation,
+			&e.Purpose, &e.SealNumber, &e.SealIntact, &e.ConditionNote, &e.Notes,
+			&e.SignedBy, &e.SignedByName, &e.SignedAt, &e.Signature, &e.HashAtTransfer,
+			&e.TransferDate, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// RecordTransfer appends a leg to the chain. The previous holder is read from
+// the chain itself rather than supplied, so the sequence cannot be forged by a
+// caller claiming to hold something they do not.
+func (r *CustodyRepository) RecordTransfer(ctx context.Context, evidenceID uuid.UUID, req models.TransferCustodyRequest, signature, hashAtTransfer string, signedBy *uuid.UUID) (*models.CustodyEvent, error) {
+	var lastSeq int
+	var fromUser *uuid.UUID
+	var fromLocation *string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(MAX(sequence_number), 0) FROM evidence_custody WHERE evidence_id = $1
+	`, evidenceID).Scan(&lastSeq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Where it is coming from: the destination of the previous leg, or the
+	// storage location if this is the first movement.
+	err = r.db.QueryRow(ctx, `
+		SELECT c.to_user, c.to_location FROM evidence_custody c
+		WHERE c.evidence_id = $1
+		ORDER BY c.sequence_number DESC NULLS LAST, c.created_at DESC LIMIT 1
+	`, evidenceID).Scan(&fromUser, &fromLocation)
+	if err != nil {
+		if err != pgx.ErrNoRows {
+			return nil, err
+		}
+		var storage *string
+		if err := r.db.QueryRow(ctx,
+			"SELECT storage_location FROM evidence WHERE id = $1", evidenceID).Scan(&storage); err == nil {
+			fromLocation = storage
+		}
+	}
+
+	sealIntact := true
+	if req.SealIntact != nil {
+		sealIntact = *req.SealIntact
+	}
+
+	id := uuid.New()
+	_, err = r.db.Exec(ctx, `
+		INSERT INTO evidence_custody
+		  (id, evidence_id, sequence_number, from_user, from_location,
+		   to_user, to_location, purpose, seal_number, seal_intact,
+		   condition_note, notes, signed_by, signed_at, signature,
+		   hash_at_transfer, transfer_date, verified)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),$14,$15,NOW(),TRUE)
+	`, id, evidenceID, lastSeq+1, fromUser, fromLocation,
+		req.ToUserID, req.ToLocation, req.Purpose, req.SealNumber, sealIntact,
+		req.ConditionNote, req.Notes, signedBy, signature, hashAtTransfer)
+	if err != nil {
+		return nil, err
+	}
+
+	// A broken seal is a change in the item's condition and is recorded as such.
+	if !sealIntact {
+		_, _ = r.db.Exec(ctx,
+			"UPDATE evidence SET condition = 'SEAL BROKEN', updated_at = NOW() WHERE id = $1", evidenceID)
+	}
+
+	chain, err := r.CustodyChain(ctx, evidenceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range chain {
+		if chain[i].ID == id {
+			return &chain[i], nil
+		}
+	}
+	return nil, pgx.ErrNoRows
+}
+
+/* ------------------------------- access log ------------------------------- */
+
+func (r *CustodyRepository) LogAccess(ctx context.Context, evidenceID uuid.UUID, action string, actor *uuid.UUID, actorName, purpose, ip, userAgent, outcome, detail string) error {
+	var purposePtr, detailPtr, ipPtr *string
+	if purpose != "" {
+		purposePtr = &purpose
+	}
+	if detail != "" {
+		detailPtr = &detail
+	}
+	if ip != "" {
+		ipPtr = &ip
+	}
+	if outcome == "" {
+		outcome = "success"
+	}
+
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO evidence_access_log
+		  (evidence_id, action, actor_id, actor_name, purpose, ip_address, user_agent, outcome, detail)
+		VALUES ($1,$2,$3,$4,$5,NULLIF($6,'')::inet,$7,$8,$9)
+	`, evidenceID, action, actor, actorName, purposePtr, derefOrEmpty(ipPtr), userAgent, outcome, detailPtr)
+	return err
+}
+
+func derefOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func (r *CustodyRepository) AccessLog(ctx context.Context, evidenceID uuid.UUID, limit int) ([]models.AccessLogEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT a.id, a.evidence_id, a.action, a.actor_id,
+		       COALESCE(NULLIF(a.actor_name, ''), COALESCE(u.name, 'System')),
+		       a.purpose, host(a.ip_address), a.outcome, a.detail, a.created_at
+		FROM evidence_access_log a
+		LEFT JOIN users u ON a.actor_id = u.id
+		WHERE a.evidence_id = $1
+		ORDER BY a.created_at DESC
+		LIMIT $2
+	`, evidenceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.AccessLogEntry{}
+	for rows.Next() {
+		var e models.AccessLogEntry
+		if err := rows.Scan(&e.ID, &e.EvidenceID, &e.Action, &e.ActorID, &e.ActorName,
+			&e.Purpose, &e.IPAddress, &e.Outcome, &e.Detail, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+/* ---------------------------- integrity checks ---------------------------- */
+
+func (r *CustodyRepository) RecordIntegrityCheck(ctx context.Context, evidenceID uuid.UUID, expected, computed string, matched bool, size int64, checkedBy *uuid.UUID, note *string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO evidence_integrity_checks
+		  (evidence_id, expected_hash, computed_hash, matched, size_bytes, checked_by, note)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+	`, evidenceID, nullIfEmpty(expected), nullIfEmpty(computed), matched, size, checkedBy, note); err != nil {
+		return err
+	}
+
+	state := models.IntegrityBroken
+	if matched {
+		state = models.IntegrityVerified
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE evidence SET integrity_state = $1, last_verified_at = NOW(),
+		                    last_verified_by = $2, updated_at = NOW()
+		WHERE id = $3
+	`, string(state), checkedBy, evidenceID); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func nullIfEmpty(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func (r *CustodyRepository) IntegrityHistory(ctx context.Context, evidenceID uuid.UUID) ([]models.IntegrityCheck, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT c.id, c.evidence_id, c.expected_hash, c.computed_hash, c.matched,
+		       c.size_bytes, c.checked_by, COALESCE(u.name, ''), c.note, c.created_at
+		FROM evidence_integrity_checks c
+		LEFT JOIN users u ON c.checked_by = u.id
+		WHERE c.evidence_id = $1
+		ORDER BY c.created_at DESC
+		LIMIT 50
+	`, evidenceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.IntegrityCheck{}
+	for rows.Next() {
+		var c models.IntegrityCheck
+		if err := rows.Scan(&c.ID, &c.EvidenceID, &c.ExpectedHash, &c.ComputedHash,
+			&c.Matched, &c.SizeBytes, &c.CheckedBy, &c.CheckedByName, &c.Note, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// Stats powers the register's headline figures.
+func (r *CustodyRepository) Stats(ctx context.Context) (map[string]int, error) {
+	var total, verified, broken, pending, withFile int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE integrity_state = 'verified'),
+		       COUNT(*) FILTER (WHERE integrity_state = 'broken'),
+		       COUNT(*) FILTER (WHERE integrity_state = 'pending'),
+		       COUNT(*) FILTER (WHERE object_key IS NOT NULL)
+		FROM evidence
+	`).Scan(&total, &verified, &broken, &pending, &withFile)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]int{
+		"total": total, "verified": verified, "broken": broken,
+		"pending": pending, "withFile": withFile,
+	}, nil
+}
+
+// StaleVerifications lists items whose last check is older than the given age,
+// so an operator can find evidence nobody has looked at in a long time.
+func (r *CustodyRepository) StaleVerifications(ctx context.Context, olderThan time.Duration) ([]models.EvidenceRecord, error) {
+	cutoff := time.Now().Add(-olderThan)
+	rows, err := r.db.Query(ctx, evidenceSelect+`
+		WHERE e.object_key IS NOT NULL
+		  AND (e.last_verified_at IS NULL OR e.last_verified_at < $1)
+		ORDER BY e.last_verified_at NULLS FIRST
+		LIMIT 100`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.EvidenceRecord{}
+	for rows.Next() {
+		item, err := scanEvidence(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *item)
+	}
+	return out, rows.Err()
+}

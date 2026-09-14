@@ -248,18 +248,32 @@ REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM PUBLIC;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_log_batches FROM PUBLIC;
 
 -- Create audit archival table for long-term storage
-CREATE TABLE audit_logs_archive (
-    LIKE audit_logs INCLUDING ALL
+-- INCLUDING ALL copies audit_logs' primary key on (id), but a partitioned
+-- table's unique constraints must contain every partitioning column. Copy the
+-- defaults and storage rules without the indexes, then add a primary key that
+-- includes event_timestamp.
+CREATE TABLE IF NOT EXISTS audit_logs_archive (
+    LIKE audit_logs INCLUDING DEFAULTS INCLUDING STORAGE INCLUDING COMMENTS
 ) PARTITION BY RANGE (event_timestamp);
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'audit_logs_archive_pkey'
+    ) THEN
+        ALTER TABLE audit_logs_archive
+            ADD CONSTRAINT audit_logs_archive_pkey PRIMARY KEY (id, event_timestamp);
+    END IF;
+END $$;
+
 -- Create partitions for archival (example for 2026)
-CREATE TABLE audit_logs_archive_2026_q1 PARTITION OF audit_logs_archive
+CREATE TABLE IF NOT EXISTS audit_logs_archive_2026_q1 PARTITION OF audit_logs_archive
     FOR VALUES FROM ('2026-01-01') TO ('2026-04-01');
-CREATE TABLE audit_logs_archive_2026_q2 PARTITION OF audit_logs_archive
+CREATE TABLE IF NOT EXISTS audit_logs_archive_2026_q2 PARTITION OF audit_logs_archive
     FOR VALUES FROM ('2026-04-01') TO ('2026-07-01');
-CREATE TABLE audit_logs_archive_2026_q3 PARTITION OF audit_logs_archive
+CREATE TABLE IF NOT EXISTS audit_logs_archive_2026_q3 PARTITION OF audit_logs_archive
     FOR VALUES FROM ('2026-07-01') TO ('2026-10-01');
-CREATE TABLE audit_logs_archive_2026_q4 PARTITION OF audit_logs_archive
+CREATE TABLE IF NOT EXISTS audit_logs_archive_2026_q4 PARTITION OF audit_logs_archive
     FOR VALUES FROM ('2026-10-01') TO ('2027-01-01');
 
 COMMENT ON TABLE audit_logs IS 'Immutable audit log with cryptographic hash chain for tamper detection';

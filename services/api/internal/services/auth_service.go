@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -107,12 +111,55 @@ func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*m
 }
 
 func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID, token string) error {
-	// Add token to blacklist in Redis
-	if s.redis != nil {
-		key := "blacklist:" + token
-		s.redis.Set(ctx, key, "1", time.Hour)
+	if s.redis == nil {
+		return nil
+	}
+
+	// Blacklist the token so it cannot be replayed before it expires.
+	s.redis.Set(ctx, "blacklist:"+token, "1", time.Hour)
+
+	// Drop the session from the user's active set. Without this the
+	// concurrent-session cap counts sign-ins that have already ended, and the
+	// user is eventually refused a new one.
+	bearer := strings.TrimSpace(strings.TrimPrefix(token, "Bearer "))
+
+	// /auth/logout is a public route, so the caller is not resolved by
+	// AuthMiddleware and userID arrives as the zero UUID. Recover it from the
+	// token's own claims, otherwise the session is removed from the wrong key
+	// and the user's active-session count never falls.
+	if userID == uuid.Nil && bearer != "" {
+		if claims, err := s.parseClaims(bearer); err == nil {
+			if sub, ok := claims["userId"].(string); ok {
+				if parsed, err := uuid.Parse(sub); err == nil {
+					userID = parsed
+				}
+			}
+		}
+	}
+
+	if bearer != "" && userID != uuid.Nil {
+		sum := sha256.Sum256([]byte(bearer))
+		sessionToken := hex.EncodeToString(sum[:16])
+		s.redis.SRem(ctx, fmt.Sprintf("user_sessions:%s", userID), sessionToken)
+		s.redis.Del(ctx, fmt.Sprintf("session:%s:%s", userID, sessionToken))
 	}
 	return nil
+}
+
+// parseClaims reads a token's claims without requiring it to be unexpired:
+// logging out with a just-expired token must still release the session.
+func (s *AuthService) parseClaims(token string) (jwt.MapClaims, error) {
+	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+		return []byte(s.jwtSecret), nil
+	}, jwt.WithoutClaimsValidation())
+	if err != nil {
+		return nil, err
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, errors.New("unexpected claims type")
+	}
+	return claims, nil
 }
 
 func (s *AuthService) GetUser(ctx context.Context, userID uuid.UUID) (*models.User, error) {

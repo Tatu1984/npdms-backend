@@ -20,6 +20,7 @@ import (
 	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
+	"github.com/npdms/api/internal/storage"
 )
 
 func main() {
@@ -75,6 +76,8 @@ func main() {
 	citizenPortalRepo := repository.NewCitizenPortalRepository(sqlxDB)
 	trafficChallanRepo := repository.NewTrafficChallanRepository(db)
 	reportsRepo := repository.NewReportsRepository(db)
+	investigationRepo := repository.NewInvestigationRepository(db)
+	custodyRepo := repository.NewCustodyRepository(db)
 		districtRepo := repository.NewDistrictRepository(db)
 	stateRepo := repository.NewStateRepository(db)
 	nationalRepo := repository.NewNationalRepository(db)
@@ -100,6 +103,25 @@ func main() {
 	trafficChallanService := services.NewTrafficChallanService(trafficChallanRepo, auditRepo)
 	reportsService := services.NewReportsService(reportsRepo, auditRepo)
 	aiReviewService := services.NewAIReviewService(db, auditRepo)
+	investigationService := services.NewInvestigationService(investigationRepo, auditRepo, db)
+	ipIntelService := services.NewIPIntelService(rdb, auditRepo)
+
+	// Evidence storage. Filesystem by default so a single edge server needs no
+	// extra service; set STORAGE_BACKEND=minio for S3-compatible storage.
+	storageCfg := storage.FromEnv()
+	evidenceStore, err := storage.Open(storageCfg)
+	if err != nil {
+		log.Fatalf("Failed to open evidence storage (%s): %v", storageCfg.Backend, err)
+	}
+	log.Printf("Evidence storage: %s", evidenceStore.Backend())
+
+	// Custody attestations get their own key where one is provided, so rotating
+	// the JWT secret does not invalidate historical signatures.
+	custodySigningKey := os.Getenv("CUSTODY_SIGNING_KEY")
+	if custodySigningKey == "" {
+		custodySigningKey = cfg.JWTSecret
+	}
+	custodyService := services.NewCustodyService(custodyRepo, evidenceStore, auditRepo, custodySigningKey)
 	districtService := services.NewDistrictService(districtRepo, auditRepo)
 	stateService := services.NewStateService(stateRepo, auditRepo)
 	nationalService := services.NewNationalService(nationalRepo, auditRepo)
@@ -135,6 +157,9 @@ func main() {
 	trafficChallanHandler := handlers.NewTrafficChallanHandler(trafficChallanService)
 	reportsHandler := handlers.NewReportsHandler(reportsService)
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
+	investigationHandler := handlers.NewInvestigationHandler(investigationService)
+	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
+	custodyHandler := handlers.NewCustodyHandler(custodyService)
 	districtHandler := handlers.NewDistrictHandler(districtService)
 	stateHandler := handlers.NewStateHandler(stateService)
 	nationalHandler := handlers.NewNationalHandler(nationalService)
@@ -185,6 +210,10 @@ func main() {
 	router.Use(middleware.GlobalRateLimiter(rdbV8))
 	router.Use(middleware.ZeroTrustMiddleware(rdbV8, zeroTrustConfig))
 	router.Use(middleware.AuditSecurityEventMiddleware(rdbV8))
+
+	// The API contract, served by the build it describes.
+	openAPIHandler := handlers.NewOpenAPIHandler()
+	router.GET("/openapi.yaml", openAPIHandler.Serve)
 
 	// Health check
 	router.GET("/health", healthHandler.Health)
@@ -490,6 +519,77 @@ func main() {
 			}
 
 			// AI Review (Human-in-Loop) routes
+			// Server-side intelligence lookups. These run here rather than in the
+			// browser so egress is controlled, results are audited, and an
+			// air-gapped deployment can disable them centrally.
+			intel := protected.Group("/intel")
+			{
+				intel.GET("/ip/:ip", ipIntelHandler.Lookup)
+			}
+
+			// Phase 02 — Evidence & Chain of Custody
+			custody := protected.Group("/custody")
+			{
+				custody.GET("", custodyHandler.List)
+				custody.GET("/stats", custodyHandler.Stats)
+				custody.GET("/:id", custodyHandler.Get)
+
+				custody.POST("/:id/file", custodyHandler.AttachFile)
+				custody.GET("/:id/file", custodyHandler.Download)
+
+				custody.POST("/:id/verify", custodyHandler.Verify)
+				custody.GET("/:id/verifications", custodyHandler.IntegrityHistory)
+
+				custody.GET("/:id/chain", custodyHandler.CustodyChain)
+				custody.POST("/:id/transfer",
+					middleware.RequireRole("ASI", "SI", "INSPECTOR", "SHO", "DSP", "SP", "DIG", "IG", "DGP"),
+					custodyHandler.Transfer)
+
+				custody.GET("/:id/access-log", custodyHandler.AccessLog)
+				custody.GET("/:id/court-verification", custodyHandler.CourtVerification)
+			}
+
+			// Phase 01 — Investigation Copilot
+			investigation := protected.Group("/investigation")
+			{
+				investigation.GET("", investigationHandler.List)
+				investigation.POST("", investigationHandler.Create)
+				// Registered before /:id so "officers" is not read as a workspace id.
+				investigation.GET("/officers", investigationHandler.ListOfficers)
+				investigation.GET("/:id", investigationHandler.Get)
+				investigation.PUT("/:id", investigationHandler.Update)
+				investigation.GET("/:id/brief", investigationHandler.Brief)
+
+				investigation.GET("/:id/persons", investigationHandler.ListPersons)
+				investigation.POST("/:id/persons", investigationHandler.CreatePerson)
+				investigation.PATCH("/:id/persons/:personId", investigationHandler.UpdatePerson)
+				investigation.DELETE("/:id/persons/:personId", investigationHandler.DeletePerson)
+
+				investigation.GET("/:id/timeline", investigationHandler.ListTimeline)
+				investigation.POST("/:id/timeline", investigationHandler.CreateWorkspaceTimelineEntry)
+				investigation.POST("/:id/timeline/:entryId/review", investigationHandler.ReviewWorkspaceTimelineEntry)
+				investigation.DELETE("/:id/timeline/:entryId", investigationHandler.DeleteWorkspaceTimelineEntry)
+
+				investigation.GET("/:id/contradictions", investigationHandler.ListContradictions)
+				investigation.POST("/:id/contradictions", investigationHandler.CreateContradiction)
+				investigation.POST("/:id/contradictions/:contradictionId/review", investigationHandler.ReviewContradiction)
+
+				investigation.GET("/:id/gaps", investigationHandler.ListGaps)
+				investigation.POST("/:id/gaps", investigationHandler.CreateGap)
+				investigation.POST("/:id/gaps/recompute", investigationHandler.RecomputeGaps)
+				investigation.PATCH("/:id/gaps/:gapId", investigationHandler.UpdateGapStatus)
+
+				investigation.GET("/:id/tasks", investigationHandler.ListTasks)
+				investigation.POST("/:id/tasks", investigationHandler.CreateTask)
+				investigation.PATCH("/:id/tasks/:taskId", investigationHandler.UpdateTask)
+				investigation.DELETE("/:id/tasks/:taskId", investigationHandler.DeleteTask)
+
+				investigation.GET("/:id/links", investigationHandler.LinkGraph)
+				investigation.GET("/:id/evidence", investigationHandler.ListEvidence)
+				investigation.POST("/:id/evidence", investigationHandler.LinkEvidence)
+				investigation.DELETE("/:id/evidence/:evidenceId", investigationHandler.UnlinkEvidence)
+			}
+
 			aiReview := protected.Group("/ai-review")
 			{
 				// Review queue
