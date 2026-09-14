@@ -281,8 +281,13 @@ func (r *CitizenPortalRepository) CreateMissingPersonReport(ctx context.Context,
 			person_name, age, gender, height, weight, complexion,
 			identifying_marks, last_seen_location, last_seen_date, last_seen_wearing, photo_url,
 			station_id, assigned_to,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
+			created_at, updated_at,
+			vulnerabilities, priority
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+			-- A minor is flagged as a child and made critical, as the Phase 04
+			-- workflow requires (migration 000042); officers add other flags.
+			CASE WHEN $8 < 18 THEN ARRAY['CHILD']::text[] ELSE '{}'::text[] END,
+			CASE WHEN $8 < 18 THEN 'CRITICAL' ELSE 'NORMAL' END)`
 
 	_, err := r.db.ExecContext(ctx, query,
 		report.ID, report.ReportNumber, report.Status,
@@ -297,7 +302,14 @@ func (r *CitizenPortalRepository) CreateMissingPersonReport(ctx context.Context,
 
 func (r *CitizenPortalRepository) GetMissingPersonReport(ctx context.Context, reportNumber string) (*models.MissingPersonReport, error) {
 	var report models.MissingPersonReport
-	query := `SELECT * FROM missing_person_reports WHERE report_number = $1`
+	// Columns are named: the table carries workflow columns (000042) the
+	// public model does not, and SELECT * would fail to scan.
+	query := `SELECT id, report_number, status, reporter_name, reporter_phone, reporter_relation,
+		person_name, age, gender, height, weight, complexion, identifying_marks,
+		last_seen_location, last_seen_date, last_seen_wearing, photo_url,
+		station_id, assigned_to, fir_id, found_date, found_location, found_condition,
+		created_at, updated_at
+		FROM missing_person_reports WHERE report_number = $1`
 	err := r.db.GetContext(ctx, &report, query, reportNumber)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -381,9 +393,13 @@ func (r *CitizenPortalRepository) GenerateGrievanceNumber(ctx context.Context) (
 	return fmt.Sprintf("GRV/%d/%05d", year, count+1), nil
 }
 
+// GenerateMissingReportNumber draws from the shared MIS counter, the same one
+// officer registrations use (migration 000042), so the two cannot collide.
 func (r *CitizenPortalRepository) GenerateMissingReportNumber(ctx context.Context) (string, error) {
-	var count int64
 	year := time.Now().Year()
-	r.db.GetContext(ctx, &count, "SELECT COUNT(*) FROM missing_person_reports WHERE EXTRACT(YEAR FROM created_at) = $1", year)
-	return fmt.Sprintf("MIS/%d/%05d", year, count+1), nil
+	var n int64
+	if err := r.db.GetContext(ctx, &n, recordCounterUpsert, "MIS", year); err != nil {
+		return "", fmt.Errorf("allocate MIS number: %w", err)
+	}
+	return fmt.Sprintf("MIS/%d/%05d", year, n), nil
 }

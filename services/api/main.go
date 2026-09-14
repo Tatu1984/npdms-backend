@@ -143,7 +143,10 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo)
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
-	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
+	lookoutService := services.NewLookoutService(lookoutRepo, auditRepo)
+	lookoutHandler := handlers.NewLookoutHandler(lookoutService)
+	missingPersonHandler := handlers.NewMissingPersonHandler(services.NewMissingPersonService(
+		repository.NewMissingPersonRepository(db), lookoutService, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
@@ -547,6 +550,31 @@ func main() {
 				armoury.POST("/weapons/:id/return", middleware.RequireRole("ASI"), armouryHandler.Return)
 			}
 
+			// Phase 04 — Missing & Vulnerable Persons
+			// Any officer may view (a child's identifying details are restricted in the
+			// service), record a sighting or log family contact; deciding sightings and
+			// working the checklist need ASI; changing or closing a report needs SI.
+			missingPersons := protected.Group("/missing-persons")
+			{
+				missingPersons.GET("", missingPersonHandler.List)
+				missingPersons.GET("/stats", missingPersonHandler.Stats)
+				missingPersons.POST("", middleware.RequireRole("ASI"), missingPersonHandler.Register)
+				missingPersons.GET("/:id", missingPersonHandler.Get)
+				missingPersons.PATCH("/:id", middleware.RequireRole("SI"), missingPersonHandler.Update)
+				missingPersons.POST("/:id/start-search", middleware.RequireRole("ASI"), missingPersonHandler.StartSearch)
+				missingPersons.GET("/:id/checklist", missingPersonHandler.Checklist)
+				missingPersons.POST("/:id/checklist/:itemCode/complete", middleware.RequireRole("ASI"), missingPersonHandler.CompleteChecklistItem)
+				missingPersons.GET("/:id/sightings", missingPersonHandler.Sightings)
+				missingPersons.POST("/:id/sightings", missingPersonHandler.RecordSighting)
+				missingPersons.POST("/:id/sightings/:sightingId/verify", middleware.RequireRole("ASI"), missingPersonHandler.VerifySighting)
+				missingPersons.POST("/:id/sightings/:sightingId/reject", middleware.RequireRole("ASI"), missingPersonHandler.RejectSighting)
+				missingPersons.GET("/:id/movement", missingPersonHandler.Movement)
+				missingPersons.GET("/:id/family-contacts", missingPersonHandler.FamilyContacts)
+				missingPersons.POST("/:id/family-contacts", missingPersonHandler.RecordFamilyContact)
+				missingPersons.POST("/:id/close", middleware.RequireRole("SI"), missingPersonHandler.Close)
+				missingPersons.POST("/:id/lookout", middleware.RequireRole("SI"), missingPersonHandler.IssueLookout)
+			}
+
 			// Lookout notices and sightings
 			lookouts := protected.Group("/lookouts")
 			{
@@ -813,7 +841,8 @@ func main() {
 			citizen.GET("/fir-status", citizenPortalHandler.TrackFIR)
 			citizen.POST("/grievances", citizenPortalHandler.SubmitGrievance)
 			citizen.POST("/missing-persons", citizenPortalHandler.SubmitMissingPersonReport)
-			citizen.GET("/missing-persons/:reportNumber", citizenPortalHandler.TrackMissingPersonReport)
+			// Catch-all: report numbers are MIS/YYYY/NNNNN, and a :param cannot hold slashes.
+			citizen.GET("/missing-persons/*reportNumber", citizenPortalHandler.TrackMissingPersonReport)
 			citizen.POST("/fir-copy-request", citizenPortalHandler.RequestFIRCopy)
 			citizen.GET("/stats", citizenPortalHandler.GetPortalStats)
 		}

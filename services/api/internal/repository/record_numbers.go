@@ -8,6 +8,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// recordCounterUpsert allocates the next value of a counter. Shared by the pgx
+// repositories and the sqlx citizen portal so both draw from one sequence.
+const recordCounterUpsert = `
+	INSERT INTO record_counters (scope, year, last_value) VALUES ($1, $2, 1)
+	ON CONFLICT (scope, year) DO UPDATE SET last_value = record_counters.last_value + 1
+	RETURNING last_value
+`
+
 // nextRecordNumber returns the next value of a per-scope, per-year counter.
 //
 // The upsert takes a row lock on the counter, so concurrent callers are
@@ -15,11 +23,7 @@ import (
 // including after a record is deleted. See migration 000033.
 func nextRecordNumber(ctx context.Context, db *pgxpool.Pool, scope string, year int) (int64, error) {
 	var n int64
-	err := db.QueryRow(ctx, `
-		INSERT INTO record_counters (scope, year, last_value) VALUES ($1, $2, 1)
-		ON CONFLICT (scope, year) DO UPDATE SET last_value = record_counters.last_value + 1
-		RETURNING last_value
-	`, scope, year).Scan(&n)
+	err := db.QueryRow(ctx, recordCounterUpsert, scope, year).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("allocate %s number: %w", scope, err)
 	}

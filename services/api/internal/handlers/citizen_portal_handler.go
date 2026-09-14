@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -126,7 +127,7 @@ func (h *CitizenPortalHandler) SubmitMissingPersonReport(c *gin.Context) {
 }
 
 func (h *CitizenPortalHandler) TrackMissingPersonReport(c *gin.Context) {
-	reportNumber := c.Param("reportNumber")
+	reportNumber := strings.TrimPrefix(c.Param("reportNumber"), "/")
 	if reportNumber == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Report number is required"})
 		return
@@ -138,7 +139,14 @@ func (h *CitizenPortalHandler) TrackMissingPersonReport(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, report)
+	// Unauthenticated, keyed by a sequential number anyone can guess: return
+	// progress only. The full record (reporter's phone, a child's description)
+	// previously went to whoever asked.
+	c.JSON(http.StatusOK, gin.H{
+		"reportNumber": report.ReportNumber,
+		"status":       report.Status,
+		"updatedAt":    report.UpdatedAt,
+	})
 }
 
 func (h *CitizenPortalHandler) RequestFIRCopy(c *gin.Context) {
