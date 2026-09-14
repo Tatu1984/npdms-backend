@@ -68,6 +68,9 @@ func main() {
 	bailRepo := repository.NewBailRepository(db)
 	forensicRepo := repository.NewForensicRepository(db)
 	personnelRepo := repository.NewPersonnelRepository(db)
+	armouryRepo := repository.NewArmouryRepository(db)
+	lookoutRepo := repository.NewLookoutRepository(db)
+	accessLogRepo := repository.NewAccessLogRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
 	courtRepo := repository.NewCourtRepository(db)
 	alertRepo := repository.NewAlertRepository(db)
@@ -138,7 +141,10 @@ func main() {
 	biometricService := services.NewBiometricService(db, biometricRepo, auditRepo, mlServiceURL, aadhaarURL)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService)
+	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo)
+	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
+	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
+	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -525,6 +531,41 @@ func main() {
 			intel := protected.Group("/intel")
 			{
 				intel.GET("/ip/:ip", ipIntelHandler.Lookup)
+			}
+
+			// Armoury — weapon register and issue/return ledger
+			armoury := protected.Group("/armoury")
+			{
+				armoury.GET("/weapons", armouryHandler.List)
+				armoury.GET("/weapons/stats", armouryHandler.Stats)
+				armoury.GET("/weapons/:id", armouryHandler.Get)
+				armoury.GET("/weapons/:id/issuances", armouryHandler.Issuances)
+				armoury.GET("/issuances", armouryHandler.Issuances)
+				armoury.POST("/weapons", middleware.RequireRole("SHO"), armouryHandler.Register)
+				armoury.PATCH("/weapons/:id/state", middleware.RequireRole("SHO"), armouryHandler.SetState)
+				armoury.POST("/weapons/:id/issue", middleware.RequireRole("ASI"), armouryHandler.Issue)
+				armoury.POST("/weapons/:id/return", middleware.RequireRole("ASI"), armouryHandler.Return)
+			}
+
+			// Lookout notices and sightings
+			lookouts := protected.Group("/lookouts")
+			{
+				lookouts.GET("", lookoutHandler.List)
+				lookouts.GET("/stats", lookoutHandler.Stats)
+				lookouts.GET("/:id", lookoutHandler.Get)
+				lookouts.GET("/:id/sightings", lookoutHandler.Sightings)
+				lookouts.POST("", middleware.RequireRole("SI"), lookoutHandler.Issue)
+				lookouts.POST("/:id/resolve", middleware.RequireRole("SI"), lookoutHandler.Resolve)
+				// Any officer may report a sighting; verifying one needs rank.
+				lookouts.POST("/:id/sightings", lookoutHandler.ReportSighting)
+				lookouts.POST("/:id/sightings/:sightingId/verify", middleware.RequireRole("ASI"), lookoutHandler.VerifySighting)
+			}
+
+			// Access log — sign-in activity from the audit trail
+			accessLog := protected.Group("/access-log", middleware.RequireRole("DSP"))
+			{
+				accessLog.GET("", accessLogHandler.List)
+				accessLog.GET("/stats", accessLogHandler.Stats)
 			}
 
 			// Phase 02 — Evidence & Chain of Custody

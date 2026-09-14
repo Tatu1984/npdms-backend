@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,23 +19,40 @@ func NewCaseRepository(db *pgxpool.Pool) *CaseRepository {
 	return &CaseRepository{db: db}
 }
 
-func (r *CaseRepository) List(ctx context.Context, page, pageSize int) ([]models.Case, int64, error) {
-	// Count total
+// CaseFilter narrows the case register. Search matches case number, title
+// and the linked FIR number.
+type CaseFilter struct {
+	Search   string
+	Status   string
+	Page     int
+	PageSize int
+}
+
+var ErrCaseNotFound = errors.New("case not found")
+
+func (r *CaseRepository) List(ctx context.Context, f CaseFilter) ([]models.Case, int64, error) {
+	where := []string{"1=1"}
+	args := []interface{}{}
+	if f.Search != "" {
+		args = append(args, "%"+f.Search+"%")
+		n := len(args)
+		where = append(where, fmt.Sprintf("(c.case_number ILIKE $%d OR c.title ILIKE $%d OR f.fir_number ILIKE $%d)", n, n, n))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where = append(where, fmt.Sprintf("c.status::text = $%d", len(args)))
+	}
+	clause := strings.Join(where, " AND ")
+
 	var total int64
-	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM cases").Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM cases c LEFT JOIN firs f ON c.fir_id = f.id WHERE "+clause, args...,
+	).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 20
-	}
-	offset := (page - 1) * pageSize
-
-	query := `
+	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
+	query := fmt.Sprintf(`
 		SELECT c.id, c.case_number, c.fir_id, c.title, c.synopsis, c.category,
 		       c.status, c.priority, c.ipc_sections, c.investigating_officer,
 		       c.court_name, c.court_case_number, c.next_hearing_date,
@@ -42,17 +62,18 @@ func (r *CaseRepository) List(ctx context.Context, page, pageSize int) ([]models
 		FROM cases c
 		LEFT JOIN firs f ON c.fir_id = f.id
 		LEFT JOIN users io ON c.investigating_officer = io.id
+		WHERE %s
 		ORDER BY c.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+		LIMIT $%d OFFSET $%d
+	`, clause, len(args)-1, len(args))
 
-	rows, err := r.db.Query(ctx, query, pageSize, offset)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var cases []models.Case
+	cases := []models.Case{}
 	for rows.Next() {
 		var c models.Case
 		err := rows.Scan(
@@ -131,17 +152,23 @@ func (r *CaseRepository) Update(ctx context.Context, c *models.Case) error {
 		UPDATE cases SET
 			title = $2, synopsis = $3, category = $4, status = $5,
 			priority = $6, ipc_sections = $7, investigating_officer = $8,
-			court_name = $9, court_case_number = $10, next_hearing_date = $11
+			court_name = $9, court_case_number = $10, next_hearing_date = $11,
+			updated_at = NOW()
 		WHERE id = $1
 	`
 
-	_, err := r.db.Exec(ctx, query,
+	tag, err := r.db.Exec(ctx, query,
 		c.ID, c.Title, c.Synopsis, c.Category, c.Status,
 		c.Priority, c.IPCSections, c.InvestigatingOfficer,
 		c.CourtName, c.CourtCaseNumber, c.NextHearingDate,
 	)
-
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrCaseNotFound
+	}
+	return nil
 }
 
 func (r *CaseRepository) GetAccused(ctx context.Context, caseID uuid.UUID) ([]models.Accused, error) {

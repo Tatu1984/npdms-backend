@@ -41,6 +41,15 @@ func (h *CourtHandler) ListHearings(c *gin.Context) {
 		filter.Priority = &priority
 	}
 
+	if caseIDStr := c.Query("caseId"); caseIDStr != "" {
+		caseID, err := uuid.Parse(caseIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid_input", Message: "Invalid caseId", Code: 400})
+			return
+		}
+		filter.CaseID = &caseID
+	}
+
 	response, err := h.courtService.ListHearings(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
@@ -167,6 +176,15 @@ func (h *CourtHandler) ListOrders(c *gin.Context) {
 	if typeStr := c.Query("orderType"); typeStr != "" {
 		orderType := models.CourtOrderType(typeStr)
 		filter.OrderType = &orderType
+	}
+
+	if caseIDStr := c.Query("caseId"); caseIDStr != "" {
+		caseID, err := uuid.Parse(caseIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid_input", Message: "Invalid caseId", Code: 400})
+			return
+		}
+		filter.CaseID = &caseID
 	}
 
 	response, err := h.courtService.ListOrders(c.Request.Context(), filter)

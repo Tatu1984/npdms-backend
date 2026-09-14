@@ -7,7 +7,7 @@ One platform, fourteen phased modules, for Kolkata Police / West Bengal Police /
 |---|---|
 | Canonical location | `npdms-backend/POA.md` — the frontend repo points here |
 | Last updated | 2026-09-14 |
-| Current focus | Phases 01 and 02 complete. Core records onto the API in progress — six modules live end to end; FIR, cases, evidence and alerts screens next |
+| Current focus | Phases 01 and 02 complete. Core records onto the API in progress — eight modules live end to end; armoury, lookout and access-log backends built; their screens plus evidence and alerts next |
 
 ---
 
@@ -63,7 +63,7 @@ Work that is not a phase but that every phase depends on.
 | Audit trail | `DONE` | Hash-chained append-only `audit_logs`. Every state change appended; failures logged, never discarded. |
 | Federation code removed | `DONE` | 683 lines of browser-side vector-clock sync deleted, plus its dead backend twin. Not needed on a single server. |
 | IP/OSINT lookup moved server-side | `DONE` | `GET /intel/ip/{ip}` — controlled egress, audited with stated purpose, private addresses classified locally. |
-| **Core records onto the API** | `IN PROGRESS` | Warrants, bail, court, forensics, personnel and vehicles on the API end to end. FIR, cases, evidence, alerts screens and three missing backends remain. See below. |
+| **Core records onto the API** | `IN PROGRESS` | FIR, cases, warrants, bail, court, forensics, personnel and vehicles on the API end to end. Armoury, lookout and access-log backends built and verified. Their screens, and evidence and alerts screens, remain. See below. |
 | RBAC and permissions model | `PLANNED` | Role checks exist per-route; needs a coherent model documented and enforced centrally. |
 | Offline / sync layer | `PLANNED` | Deferred by decision. Online-first now; the offline queue is added across modules once workflows settle. |
 | CCTNS / ICJS integration | `PLANNED` | The platform consumes authorised data from systems Kolkata Police already operates. Needs their interface specifications. |
@@ -125,13 +125,18 @@ The largest outstanding foundation item.
 | | Modules | State |
 |---|---|---|
 | Backend verified (57/58 calls, sparse-row reads) | all eleven: cases, warrants, bail, forensics, personnel, vehicles, court hearings, court orders, fir, evidence, alerts | `DONE` — the one failure is alert acknowledge requiring `acknowledgedBy` in the body rather than taking it from the session |
-| Frontend on typed clients, verified in a browser | warrants, bail, court, forensics, personnel, vehicles (list and detail) | `DONE` |
-| Frontend on typed clients | fir, cases, evidence, alerts | `NEXT` — still on the legacy fallback hooks |
-| No endpoint yet | accesslog (495 lines), armoury (321), lookout (324) | `PLANNED` — tables, repository, handlers and routes first |
+| Frontend on typed clients, verified in a browser | fir, cases, warrants, bail, court, forensics, personnel, vehicles | `DONE` |
+| Frontend on typed clients | evidence, alerts | `NEXT` — still on the legacy fallback hooks |
+| Armoury backend | weapon register, issue/return ledger with rounds accounting | `DONE` — migration `000034`, `/armoury/*`. One open issue per weapon enforced by a unique partial index; a return with fewer rounds records the shortfall; a damaged return moves the weapon to maintenance. |
+| Lookout backend | notices, sightings, independent verification, resolution | `DONE` — migration `000034`, `/lookouts/*`. A sighting cannot be verified by its reporter (checked in the service and by a table constraint); resolved notices accept no further sightings. |
+| Access-log backend | sign-ins, failures, sign-outs with IP and user agent | `DONE` — `/access-log`, DSP and above. No new table: events are written to and read from the immutable audit trail, so the two cannot disagree. Failed sign-ins are attributed to the targeted account. Suspicious sources are a stated rule — five failures from one address within an hour. Sign-ins were not audited at all before this. |
+| Armoury, lookout, access-log screens | onto the new endpoints | `NEXT` |
 | Correctly client-side | auth (already API-backed), toast | None |
 
 Known and not yet fixed:
 - **Rate limit will throttle a real station.** The global limiter allows 100 requests a minute per IP and runs before authentication. On the single central server, a station behind NAT shares one IP, and each screen issues about five requests per load. Needs a decision: per-user limits after auth, with per-IP kept only for unauthenticated routes.
+- **Audit hash chain can fork under concurrent writes.** `AuditRepository.Create` reads the latest hash and inserts without a lock, so two simultaneous events can both chain from the same parent. Tamper-evidence of the chain depends on fixing this — serialise appends (advisory lock or a single-writer queue).
+- **`GET /firs` ignores its date, officer and station filters**, and FIR update does not persist incident date and time or complainant ID fields.
 - **Bail stores only `accused_id`.** The frontend now selects from the case's accused register; the API still accepts and discards a free-text name.
 - **Bail search matches only the application number**; bail stats merge approved with released and rejected with cancelled.
 - **Forensics has no request number column** (`RequestNumber` is always empty) and search covers only the lab. `GET /evidence` ignores search and case filters.
@@ -143,7 +148,7 @@ Known and not yet fixed:
 - **`court_hearings` carries duplicate columns** from the base schema — `court_name`/`court`, `hearing_type`/`type`, `documents_required`/`required_documents`. The code uses the second of each. Harmless now, to be consolidated as `000032` did for warrants.
 - **Handlers discard the underlying error.** Every defect below surfaced only as a generic 500. Logging the cause server-side would have shown each in seconds.
 - **`testutil/fixtures.go` does not compile**, so `go test ./...` and `go vet ./...` fail before running anything.
-- **Staging (Neon) needs migrations `000032` and `000033`** before warrants can be created and before any record number is issued safely there.
+- **Staging (Neon) needs migrations `000032`, `000033` and `000034`** before warrants can be created and before any record number is issued safely there.
 
 ---
 
@@ -351,6 +356,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-14 | **Armoury, lookout and access-log backends; FIR and cases on the API.** Migration `000034` adds weapons, weapon issuances, lookouts and sightings, with the workflow rules held by the database as well as the service. Sign-in, failed sign-in and sign-out now written to the audit trail with address and user agent, and served as the access log. Verified by 47 checks covering rules as well as happy paths — double issue, rounds over-return, damaged return without a note, self-verification, sightings on resolved notices, role limits. The first run caught a parameter-type ambiguity in the return transaction; the transaction rolled back cleanly, leaving the weapon correctly issued. Case register now searches and filters by status (it read only page and pageSize, so every case picker showed the eight newest cases whatever was typed); court hearings and orders filter by case; case update 404s for an unknown id, stamps `updated_at`, and returns the stored record. FIR and case screens rewired and verified in a browser. |
 | 2026-09-14 | **Six modules on the API end to end: warrants, bail, court, forensics, personnel, vehicles.** Typed clients mirroring the Go models, thin hooks with no fallback, server-side filters, pagination and counts, records linked from registers rather than free text. Each driven in a browser against the local API with writes confirmed in Postgres. Removed controls that reported actions which never happened and every fabricated Bangalore/Karnataka record. Query client fixed: 4xx reads were retried three times (`error.status` vs `ApiClientError.code`) and mutations retried once, which re-sends a create that already landed. |
 | 2026-09-14 | **Second backend repair: alerts, evidence, FIR, record numbering.** Alerts could neither be created nor listed (NULL scans). Evidence and case numbers were `UnixNano() % 100000` and collided — observed on the tenth evidence item; FIR, warrant and bail numbers were `COUNT+1`, duplicating under concurrency or after a delete. Migration `000033` adds atomic per-scope counters seeded above every issued number; 200 concurrent allocations gave 200 distinct values. FIR numbers used the first three characters of the station UUID (`550/2026/…`) — now the station code (`BHW/2026/00001`), and an unknown station is rejected. The FIR timeline queried columns that do not exist in the immutable audit table and a table that does not exist, and returned an empty list with 200 — now reads the real audit trail. No core repository checked `rows.Err()`, so a failing list query returned an empty page with 200; checks added to all eleven. `/court/stats` returned `activeCases: 143`, a constant — now counted, with day boundaries from the database clock instead of midnight UTC. Bail status changes erased earlier outcome dates — releasing a granted bail lost its approval date. |
 | 2026-09-14 | **Core-record backend repaired: warrants, bail, personnel, vehicles, court hearings, forensics.** Probed every action against local Postgres — 8 of 25 calls failed, and reads that passed did so only because tables were empty. Warrant creation failed on a NOT NULL base-schema column the code never wrote (`warrant_type`); migration `000032` consolidates it and `charges` into the columns the code uses. Bail, personnel and hearing creates **wrote the row and then returned 500**, because the read-back scanned NULLs into non-pointer fields — a retry would duplicate the record. Nullable columns and optional joins now `COALESCE`d in bail, personnel, vehicles, forensics and court queries; `hearing_time` (a `TIME`) formatted as text and written via `NULLIF`; `Vehicle.Type` moved from the traffic-challan enum to the police fleet enum the table enforces; `Warrant.ValidUntil` and `CourtHearing.CaseID` made nullable. Now 39/39 calls pass and every list and get reads back a row with only required columns set. Also found the legacy frontend hooks mask failures with demo data — see "Core records onto the API". |

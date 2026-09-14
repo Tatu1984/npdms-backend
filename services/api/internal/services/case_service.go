@@ -20,8 +20,15 @@ func NewCaseService(caseRepo *repository.CaseRepository, auditRepo *repository.A
 	}
 }
 
-func (s *CaseService) List(ctx context.Context, page, pageSize int) (*models.PaginatedResponse, error) {
-	cases, total, err := s.caseRepo.List(ctx, page, pageSize)
+func (s *CaseService) List(ctx context.Context, f repository.CaseFilter) (*models.PaginatedResponse, error) {
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize < 1 || f.PageSize > 100 {
+		f.PageSize = 20
+	}
+	page, pageSize := f.Page, f.PageSize
+	cases, total, err := s.caseRepo.List(ctx, f)
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
+	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
 )
 
@@ -23,7 +25,9 @@ func (h *CaseHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
-	response, err := h.caseService.List(c.Request.Context(), page, pageSize)
+	response, err := h.caseService.List(c.Request.Context(), repository.CaseFilter{
+		Search: c.Query("search"), Status: c.Query("status"), Page: page, PageSize: pageSize,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -110,6 +114,10 @@ func (h *CaseHandler) Update(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 
 	if err := h.caseService.Update(c.Request.Context(), &caseData, userID); err != nil {
+		if errors.Is(err, repository.ErrCaseNotFound) {
+			c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: "Case not found", Code: 404})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "update_failed",
 			Message: "Failed to update case",
@@ -118,7 +126,13 @@ func (h *CaseHandler) Update(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, caseData)
+	// Return the stored record, not the request echoed back.
+	stored, err := h.caseService.Get(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "server_error", Message: "Case updated but could not be re-read", Code: 500})
+		return
+	}
+	c.JSON(http.StatusOK, stored)
 }
 
 func (h *CaseHandler) GetAccused(c *gin.Context) {
