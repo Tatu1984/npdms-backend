@@ -22,7 +22,7 @@ func NewVehicleRepository(db *pgxpool.Pool) *VehicleRepository {
 
 type VehicleFilter struct {
 	Status    *models.VehicleStatus
-	Type      *models.VehicleType
+	Type      *models.PoliceVehicleType
 	StationID *uuid.UUID
 	Search    string
 	Page      int
@@ -71,11 +71,11 @@ func (r *VehicleRepository) List(ctx context.Context, filter VehicleFilter) ([]m
 	query := fmt.Sprintf(`
 		SELECT
 			v.id, v.registration_number, v.type, v.make, v.status, v.current_driver,
-			v.fuel_level, v.odometer_reading, v.last_service,
+			COALESCE(v.fuel_level, 0), v.odometer_reading, v.last_service,
 			v.gps_latitude, v.gps_longitude, v.current_duty,
 			v.maintenance_note, v.reserved_for, v.station_id,
 			v.created_at, v.updated_at,
-			s.name as station_name, u.name as current_driver_name
+			COALESCE(s.name, '') AS station_name, u.name AS current_driver_name
 		FROM vehicles v
 		LEFT JOIN stations s ON v.station_id = s.id
 		LEFT JOIN users u ON v.current_driver = u.id
@@ -116,11 +116,11 @@ func (r *VehicleRepository) FindByID(ctx context.Context, id uuid.UUID) (*models
 	query := `
 		SELECT
 			v.id, v.registration_number, v.type, v.make, v.status, v.current_driver,
-			v.fuel_level, v.odometer_reading, v.last_service,
+			COALESCE(v.fuel_level, 0), v.odometer_reading, v.last_service,
 			v.gps_latitude, v.gps_longitude, v.current_duty,
 			v.maintenance_note, v.reserved_for, v.station_id,
 			v.created_at, v.updated_at,
-			s.name as station_name, u.name as current_driver_name
+			COALESCE(s.name, '') AS station_name, u.name AS current_driver_name
 		FROM vehicles v
 		LEFT JOIN stations s ON v.station_id = s.id
 		LEFT JOIN users u ON v.current_driver = u.id

@@ -94,14 +94,14 @@ func (r *WarrantRepository) List(ctx context.Context, filter WarrantFilter) ([]m
 	query := fmt.Sprintf(`
 		SELECT
 			w.id, w.warrant_number, w.type, w.status, w.issued_for,
-			w.case_id, w.fir_id, w.issued_by, w.judge_name,
+			w.case_id, w.fir_id, COALESCE(w.issued_by, ''), w.judge_name,
 			w.issued_date, w.valid_until, w.ipc_sections, w.last_known_location,
-			w.priority, w.executed_date, w.executed_by,
+			COALESCE(w.priority::text, 'MEDIUM'), w.executed_date, w.executed_by,
 			w.description, w.age, w.gender, w.address, w.identifying_marks,
 			w.search_premises, w.search_scope, w.summons_purpose,
 			w.hearing_date, w.latitude, w.longitude,
 			w.created_at, w.updated_at,
-			c.case_number, f.fir_number, u.name as executed_by_name
+			COALESCE(c.case_number, ''), COALESCE(f.fir_number, ''), COALESCE(u.name, '') AS executed_by_name
 		FROM warrants w
 		LEFT JOIN cases c ON w.case_id = c.id
 		LEFT JOIN firs f ON w.fir_id = f.id
@@ -146,14 +146,14 @@ func (r *WarrantRepository) FindByID(ctx context.Context, id uuid.UUID) (*models
 	query := `
 		SELECT
 			w.id, w.warrant_number, w.type, w.status, w.issued_for,
-			w.case_id, w.fir_id, w.issued_by, w.judge_name,
+			w.case_id, w.fir_id, COALESCE(w.issued_by, ''), w.judge_name,
 			w.issued_date, w.valid_until, w.ipc_sections, w.last_known_location,
-			w.priority, w.executed_date, w.executed_by,
+			COALESCE(w.priority::text, 'MEDIUM'), w.executed_date, w.executed_by,
 			w.description, w.age, w.gender, w.address, w.identifying_marks,
 			w.search_premises, w.search_scope, w.summons_purpose,
 			w.hearing_date, w.latitude, w.longitude,
 			w.created_at, w.updated_at,
-			c.case_number, f.fir_number, u.name as executed_by_name
+			COALESCE(c.case_number, ''), COALESCE(f.fir_number, ''), COALESCE(u.name, '') AS executed_by_name
 		FROM warrants w
 		LEFT JOIN cases c ON w.case_id = c.id
 		LEFT JOIN firs f ON w.fir_id = f.id

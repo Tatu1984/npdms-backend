@@ -371,7 +371,7 @@ type Warrant struct {
 	IssuedBy           string        `json:"issuedBy" db:"issued_by"`
 	JudgeName          *string       `json:"judgeName" db:"judge_name"`
 	IssuedDate         time.Time     `json:"issuedDate" db:"issued_date"`
-	ValidUntil         time.Time     `json:"validUntil" db:"valid_until"`
+	ValidUntil         *time.Time    `json:"validUntil" db:"valid_until"`
 	IPCSections        []string      `json:"charges" db:"ipc_sections"`
 	LastKnownLocation  *string       `json:"lastKnownLocation" db:"last_known_location"`
 	Priority           Priority      `json:"priority" db:"priority"`
@@ -542,7 +542,7 @@ const (
 type Vehicle struct {
 	ID                 uuid.UUID     `json:"id" db:"id"`
 	RegistrationNumber string        `json:"registrationNumber" db:"registration_number"`
-	Type               VehicleType   `json:"type" db:"type"`
+	Type               PoliceVehicleType `json:"type" db:"type"`
 	Make               string        `json:"make" db:"make"`
 	Status             VehicleStatus `json:"status" db:"status"`
 	CurrentDriver      *uuid.UUID    `json:"currentDriverId" db:"current_driver"`
@@ -576,7 +576,7 @@ const (
 // Court Hearing model
 type CourtHearing struct {
 	ID                uuid.UUID   `json:"id" db:"id"`
-	CaseID            uuid.UUID   `json:"caseId" db:"case_id"`
+	CaseID            *uuid.UUID  `json:"caseId" db:"case_id"`
 	CaseNumber        string      `json:"caseNumber,omitempty"`
 	Title             string      `json:"title" db:"title"`
 	Court             string      `json:"court" db:"court"`

@@ -78,11 +78,11 @@ func (r *CourtRepository) ListHearings(ctx context.Context, filter CourtHearingF
 	offset := (filter.Page - 1) * filter.PageSize
 	query := fmt.Sprintf(`
 		SELECT
-			h.id, h.case_id, h.title, h.court, h.court_room, h.judge_name,
-			h.hearing_date, h.hearing_time, h.type, h.investigating_officer,
-			h.ipc_sections, h.required_documents, h.priority,
-			h.created_at, h.updated_at,
-			c.case_number, u.name as io_name
+			h.id, h.case_id, COALESCE(h.title, ''), COALESCE(h.court, ''), COALESCE(h.court_room, ''), COALESCE(h.judge_name, ''),
+			h.hearing_date, COALESCE(to_char(h.hearing_time, 'HH24:MI'), ''), COALESCE(h.type, ''), h.investigating_officer,
+			h.ipc_sections, h.required_documents, COALESCE(h.priority, 'MEDIUM'),
+			COALESCE(h.created_at, now()), COALESCE(h.updated_at, now()),
+			COALESCE(c.case_number, ''), COALESCE(u.name, '') AS io_name
 		FROM court_hearings h
 		LEFT JOIN cases c ON h.case_id = c.id
 		LEFT JOIN users u ON h.investigating_officer = u.id
@@ -121,11 +121,11 @@ func (r *CourtRepository) ListHearings(ctx context.Context, filter CourtHearingF
 func (r *CourtRepository) FindHearingByID(ctx context.Context, id uuid.UUID) (*models.CourtHearing, error) {
 	query := `
 		SELECT
-			h.id, h.case_id, h.title, h.court, h.court_room, h.judge_name,
-			h.hearing_date, h.hearing_time, h.type, h.investigating_officer,
-			h.ipc_sections, h.required_documents, h.priority,
-			h.created_at, h.updated_at,
-			c.case_number, u.name as io_name
+			h.id, h.case_id, COALESCE(h.title, ''), COALESCE(h.court, ''), COALESCE(h.court_room, ''), COALESCE(h.judge_name, ''),
+			h.hearing_date, COALESCE(to_char(h.hearing_time, 'HH24:MI'), ''), COALESCE(h.type, ''), h.investigating_officer,
+			h.ipc_sections, h.required_documents, COALESCE(h.priority, 'MEDIUM'),
+			COALESCE(h.created_at, now()), COALESCE(h.updated_at, now()),
+			COALESCE(c.case_number, ''), COALESCE(u.name, '') AS io_name
 		FROM court_hearings h
 		LEFT JOIN cases c ON h.case_id = c.id
 		LEFT JOIN users u ON h.investigating_officer = u.id
@@ -158,7 +158,7 @@ func (r *CourtRepository) CreateHearing(ctx context.Context, hearing *models.Cou
 			ipc_sections, required_documents, priority,
 			created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::time, $9, $10, $11, $12, $13, $14, $15
 		)
 	`
 
@@ -180,7 +180,7 @@ func (r *CourtRepository) UpdateHearing(ctx context.Context, hearing *models.Cou
 	query := `
 		UPDATE court_hearings SET
 			title = $2, court = $3, court_room = $4, judge_name = $5,
-			hearing_date = $6, hearing_time = $7, type = $8,
+			hearing_date = $6, hearing_time = NULLIF($7, '')::time, type = $8,
 			investigating_officer = $9, ipc_sections = $10,
 			required_documents = $11, priority = $12, updated_at = $13
 		WHERE id = $1
@@ -242,9 +242,9 @@ func (r *CourtRepository) ListOrders(ctx context.Context, filter CourtOrderFilte
 	query := fmt.Sprintf(`
 		SELECT
 			o.id, o.case_id, o.order_date, o.order_type,
-			o.summary, o.court, o.judge_name,
+			COALESCE(o.summary, ''), COALESCE(o.court, ''), o.judge_name,
 			o.created_at, o.updated_at,
-			c.case_number
+			COALESCE(c.case_number, '')
 		FROM court_orders o
 		LEFT JOIN cases c ON o.case_id = c.id
 		WHERE %s
@@ -282,9 +282,9 @@ func (r *CourtRepository) FindOrderByID(ctx context.Context, id uuid.UUID) (*mod
 	query := `
 		SELECT
 			o.id, o.case_id, o.order_date, o.order_type,
-			o.summary, o.court, o.judge_name,
+			COALESCE(o.summary, ''), COALESCE(o.court, ''), o.judge_name,
 			o.created_at, o.updated_at,
-			c.case_number
+			COALESCE(c.case_number, '')
 		FROM court_orders o
 		LEFT JOIN cases c ON o.case_id = c.id
 		WHERE o.id = $1

@@ -7,7 +7,7 @@ One platform, fourteen phased modules, for Kolkata Police / West Bengal Police /
 |---|---|
 | Canonical location | `npdms-backend/POA.md` — the frontend repo points here |
 | Last updated | 2026-09-14 |
-| Current focus | Phases 01 and 02 complete. Staging API now live on Vercel; core records onto the API is next |
+| Current focus | Phases 01 and 02 complete. Core records onto the API in progress — backend repaired, frontend rewiring next |
 
 ---
 
@@ -63,7 +63,7 @@ Work that is not a phase but that every phase depends on.
 | Audit trail | `DONE` | Hash-chained append-only `audit_logs`. Every state change appended; failures logged, never discarded. |
 | Federation code removed | `DONE` | 683 lines of browser-side vector-clock sync deleted, plus its dead backend twin. Not needed on a single server. |
 | IP/OSINT lookup moved server-side | `DONE` | `GET /intel/ip/{ip}` — controlled egress, audited with stated purpose, private addresses classified locally. |
-| **Core records onto the API** | `NEXT` | 13 Zustand stores still hold client-side mock data. Now unblocked — creates against the core tables previously failed at the database. See below. |
+| **Core records onto the API** | `IN PROGRESS` | Backend for the seven modules with endpoints now verified writable and readable. Frontend rewiring next. See below. |
 | RBAC and permissions model | `PLANNED` | Role checks exist per-route; needs a coherent model documented and enforced centrally. |
 | Offline / sync layer | `PLANNED` | Deferred by decision. Online-first now; the offline queue is added across modules once workflows settle. |
 | CCTNS / ICJS integration | `PLANNED` | The platform consumes authorised data from systems Kolkata Police already operates. Needs their interface specifications. |
@@ -113,15 +113,29 @@ Why Oracle Always Free was dropped: the `VM.Standard.E2.1.Micro` shape reports 1
 
 ---
 
-### Core records onto the API — `NEXT`
+### Core records onto the API — `IN PROGRESS`
 
-The largest outstanding foundation item. Thirteen stores hold mock data in the browser.
+The largest outstanding foundation item.
 
-| | Stores | Work |
+**Correction to the earlier scoping.** It described the endpoint-backed modules as "pure rewiring". Two things made that wrong:
+
+- **The legacy React Query hooks are not API-backed in any meaningful sense.** All fifteen in `ui/web/src/hooks/` (`use-firs`, `use-cases`, `use-warrants` and the rest) fall back to IndexedDB and then to hardcoded Bangalore demo records when a request fails, and a failed write is queued locally and returned as if it succeeded. They use raw `fetch` without the `X-CSRF-Token` header. FIR, cases, evidence and alerts screens use these hooks — so they were never on the API either, despite their stores being unused. Each module needs a typed `lib/api/<module>.ts` mirroring the Go models and thin hooks, in the Phase 01/02 pattern.
+- **The backend for these modules did not work.** Found by exercising every create, list, get, update and status action against local Postgres, then reading each back from a row with only its required columns set.
+
+| | Modules | State |
 |---|---|---|
-| Endpoint already exists | fir, cases, evidence, warrant, bail, court, forensics, personnel, vehicles, alerts | Pure rewiring — replace ~2,400 lines of client-side mock with API calls |
-| No endpoint yet | accesslog (495 lines), armoury (321), lookout (324) | Tables, repository, handlers and routes first |
+| Backend verified (39/39 calls, sparse-row reads) | cases, warrants, bail, forensics, personnel, vehicles, court hearings, court orders | `DONE` |
+| Backend not yet re-verified | fir, evidence, alerts | `PLANNED` — same probe to be run before rewiring |
+| Frontend rewiring onto typed clients | all of the above | `NEXT` |
+| No endpoint yet | accesslog (495 lines), armoury (321), lookout (324) | `PLANNED` — tables, repository, handlers and routes first |
 | Correctly client-side | auth (already API-backed), toast | None |
+
+Known and not yet fixed:
+- **Bail stores only `accused_id`.** An accused name sent without a linked accused record is accepted and discarded. The frontend must select from the accused register; the API should reject the free-text form.
+- **`court_hearings` carries duplicate columns** from the base schema — `court_name`/`court`, `hearing_type`/`type`, `documents_required`/`required_documents`. The code uses the second of each. Harmless now, to be consolidated as `000032` did for warrants.
+- **Handlers discard the underlying error.** Every defect below surfaced only as a generic 500. Logging the cause server-side would have shown each in seconds.
+- **`testutil/fixtures.go` does not compile**, so `go test ./...` and `go vet ./...` fail before running anything.
+- **Staging (Neon) needs migration `000032`** before warrants can be created there.
 
 ---
 
@@ -329,6 +343,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-14 | **Core-record backend repaired: warrants, bail, personnel, vehicles, court hearings, forensics.** Probed every action against local Postgres — 8 of 25 calls failed, and reads that passed did so only because tables were empty. Warrant creation failed on a NOT NULL base-schema column the code never wrote (`warrant_type`); migration `000032` consolidates it and `charges` into the columns the code uses. Bail, personnel and hearing creates **wrote the row and then returned 500**, because the read-back scanned NULLs into non-pointer fields — a retry would duplicate the record. Nullable columns and optional joins now `COALESCE`d in bail, personnel, vehicles, forensics and court queries; `hearing_time` (a `TIME`) formatted as text and written via `NULLIF`; `Vehicle.Type` moved from the traffic-challan enum to the police fleet enum the table enforces; `Warrant.ValidUntil` and `CourtHearing.CaseID` made nullable. Now 39/39 calls pass and every list and get reads back a row with only required columns set. Also found the legacy frontend hooks mask failures with demo data — see "Core records onto the API". |
 | 2026-09-14 | **Container builds repaired and verified.** Three places pinned Go 1.22 against a `go 1.25` go.mod — `services/api/Dockerfile`, `Dockerfile.dev` and `.github/workflows/ci.yaml`, so CI was broken as well as the images. All three now on 1.25. Two further defects found while verifying: the production Dockerfile hardcoded `GOARCH=amd64`, yielding an image tagged arm64 that carried an x86-64 binary and only ran where emulation existed — now `ARG TARGETARCH` with an amd64 default; and `Dockerfile.dev` installed `cosmtrek/air@latest`, a renamed module whose current release needs Go 1.26, so an unpinned install broke the build — now `air-verse/air@v1.61.7`. Verified by building both images and running the API container against Neon: `/health` 200, `/ready` reports `database: healthy`. |
 | 2026-09-14 | Decided the backend repository stays public for now. |
 | 2026-09-14 | **Staging API deployed to Vercel** at `https://api-black-pi.vercel.app`, against Neon. Vercel's Go runtime runs a `package main` that listens on `$PORT`, which `main.go` already did, so no application change was needed — `services/api/vercel.json` supplies the build command, region and non-secret environment. Health, readiness and CORS preflight verified; login not yet exercised. |

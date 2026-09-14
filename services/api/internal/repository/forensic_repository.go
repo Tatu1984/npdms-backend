@@ -81,7 +81,7 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 			fr.submitted_date, fr.completed_date, fr.expected_date,
 			fr.lab, fr.analyst, fr.summary, fr.findings, fr.progress,
 			fr.created_at, fr.updated_at,
-			c.case_number
+			COALESCE(c.case_number, '')
 		FROM forensics fr
 		LEFT JOIN cases c ON fr.case_id = c.id
 		WHERE %s
@@ -123,7 +123,7 @@ func (r *ForensicRepository) FindByID(ctx context.Context, id uuid.UUID) (*model
 			fr.submitted_date, fr.completed_date, fr.expected_date,
 			fr.lab, fr.analyst, fr.summary, fr.findings, fr.progress,
 			fr.created_at, fr.updated_at,
-			c.case_number
+			COALESCE(c.case_number, '')
 		FROM forensics fr
 		LEFT JOIN cases c ON fr.case_id = c.id
 		WHERE fr.id = $1

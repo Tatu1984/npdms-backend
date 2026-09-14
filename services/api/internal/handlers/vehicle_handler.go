@@ -36,7 +36,7 @@ func (h *VehicleHandler) List(c *gin.Context) {
 	}
 
 	if typeStr := c.Query("type"); typeStr != "" {
-		vehicleType := models.VehicleType(typeStr)
+		vehicleType := models.PoliceVehicleType(typeStr)
 		filter.Type = &vehicleType
 	}
 

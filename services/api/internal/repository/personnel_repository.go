@@ -76,10 +76,10 @@ func (r *PersonnelRepository) List(ctx context.Context, filter PersonnelFilter) 
 	query := fmt.Sprintf(`
 		SELECT
 			p.id, p.user_id, u.name, p.badge_number, p.rank, p.status,
-			u.phone, u.email, p.station_id, p.joining_date, p.assigned_cases,
+			COALESCE(u.phone, ''), u.email, p.station_id, p.joining_date, COALESCE(p.assigned_cases, 0),
 			p.current_duty, p.shift, p.leave_type, p.leave_until,
 			p.created_at, p.updated_at,
-			s.name as station_name
+			COALESCE(s.name, '') AS station_name
 		FROM personnel p
 		INNER JOIN users u ON p.user_id = u.id
 		LEFT JOIN stations s ON p.station_id = s.id
@@ -119,10 +119,10 @@ func (r *PersonnelRepository) FindByID(ctx context.Context, id uuid.UUID) (*mode
 	query := `
 		SELECT
 			p.id, p.user_id, u.name, p.badge_number, p.rank, p.status,
-			u.phone, u.email, p.station_id, p.joining_date, p.assigned_cases,
+			COALESCE(u.phone, ''), u.email, p.station_id, p.joining_date, COALESCE(p.assigned_cases, 0),
 			p.current_duty, p.shift, p.leave_type, p.leave_until,
 			p.created_at, p.updated_at,
-			s.name as station_name
+			COALESCE(s.name, '') AS station_name
 		FROM personnel p
 		INNER JOIN users u ON p.user_id = u.id
 		LEFT JOIN stations s ON p.station_id = s.id

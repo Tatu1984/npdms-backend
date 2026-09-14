@@ -78,7 +78,7 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 			b.rejection_reason, b.cancellation_reason, b.lawyer,
 			b.valid_until, b.order_summary,
 			b.created_at, b.updated_at,
-			c.case_number, f.fir_number, a.name as accused_name
+			COALESCE(c.case_number, ''), COALESCE(f.fir_number, ''), COALESCE(a.name, '') AS accused_name
 		FROM bail b
 		LEFT JOIN cases c ON b.case_id = c.id
 		LEFT JOIN firs f ON b.fir_id = f.id
@@ -130,7 +130,7 @@ func (r *BailRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Ba
 			b.rejection_reason, b.cancellation_reason, b.lawyer,
 			b.valid_until, b.order_summary,
 			b.created_at, b.updated_at,
-			c.case_number, f.fir_number, a.name as accused_name
+			COALESCE(c.case_number, ''), COALESCE(f.fir_number, ''), COALESCE(a.name, '') AS accused_name
 		FROM bail b
 		LEFT JOIN cases c ON b.case_id = c.id
 		LEFT JOIN firs f ON b.fir_id = f.id
