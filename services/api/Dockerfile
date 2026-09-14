@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -16,8 +16,14 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Build the application.
+# TARGETARCH is supplied automatically by BuildKit and names the architecture
+# the image is actually being built for. Hardcoding amd64 here produced an
+# image tagged arm64 that carried an x86-64 binary, which then only ran where
+# emulation happened to be available. The default keeps the old behaviour for
+# the legacy builder, which does not populate the argument.
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
     -ldflags='-w -s -extldflags "-static"' \
     -o /app/api \
     .
