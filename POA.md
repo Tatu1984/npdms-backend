@@ -203,24 +203,39 @@ Every table carries `origin` (`officer | supervisor | derived | ai`) so AI sugge
 
 Tamper-evident digital evidence: registration, hashing, custody transfers, access audit, verification, court view.
 
-**What makes it tamper-evident** — cryptography, not procedure:
+**What makes it tamper-evident** — cryptography and database constraints, not procedure:
 - The SHA-256 is taken **as the bytes stream into storage**. A client cannot supply a digest and nothing accepts one if offered.
 - Verification **re-reads the stored object and recomputes**. It measures the file as it is now, not a value recorded earlier.
-- Each custody transfer is signed (HMAC-SHA256, server-held key) over the item, the parties, the moment and the file's digest at that moment, so a leg cannot be inserted, reordered or backdated without the signature failing.
+- Every custody leg — including the first, written at registration — is signed (HMAC-SHA256, server-held key, payload version 2) over the item, its position, both parties and places, purpose, seal number and state, condition note, the file's digest at that moment, the signer, the exact stored time and **the previous leg's signature**. The chain and court views **re-derive every signature on each read** and report it `valid`, `invalid`, `legacy` or `unsigned`.
+- `evidence_custody`, `evidence_access_log` and `evidence_integrity_checks` refuse UPDATE, DELETE and TRUNCATE at the database (migration `000036`).
 - Integrity has **three** states. `pending` means no file, or none checked since upload — it never reads as intact.
 
 **Delivered**
-- Migrations `000030` (file metadata, signed custody, access log, integrity-check log) and `000031` (column cleanup). 12 routes under `/api/v1/custody`.
-- **Storage abstraction** (`internal/storage`) with filesystem and MinIO backends behind one interface. Filesystem is the default: a single edge server already has disk, and one fewer service is one fewer to operate, secure and back up. Writes are atomic (temp file then rename) so an interrupted upload cannot leave a partial file where evidence should be, and object keys cannot escape the storage root.
-- Attach, download (digest travels in `X-Evidence-SHA256`), verify, verification history, custody chain, transfer, access log, court verification.
-- A file can be attached **once**. Replacing the bytes behind a registered item would silently invalidate every signature and check referring to the old file; a correction is a new item with its own history.
-- Frontend: `lib/api/custody.ts`, `hooks/use-custody.ts`, both screens on live data. Upload streams as multipart rather than base64 through the JSON client.
+- Migrations `000030`, `000031` and `000036`. Routes under `/api/v1/custody`, including `POST /custody` for signed registration.
+- **Storage abstraction** (`internal/storage`) with filesystem and MinIO backends behind one interface; atomic writes; object keys cannot escape the storage root.
+- Register linked to a case or FIR, list and search, stats, attach once, authenticated download with the digest in `X-Evidence-SHA256`, verify, verification history, signed transfer to a receiving officer or place, chain view, access log, court verification, forensic request raised from an item.
+- A file can be attached **once**; a correction is a new item with its own history.
+- Custody screens fully bilingual (English and বাংলা).
 
-**Verified by deliberately tampering.** The test registers an item, attaches a file, confirms the digest matches `shasum` computed independently, transfers custody twice, then appends **one byte** to the stored file outside the platform. The next verification returns `broken` with both digests shown, both checks are kept, and the access log carries the failure.
+**Verified — 2026-09-14, through the UI.** A 42-check browser run registers an item against a case, attaches a file (the server's SHA-256 equals a digest computed independently), verifies it, downloads it (the copy's digest is recomputed on arrival and matches), records a broken-seal transfer without a note (refused with the reason shown) and a signed transfer to an officer, then **appends one byte to the stored file outside the platform**: the next verification shows `Mismatch` with both digests, both checks are kept, the page raises the mismatch, and the access log carries the failed check alongside the download (with its purpose), transfer and upload. The court view reports every signature valid and discloses no case or FIR number. A forensic request is raised from the item. Every register row action is followed. A constable's transfer is refused with the API's message and writes nothing. The screens are checked in বাংলা with no English custody labels left. Separately at the API: eight concurrent transfers give eight distinct positions, and UPDATE/DELETE on the custody tables is refused. Signature checking was tested against in-memory copies of a stored chain — an altered purpose, a backdated leg, a flipped seal, a removed leg, swapped legs and a different key are each reported `invalid` — without touching the append-only rows.
 
-**Not included, by design** — external anchoring. `blockchain_anchor_tx` exists and nothing writes it. The record is already tamper-evident; anchoring adds third-party corroboration and is a later layer.
+**Fixed while completing it**
+- **Signatures could not be verified at all.** The HMAC covered a timestamp taken in Go while `signed_at` stored the database's later `NOW()`, the payload left out position, previous holder and seal, and no code ever checked a signature. Now signed over the stored moment and verified on every read.
+- **"Append-only" was not enforced.** Nothing stopped UPDATE or DELETE on the custody, access-log or integrity tables; triggers added.
+- **Concurrent transfers could take the same position** — MAX(sequence) was read without a lock. Transfers now lock the item and run in one transaction; unique index on position.
+- **An unsigned transfer route remained** — `POST /evidence/:id/transfer` wrote custody legs without a signature. Removed. Registration's first leg was also unsigned and written outside the item's transaction; `POST /custody` now signs it atomically.
+- **Download never worked in a browser** — a plain link cannot carry the bearer token. Now an authenticated download that records a purpose and checks the copy's digest.
+- Unknown ids on transfer and verify returned 500 with raw error text; now 404, validation errors are 400 with the reason, and 500 causes are logged.
+- Register search matched only the evidence number although it promised description and seal; a control labelled "Attach to a court submission" only navigated; the module description claimed a blockchain-anchored ledger. All corrected.
 
-**Open** — the custody signature is an HMAC proving the platform recorded it and that it has not been altered. It is not a personal digital signature bound to an officer's own key pair, which would need a PKI the deployment does not have.
+**Not included, by design** — external anchoring. `blockchain_anchor_tx` exists and nothing writes it. The record is tamper-evident without it; anchoring adds third-party corroboration and is a later layer.
+
+**Open**
+- The custody signature is an HMAC proving the platform recorded the leg and that it has not been altered. It is not a personal digital signature bound to an officer's own key pair, which would need a PKI the deployment does not have — and anyone holding `CUSTODY_SIGNING_KEY` could re-sign an altered leg. Key custody is therefore part of the evidence guarantee.
+- Legs written before 2026-09-14 are shown as `legacy`: signed, but not re-derivable. They are not reported as intact.
+- Court verification is available to any signed-in officer; a court or forensic role belongs with the RBAC model.
+- The evidence `status` column is not maintained by custody movements (registration writes `COLLECTED`; transfers to a lab or court do not change it).
+- The immutable-audit-style tables still accept INSERT from any database session; the guarantee against forged *new* legs is the signature, not the database.
 
 ### Phase 03 — CCTV & Video Intelligence · `PLANNED`
 
@@ -359,6 +374,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-14 | **Phase 02 completed through the UI.** 42-check browser run covering registration, attach, verify, authenticated download with digest check, signed transfer, the one-byte tamper proof, access log, court view, forensic request, row actions, rank refusal and বাংলা. Found and fixed: custody signatures were unverifiable (signed and stored timestamps differed, payload incomplete, nothing checked them) — now payload v2 chained to the previous leg and re-derived on every read; custody, access-log and integrity tables were not append-only — triggers in `000036`; concurrent transfers could share a position; an unsigned legacy transfer route and unsigned registration leg; download could not work in a browser; 500s for unknown ids. Custody screens translated. |
 | 2026-09-14 | **Core records onto the API complete.** Evidence routed to the Phase 02 custody register (signed transfers only) and alerts rewired; the IndexedDB offline layer, its service worker API cache and the dexie/workbox dependencies removed. Found that the Phase 01 and Phase 02 forms could not be filled in a real browser — 37 handlers read an event where the shared input passes a value; fixed and made a compile error. Alerts: the issuer and acknowledging officer are taken from the session (either could be set to another officer's id), a new alert can no longer be created already acknowledged or claiming an image, and every alert audit entry now records its actor. |
 | 2026-09-14 | **Audit hash chain no longer forks under concurrent writes.** Appends read the latest hash and inserted without a lock: 60 simultaneous appends produced 9 forked parents and 51 links not matching their predecessor, so the chain would not have verified under real load. Appends now take a transaction-scoped advisory lock before reading the parent and hold it through the insert — 60 concurrent appends, 0 forks, 0 broken links. Failed audit writes were returned to callers that ignore the error; they are now reported server-side. The 51 broken links from the measuring run remain in the local development database, which is immutable by trigger and was not altered. Armoury, lookout and access-log screens on the API. |
 | 2026-09-14 | **Armoury, lookout and access-log backends; FIR and cases on the API.** Migration `000034` adds weapons, weapon issuances, lookouts and sightings, with the workflow rules held by the database as well as the service. Sign-in, failed sign-in and sign-out now written to the audit trail with address and user agent, and served as the access log. Verified by 47 checks covering rules as well as happy paths — double issue, rounds over-return, damaged return without a note, self-verification, sightings on resolved notices, role limits. The first run caught a parameter-type ambiguity in the return transaction; the transaction rolled back cleanly, leaving the weapon correctly issued. Case register now searches and filters by status (it read only page and pageSize, so every case picker showed the eight newest cases whatever was typed); court hearings and orders filter by case; case update 404s for an unknown id, stamps `updated_at`, and returns the stored record. FIR and case screens rewired and verified in a browser. |
