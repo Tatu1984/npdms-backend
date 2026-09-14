@@ -145,7 +145,7 @@ func (h *AlertHandler) Update(c *gin.Context) {
 	}
 
 	alert.ID = id
-	updated, err := h.alertService.Update(c.Request.Context(), &alert)
+	updated, err := h.alertService.Update(c.Request.Context(), &alert, middleware.GetUserID(c))
 	if err != nil {
 		if err.Error() == "alert not found" {
 			c.JSON(http.StatusNotFound, models.ErrorResponse{
@@ -217,7 +217,7 @@ func (h *AlertHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.alertService.Delete(c.Request.Context(), id); err != nil {
+	if err := h.alertService.Delete(c.Request.Context(), id, middleware.GetUserID(c)); err != nil {
 		if err.Error() == "alert not found" {
 			c.JSON(http.StatusNotFound, models.ErrorResponse{
 				Error:   "not_found",

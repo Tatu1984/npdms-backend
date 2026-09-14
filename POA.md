@@ -7,7 +7,7 @@ One platform, fourteen phased modules, for Kolkata Police / West Bengal Police /
 |---|---|
 | Canonical location | `npdms-backend/POA.md` — the frontend repo points here |
 | Last updated | 2026-09-14 |
-| Current focus | Phases 01 and 02 complete. Core records onto the API in progress — eight modules live end to end; armoury, lookout and access-log backends built; their screens plus evidence and alerts next |
+| Current focus | Core records onto the API complete — every core module on the API, no client-side stores or offline layer remain. Phase 03 (CCTV & Video Intelligence) is next |
 
 ---
 
@@ -63,9 +63,9 @@ Work that is not a phase but that every phase depends on.
 | Audit trail | `DONE` | Hash-chained append-only `audit_logs`. Every state change appended; failures logged, never discarded. |
 | Federation code removed | `DONE` | 683 lines of browser-side vector-clock sync deleted, plus its dead backend twin. Not needed on a single server. |
 | IP/OSINT lookup moved server-side | `DONE` | `GET /intel/ip/{ip}` — controlled egress, audited with stated purpose, private addresses classified locally. |
-| **Core records onto the API** | `IN PROGRESS` | FIR, cases, warrants, bail, court, forensics, personnel and vehicles on the API end to end. Armoury, lookout and access-log backends built and verified. Their screens, and evidence and alerts screens, remain. See below. |
+| **Core records onto the API** | `DONE` | All thirteen stores retired. FIR, cases, evidence, warrants, bail, court, forensics, personnel, vehicles, alerts, armoury, lookouts and the access log run on the API, each verified in a browser with writes confirmed in Postgres. See below. |
 | RBAC and permissions model | `PLANNED` | Role checks exist per-route; needs a coherent model documented and enforced centrally. |
-| Offline / sync layer | `PLANNED` | Deferred by decision. Online-first now; the offline queue is added across modules once workflows settle. |
+| Offline / sync layer | `PLANNED` | Deferred by decision. The previous IndexedDB layer was removed: it masked failures with demo data, returned locally queued writes as successes, and the service worker cached every API response for 24 hours. When this is built, a queued write must be visibly pending, never shown as saved. |
 | CCTNS / ICJS integration | `PLANNED` | The platform consumes authorised data from systems Kolkata Police already operates. Needs their interface specifications. |
 | TLS / reverse proxy | `PLANNED` | Still required for the MDC box. The Vercel staging tier terminates TLS itself, so this is outstanding only for the edge deployment. |
 
@@ -113,7 +113,7 @@ Why Oracle Always Free was dropped: the `VM.Standard.E2.1.Micro` shape reports 1
 
 ---
 
-### Core records onto the API — `IN PROGRESS`
+### Core records onto the API — `DONE`
 
 The largest outstanding foundation item.
 
@@ -126,7 +126,7 @@ The largest outstanding foundation item.
 |---|---|---|
 | Backend verified (57/58 calls, sparse-row reads) | all eleven: cases, warrants, bail, forensics, personnel, vehicles, court hearings, court orders, fir, evidence, alerts | `DONE` — the one failure is alert acknowledge requiring `acknowledgedBy` in the body rather than taking it from the session |
 | Frontend on typed clients, verified in a browser | fir, cases, warrants, bail, court, forensics, personnel, vehicles | `DONE` |
-| Frontend on typed clients | evidence, alerts | `NEXT` — still on the legacy fallback hooks |
+| Frontend on typed clients | evidence, alerts | `DONE` — `/evidence` routes to the Phase 02 custody register rather than duplicating it with unsigned transfers |
 | Armoury backend | weapon register, issue/return ledger with rounds accounting | `DONE` — migration `000034`, `/armoury/*`. One open issue per weapon enforced by a unique partial index; a return with fewer rounds records the shortfall; a damaged return moves the weapon to maintenance. |
 | Lookout backend | notices, sightings, independent verification, resolution | `DONE` — migration `000034`, `/lookouts/*`. A sighting cannot be verified by its reporter (checked in the service and by a table constraint); resolved notices accept no further sightings. |
 | Access-log backend | sign-ins, failures, sign-outs with IP and user agent | `DONE` — `/access-log`, DSP and above. No new table: events are written to and read from the immutable audit trail, so the two cannot disagree. Failed sign-ins are attributed to the targeted account. Suspicious sources are a stated rule — five failures from one address within an hour. Sign-ins were not audited at all before this. |
@@ -134,6 +134,8 @@ The largest outstanding foundation item.
 | Correctly client-side | auth (already API-backed), toast | None |
 
 Known and not yet fixed:
+- **Alert scope is not restricted by rank** — an SHO can issue a NATIONAL alert. Belongs with the RBAC model.
+- **Evidence status vocabulary is mixed** — legacy rows are `COLLECTED`, custody registration writes `IN_CUSTODY`.
 - **Rate limit will throttle a real station.** The global limiter allows 100 requests a minute per IP and runs before authentication. On the single central server, a station behind NAT shares one IP, and each screen issues about five requests per load. Needs a decision: per-user limits after auth, with per-IP kept only for unauthenticated routes.
 - **`GET /firs` ignores its date, officer and station filters**, and FIR update does not persist incident date and time or complainant ID fields.
 - **Bail stores only `accused_id`.** The frontend now selects from the case's accused register; the API still accepts and discards a free-text name.
@@ -171,6 +173,8 @@ The UI for every phase already exists and is navigable; where a phase is not `DO
 ---
 
 ### Phase 01 — AI Investigation Copilot · `DONE` (complete)
+
+> **Correction, 2026-09-14.** The investigation screens were marked done, but none of their text inputs worked in a real browser: the shared `Input` passed a value while these handlers read `e.target.value`, which threw on every keystroke. Earlier verification exercised the API, not the forms. Fixed in the frontend (`79dfa5e`), and the component's type narrowed so the mistake no longer compiles. The same defect affected the Phase 02 custody register and transfer dialogs. From here, a phase is not `DONE` until its forms are driven in a browser.
 
 Investigation workspace binding a case to its working material: persons, chronology, evidence links, tasks, recorded contradictions, identified gaps.
 
@@ -355,6 +359,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-14 | **Core records onto the API complete.** Evidence routed to the Phase 02 custody register (signed transfers only) and alerts rewired; the IndexedDB offline layer, its service worker API cache and the dexie/workbox dependencies removed. Found that the Phase 01 and Phase 02 forms could not be filled in a real browser — 37 handlers read an event where the shared input passes a value; fixed and made a compile error. Alerts: the issuer and acknowledging officer are taken from the session (either could be set to another officer's id), a new alert can no longer be created already acknowledged or claiming an image, and every alert audit entry now records its actor. |
 | 2026-09-14 | **Audit hash chain no longer forks under concurrent writes.** Appends read the latest hash and inserted without a lock: 60 simultaneous appends produced 9 forked parents and 51 links not matching their predecessor, so the chain would not have verified under real load. Appends now take a transaction-scoped advisory lock before reading the parent and hold it through the insert — 60 concurrent appends, 0 forks, 0 broken links. Failed audit writes were returned to callers that ignore the error; they are now reported server-side. The 51 broken links from the measuring run remain in the local development database, which is immutable by trigger and was not altered. Armoury, lookout and access-log screens on the API. |
 | 2026-09-14 | **Armoury, lookout and access-log backends; FIR and cases on the API.** Migration `000034` adds weapons, weapon issuances, lookouts and sightings, with the workflow rules held by the database as well as the service. Sign-in, failed sign-in and sign-out now written to the audit trail with address and user agent, and served as the access log. Verified by 47 checks covering rules as well as happy paths — double issue, rounds over-return, damaged return without a note, self-verification, sightings on resolved notices, role limits. The first run caught a parameter-type ambiguity in the return transaction; the transaction rolled back cleanly, leaving the weapon correctly issued. Case register now searches and filters by status (it read only page and pageSize, so every case picker showed the eight newest cases whatever was typed); court hearings and orders filter by case; case update 404s for an unknown id, stamps `updated_at`, and returns the stored record. FIR and case screens rewired and verified in a browser. |
 | 2026-09-14 | **Six modules on the API end to end: warrants, bail, court, forensics, personnel, vehicles.** Typed clients mirroring the Go models, thin hooks with no fallback, server-side filters, pagination and counts, records linked from registers rather than free text. Each driven in a browser against the local API with writes confirmed in Postgres. Removed controls that reported actions which never happened and every fabricated Bangalore/Karnataka record. Query client fixed: 4xx reads were retried three times (`error.status` vs `ApiClientError.code`) and mutations retried once, which re-sends a create that already landed. |

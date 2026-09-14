@@ -45,9 +45,13 @@ func (s *AlertService) GetByID(ctx context.Context, id uuid.UUID) (*models.Alert
 }
 
 func (s *AlertService) Create(ctx context.Context, alert *models.Alert) (*models.Alert, error) {
-	if !alert.Acknowledged {
-		alert.Acknowledged = false
-	}
+	// A new alert is unacknowledged, and has no image because there is no
+	// image storage. Both were previously taken from the request body, so an
+	// alert could be created already acknowledged.
+	alert.Acknowledged = false
+	alert.AcknowledgedBy = nil
+	alert.AcknowledgedAt = nil
+	alert.HasImage = false
 
 	err := s.alertRepo.Create(ctx, alert)
 	if err != nil {
@@ -55,6 +59,7 @@ func (s *AlertService) Create(ctx context.Context, alert *models.Alert) (*models
 	}
 
 	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       alert.IssuedBy,
 		Action:       "alert_created",
 		ResourceType: "alert",
 		ResourceID:   &alert.ID,
@@ -64,13 +69,15 @@ func (s *AlertService) Create(ctx context.Context, alert *models.Alert) (*models
 	return s.alertRepo.FindByID(ctx, alert.ID)
 }
 
-func (s *AlertService) Update(ctx context.Context, alert *models.Alert) (*models.Alert, error) {
+func (s *AlertService) Update(ctx context.Context, alert *models.Alert, actor uuid.UUID) (*models.Alert, error) {
+	alert.HasImage = false
 	err := s.alertRepo.Update(ctx, alert)
 	if err != nil {
 		return nil, err
 	}
 
 	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
 		Action:       "alert_updated",
 		ResourceType: "alert",
 		ResourceID:   &alert.ID,
@@ -87,6 +94,7 @@ func (s *AlertService) Acknowledge(ctx context.Context, id, acknowledgedBy uuid.
 	}
 
 	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &acknowledgedBy,
 		Action:       "alert_acknowledged",
 		ResourceType: "alert",
 		ResourceID:   &id,
@@ -96,13 +104,14 @@ func (s *AlertService) Acknowledge(ctx context.Context, id, acknowledgedBy uuid.
 	return s.alertRepo.FindByID(ctx, id)
 }
 
-func (s *AlertService) Delete(ctx context.Context, id uuid.UUID) error {
+func (s *AlertService) Delete(ctx context.Context, id, actor uuid.UUID) error {
 	err := s.alertRepo.Delete(ctx, id)
 	if err != nil {
 		return err
 	}
 
 	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
 		Action:       "alert_deleted",
 		ResourceType: "alert",
 		ResourceID:   &id,
