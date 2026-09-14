@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -101,6 +102,14 @@ func (h *AlertHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// The issuer is the authenticated officer, never a value from the body.
+	issuer := middleware.GetUserID(c)
+	if issuer == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "unauthorized", Message: "No authenticated officer", Code: 401})
+		return
+	}
+	alert.IssuedBy = &issuer
+
 	created, err := h.alertService.Create(c.Request.Context(), &alert)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
@@ -168,20 +177,15 @@ func (h *AlertHandler) Acknowledge(c *gin.Context) {
 		return
 	}
 
-	var req struct {
-		AcknowledgedBy uuid.UUID `json:"acknowledgedBy" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid_input",
-			Message: err.Error(),
-			Code:    400,
-		})
+	// The acknowledging officer is the authenticated one. Taking it from the
+	// body let any officer record an acknowledgement in another's name.
+	acknowledgedBy := middleware.GetUserID(c)
+	if acknowledgedBy == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{Error: "unauthorized", Message: "No authenticated officer", Code: 401})
 		return
 	}
 
-	updated, err := h.alertService.Acknowledge(c.Request.Context(), id, req.AcknowledgedBy)
+	updated, err := h.alertService.Acknowledge(c.Request.Context(), id, acknowledgedBy)
 	if err != nil {
 		if err.Error() == "alert not found" {
 			c.JSON(http.StatusNotFound, models.ErrorResponse{
