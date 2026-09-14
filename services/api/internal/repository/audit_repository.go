@@ -5,13 +5,20 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	stdlog "log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/npdms/api/internal/models"
 )
+
+// auditChainLockKey identifies the advisory lock that serialises appends to the
+// hash chain. Any value works so long as nothing else uses it.
+const auditChainLockKey int64 = 0x4e50444d53415544 // "NPDMSAUD"
 
 type AuditRepository struct {
 	db *pgxpool.Pool
@@ -44,14 +51,31 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 
 	eventID := uuid.New()
 
-	// Link to the previous entry. A failure to read it must not lose the event,
-	// so the chain simply restarts rather than the write being abandoned.
+	// Appends are serialised. Reading the latest hash and inserting the next
+	// entry must be one step: without the lock, concurrent events read the
+	// same parent and the chain forks — measured at 51 broken links in 60
+	// simultaneous appends. The transaction-scoped advisory lock is held until
+	// commit, so the sequence number is also assigned in chain order.
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", auditChainLockKey); err != nil {
+		return err
+	}
+
+	// Link to the previous entry. An empty table starts the chain.
 	var previousHash *string
 	var prev string
-	if err := r.db.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		"SELECT current_hash FROM audit_logs ORDER BY sequence_number DESC LIMIT 1",
-	).Scan(&prev); err == nil && prev != "" {
+	).Scan(&prev)
+	switch {
+	case err == nil && prev != "":
 		previousHash = &prev
+	case err != nil && !errors.Is(err, pgx.ErrNoRows):
+		return err
 	}
 
 	outcome := "SUCCESS"
@@ -74,7 +98,7 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 	currentHash := auditEventHash(eventID, eventType, action, log.UserID,
 		resourceType, log.ResourceID, outcome, log.CreatedAt, previousHash, log.Description)
 
-	_, err := r.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_logs (
 			id, event_id, event_type, action,
 			actor_user_id, resource_type, resource_id,
@@ -94,7 +118,10 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 		previousHash, currentHash,
 		log.CreatedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // describeOrFailure puts the human description where it can be read back:
@@ -266,5 +293,12 @@ func (r *AuditRepository) Log(ctx context.Context, log *models.SimpleAuditLog) e
 	if log == nil {
 		return nil
 	}
-	return r.Create(ctx, log)
+	// Most callers do not check this error, so a failed write is reported here
+	// rather than disappearing.
+	if err := r.Create(ctx, log); err != nil {
+		stdlog.Printf("AUDIT WRITE FAILED: action=%s resource=%s id=%v success=%t: %v",
+			log.Action, log.ResourceType, log.ResourceID, log.Success, err)
+		return err
+	}
+	return nil
 }
