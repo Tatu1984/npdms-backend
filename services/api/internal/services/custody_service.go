@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,10 +29,11 @@ import (
 //     cannot supply a hash, and nothing trusts one if offered.
 //   - Verification re-reads the stored object and recomputes the digest. It
 //     measures the file as it is now, not a value recorded earlier.
-//   - A custody transfer is signed with a key the server holds, over the
-//     identity of the item, the parties, the moment, and the file's hash at that
-//     moment. A leg cannot be inserted, reordered or backdated without the
-//     signature ceasing to verify.
+//   - A custody leg is signed with a key the server holds, over the item, its
+//     position, both parties and places, the seal, the moment, the file's hash
+//     at that moment, and the previous leg's signature. Every read re-derives
+//     each signature, so a leg that is altered, inserted, removed, reordered or
+//     backdated shows as invalid.
 //
 // None of this is a blockchain. Anchoring these digests externally is a later
 // layer and changes nothing above.
@@ -58,6 +60,9 @@ func NewCustodyService(repo *repository.CustodyRepository, store storage.Store, 
 // ErrNoFile is returned when an operation needs a stored file and none exists.
 var ErrNoFile = errors.New("no file has been attached to this evidence item")
 
+// ErrFileAlreadyAttached refuses a second file on an item.
+var ErrFileAlreadyAttached = errors.New("a file is already attached to this evidence item; register a new item for a corrected file")
+
 func (s *CustodyService) audit(ctx context.Context, actor *uuid.UUID, action string, id *uuid.UUID, description string, success bool) {
 	if s.auditRepo == nil {
 		return
@@ -75,6 +80,40 @@ func (s *CustodyService) audit(ctx context.Context, actor *uuid.UUID, action str
 }
 
 /* -------------------------------- register -------------------------------- */
+
+var evidenceTypes = map[string]bool{
+	"PHYSICAL": true, "DIGITAL": true, "DOCUMENTARY": true,
+	"BIOLOGICAL": true, "TRACE": true, "TESTIMONIAL": true,
+}
+
+// Register creates an evidence item linked to a case or FIR, with a signed
+// first custody leg naming the registering officer.
+func (s *CustodyService) Register(ctx context.Context, req models.RegisterEvidenceRequest, actor *uuid.UUID, actorName, ip, userAgent string) (*models.EvidenceRecord, error) {
+	if strings.TrimSpace(req.Description) == "" {
+		return nil, invalid("a description is required")
+	}
+	if !evidenceTypes[req.EvidenceType] {
+		return nil, invalid("unknown evidence type %q", req.EvidenceType)
+	}
+	if req.CaseID == nil && req.FIRID == nil {
+		return nil, invalid("evidence must be linked to a case or an FIR")
+	}
+	id, err := s.repo.Register(ctx, req, actor, s.signCustody)
+	if err != nil {
+		if errors.Is(err, repository.ErrUnknownLink) {
+			return nil, invalid("%v", err)
+		}
+		return nil, err
+	}
+	item, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.repo.LogAccess(ctx, id, "registered", actor, actorName, "", ip, userAgent, "success", "")
+	s.audit(ctx, actor, "evidence_registered", &id,
+		fmt.Sprintf("Registered %s: %s", item.EvidenceNumber, item.Description), true)
+	return item, nil
+}
 
 func (s *CustodyService) List(ctx context.Context, filter repository.EvidenceFilter) (*models.PaginatedResponse, error) {
 	items, total, err := s.repo.List(ctx, filter)
@@ -122,7 +161,7 @@ func (s *CustodyService) AttachFile(ctx context.Context, id uuid.UUID, filename,
 	// registered item would silently invalidate every signature and check that
 	// referred to the old file; a correction is a new item with its own history.
 	if item.File.ObjectKey != nil && *item.File.ObjectKey != "" {
-		return nil, fmt.Errorf("evidence %s already has a file attached; register a new item instead", item.EvidenceNumber)
+		return nil, fmt.Errorf("%w (%s)", ErrFileAlreadyAttached, item.EvidenceNumber)
 	}
 
 	key := objectKeyFor(item.EvidenceNumber, filename)
@@ -253,12 +292,74 @@ func (s *CustodyService) IntegrityHistory(ctx context.Context, id uuid.UUID) ([]
 
 /* --------------------------------- custody -------------------------------- */
 
+// CustodyChain returns the legs with each signature re-derived now.
 func (s *CustodyService) CustodyChain(ctx context.Context, id uuid.UUID) ([]models.CustodyEvent, error) {
-	return s.repo.CustodyChain(ctx, id)
+	if _, err := s.repo.Get(ctx, id); err != nil {
+		return nil, err
+	}
+	chain, err := s.repo.CustodyChain(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.checkSignatures(chain)
+	return chain, nil
+}
+
+// checkSignatures sets SignatureStatus on every leg. Each version-2 leg is
+// re-signed from its stored fields and the stored signature of the leg before
+// it; any difference means the record is not what was signed.
+func (s *CustodyService) checkSignatures(chain []models.CustodyEvent) {
+	previous := ""
+	for i := range chain {
+		e := &chain[i]
+		stored := ""
+		if e.Signature != nil {
+			stored = strings.TrimSpace(*e.Signature)
+		}
+		switch {
+		case stored == "":
+			e.SignatureStatus = models.SignatureUnsigned
+		case e.SignatureVersion == nil || *e.SignatureVersion != models.CustodySignatureVersion ||
+			e.StoredSequence == nil || e.SignedAt == nil || e.ToLocation == nil:
+			e.SignatureStatus = models.SignatureLegacy
+		default:
+			leg := models.CustodyLeg{
+				EvidenceID: e.EvidenceID, Sequence: *e.StoredSequence,
+				FromUser: e.FromUserID, FromLocation: e.FromLocation,
+				ToUser: e.ToUserID, ToLocation: *e.ToLocation,
+				SealNumber: e.SealNumber, SealIntact: e.SealIntact, ConditionNote: e.ConditionNote,
+				SignedBy: e.SignedBy, SignedAt: e.SignedAt.UTC(),
+				PreviousSignature: previous,
+			}
+			if e.Purpose != nil {
+				leg.Purpose = *e.Purpose
+			}
+			if e.HashAtTransfer != nil {
+				leg.HashAtTransfer = strings.TrimSpace(*e.HashAtTransfer)
+			}
+			if hmac.Equal([]byte(s.signCustody(leg)), []byte(stored)) {
+				e.SignatureStatus = models.SignatureValid
+			} else {
+				e.SignatureStatus = models.SignatureInvalid
+			}
+		}
+		previous = stored
+	}
 }
 
 // Transfer records a movement and signs it.
 func (s *CustodyService) Transfer(ctx context.Context, id uuid.UUID, req models.TransferCustodyRequest, actor *uuid.UUID, actorName, ip, userAgent string) (*models.CustodyEvent, error) {
+	if strings.TrimSpace(req.ToLocation) == "" && req.ToUserID == nil {
+		return nil, invalid("name the receiving officer or the destination")
+	}
+	if strings.TrimSpace(req.Purpose) == "" {
+		return nil, invalid("record why the item is moving")
+	}
+	if req.SealIntact != nil && !*req.SealIntact &&
+		(req.ConditionNote == nil || strings.TrimSpace(*req.ConditionNote) == "") {
+		return nil, invalid("a broken seal must be described in the condition note")
+	}
+
 	item, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -269,13 +370,14 @@ func (s *CustodyService) Transfer(ctx context.Context, id uuid.UUID, req models.
 		hashAtTransfer = *item.File.SHA256
 	}
 
-	signedAt := time.Now()
-	signature := s.signCustody(id, req, hashAtTransfer, actor, signedAt)
-
-	event, err := s.repo.RecordTransfer(ctx, id, req, signature, hashAtTransfer, actor)
+	event, err := s.repo.RecordTransfer(ctx, id, req, hashAtTransfer, actor, s.signCustody)
 	if err != nil {
+		if errors.Is(err, repository.ErrUnknownLink) {
+			return nil, invalid("%v", err)
+		}
 		return nil, err
 	}
+	event.SignatureStatus = models.SignatureValid
 
 	_ = s.repo.LogAccess(ctx, id, "transferred", actor, actorName, req.Purpose, ip, userAgent, "success",
 		"To "+req.ToLocation)
@@ -289,34 +391,48 @@ func (s *CustodyService) Transfer(ctx context.Context, id uuid.UUID, req models.
 	return event, nil
 }
 
-// signCustody produces the attestation for one leg.
+// signCustody produces the attestation for one leg (payload version 2).
 //
-// HMAC-SHA256 over the fields that matter, with a server-held key. This proves
-// the record was created by this platform and has not been altered since; it is
-// not a personal digital signature bound to an officer's own key pair, which
-// would need a PKI the deployment does not yet have.
-func (s *CustodyService) signCustody(evidenceID uuid.UUID, req models.TransferCustodyRequest, hashAtTransfer string, signedBy *uuid.UUID, signedAt time.Time) string {
-	actor := ""
-	if signedBy != nil {
-		actor = signedBy.String()
+// HMAC-SHA256 with a server-held key. This proves the record was created by
+// this platform and has not been altered since; it is not a personal digital
+// signature bound to an officer's own key pair, which would need a PKI the
+// deployment does not yet have.
+func (s *CustodyService) signCustody(leg models.CustodyLeg) string {
+	id := func(u *uuid.UUID) string {
+		if u == nil {
+			return ""
+		}
+		return u.String()
 	}
-	to := ""
-	if req.ToUserID != nil {
-		to = req.ToUserID.String()
+	text := func(v *string) string {
+		if v == nil {
+			return ""
+		}
+		return strings.TrimSpace(*v)
 	}
 
-	payload := strings.Join([]string{
-		evidenceID.String(),
-		actor,
-		to,
-		req.ToLocation,
-		req.Purpose,
-		hashAtTransfer,
-		signedAt.UTC().Format(time.RFC3339Nano),
-	}, "|")
+	fields := []string{
+		"v2",
+		leg.EvidenceID.String(),
+		strconv.Itoa(leg.Sequence),
+		id(leg.FromUser), text(leg.FromLocation),
+		id(leg.ToUser), strings.TrimSpace(leg.ToLocation),
+		strings.TrimSpace(leg.Purpose),
+		text(leg.SealNumber), strconv.FormatBool(leg.SealIntact), text(leg.ConditionNote),
+		leg.HashAtTransfer,
+		id(leg.SignedBy),
+		leg.SignedAt.UTC().Format(time.RFC3339Nano),
+		leg.PreviousSignature,
+	}
+	// Each field is length-prefixed, so no value — whatever it contains — can
+	// be shifted into its neighbour and still produce the same payload.
+	var payload strings.Builder
+	for _, f := range fields {
+		fmt.Fprintf(&payload, "%d:%s;", len(f), f)
+	}
 
 	mac := hmac.New(sha256.New, s.signingKey)
-	mac.Write([]byte(payload))
+	mac.Write([]byte(payload.String()))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -339,13 +455,23 @@ func (s *CustodyService) CourtVerification(ctx context.Context, id uuid.UUID, ac
 	if err != nil {
 		return nil, err
 	}
+	s.checkSignatures(chain)
 
 	sealIntact := true
-	for _, event := range chain {
-		if !event.SealIntact {
+	invalidLegs, unverified := 0, 0
+	for i := range chain {
+		if !chain[i].SealIntact {
 			sealIntact = false
-			break
 		}
+		switch chain[i].SignatureStatus {
+		case models.SignatureInvalid:
+			invalidLegs++
+		case models.SignatureLegacy, models.SignatureUnsigned:
+			unverified++
+		}
+		// Free-text notes can describe the investigation; the court view
+		// carries custody facts only.
+		chain[i].Notes = nil
 	}
 
 	_ = s.repo.LogAccess(ctx, id, "court_verified", actor, actorName, "Court verification", ip, userAgent, "success", "")
@@ -360,6 +486,9 @@ func (s *CustodyService) CourtVerification(ctx context.Context, id uuid.UUID, ac
 		LastVerifiedAt: item.LastVerifiedAt,
 		CustodyEvents:  len(chain),
 		CustodyChain:   chain,
+		ChainIntact:    invalidLegs == 0 && unverified == 0,
+		InvalidLegs:    invalidLegs,
+		UnverifiedLegs: unverified,
 		SealIntact:     sealIntact,
 		VerifiedAt:     time.Now(),
 	}

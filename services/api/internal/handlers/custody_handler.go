@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -56,7 +56,40 @@ func evidenceID(c *gin.Context) (uuid.UUID, bool) {
 	return id, true
 }
 
+// custodyError maps service errors to status codes. The cause of anything
+// unrecognised is logged and never sent to the client.
+func custodyError(c *gin.Context, op string, err error) {
+	switch {
+	case errors.Is(err, services.ErrInvalid):
+		badRequest(c, err.Error())
+	case errors.Is(err, repository.ErrEvidenceNotFound):
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: "Evidence not found", Code: 404})
+	case errors.Is(err, services.ErrNoFile):
+		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "no_file", Message: err.Error(), Code: 409})
+	case errors.Is(err, services.ErrFileAlreadyAttached):
+		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "file_already_attached", Message: err.Error(), Code: 409})
+	default:
+		log.Printf("custody %s failed: %v", op, err)
+		serverError(c, "Failed to "+op)
+	}
+}
+
 /* -------------------------------- register -------------------------------- */
+
+// Register creates an item linked to a case or FIR, with a signed first leg.
+func (h *CustodyHandler) Register(c *gin.Context) {
+	var req models.RegisterEvidenceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "Description and evidence type are required")
+		return
+	}
+	item, err := h.service.Register(c.Request.Context(), req, actorID(c), actorName(c), c.ClientIP(), c.Request.UserAgent())
+	if err != nil {
+		custodyError(c, "register evidence", err)
+		return
+	}
+	c.JSON(http.StatusCreated, item)
+}
 
 func (h *CustodyHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -76,7 +109,7 @@ func (h *CustodyHandler) List(c *gin.Context) {
 
 	result, err := h.service.List(c.Request.Context(), filter)
 	if err != nil {
-		serverError(c, "Failed to fetch the evidence register")
+		custodyError(c, "fetch the evidence register", err)
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -90,9 +123,7 @@ func (h *CustodyHandler) Get(c *gin.Context) {
 	item, err := h.service.Get(c.Request.Context(), id, actorID(c), actorName(c),
 		c.Query("purpose"), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse{
-			Error: "not_found", Message: "Evidence not found", Code: 404,
-		})
+		custodyError(c, "load evidence", err)
 		return
 	}
 	c.JSON(http.StatusOK, item)
@@ -141,14 +172,7 @@ func (h *CustodyHandler) AttachFile(c *gin.Context) {
 	item, err := h.service.AttachFile(c.Request.Context(), id, header.Filename, contentType,
 		file, actorID(c), actorName(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		// An item that already holds a file is a client mistake, not a fault.
-		if errors.Is(err, services.ErrNoFile) || strings.Contains(err.Error(), "already has a file") {
-			c.JSON(http.StatusConflict, models.ErrorResponse{
-				Error: "file_already_attached", Message: err.Error(), Code: 409,
-			})
-			return
-		}
-		serverError(c, err.Error())
+		custodyError(c, "store the file", err)
 		return
 	}
 
@@ -165,13 +189,7 @@ func (h *CustodyHandler) Download(c *gin.Context) {
 	body, item, err := h.service.OpenFile(c.Request.Context(), id, actorID(c), actorName(c),
 		c.Query("purpose"), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		if errors.Is(err, services.ErrNoFile) {
-			c.JSON(http.StatusNotFound, models.ErrorResponse{
-				Error: "no_file", Message: err.Error(), Code: 404,
-			})
-			return
-		}
-		serverError(c, err.Error())
+		custodyError(c, "open the file", err)
 		return
 	}
 	defer body.Close()
@@ -215,13 +233,7 @@ func (h *CustodyHandler) Verify(c *gin.Context) {
 	result, err := h.service.Verify(c.Request.Context(), id, req.Note,
 		actorID(c), actorName(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		if errors.Is(err, services.ErrNoFile) {
-			c.JSON(http.StatusConflict, models.ErrorResponse{
-				Error: "no_file", Message: err.Error(), Code: 409,
-			})
-			return
-		}
-		serverError(c, err.Error())
+		custodyError(c, "verify the file", err)
 		return
 	}
 
@@ -237,7 +249,7 @@ func (h *CustodyHandler) IntegrityHistory(c *gin.Context) {
 	}
 	checks, err := h.service.IntegrityHistory(c.Request.Context(), id)
 	if err != nil {
-		serverError(c, "Failed to fetch verification history")
+		custodyError(c, "fetch verification history", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": checks})
@@ -252,7 +264,7 @@ func (h *CustodyHandler) CustodyChain(c *gin.Context) {
 	}
 	chain, err := h.service.CustodyChain(c.Request.Context(), id)
 	if err != nil {
-		serverError(c, "Failed to fetch the chain of custody")
+		custodyError(c, "fetch the chain of custody", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": chain})
@@ -266,14 +278,14 @@ func (h *CustodyHandler) Transfer(c *gin.Context) {
 
 	var req models.TransferCustodyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err.Error())
+		badRequest(c, "Destination and purpose are required")
 		return
 	}
 
 	event, err := h.service.Transfer(c.Request.Context(), id, req,
 		actorID(c), actorName(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		serverError(c, err.Error())
+		custodyError(c, "record the transfer", err)
 		return
 	}
 	c.JSON(http.StatusCreated, event)
@@ -289,7 +301,7 @@ func (h *CustodyHandler) AccessLog(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	entries, err := h.service.AccessLog(c.Request.Context(), id, limit)
 	if err != nil {
-		serverError(c, "Failed to fetch the access log")
+		custodyError(c, "fetch the access log", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": entries})
@@ -307,9 +319,7 @@ func (h *CustodyHandler) CourtVerification(c *gin.Context) {
 	view, err := h.service.CourtVerification(c.Request.Context(), id,
 		actorID(c), actorName(c), c.ClientIP(), c.Request.UserAgent())
 	if err != nil {
-		c.JSON(http.StatusNotFound, models.ErrorResponse{
-			Error: "not_found", Message: "Evidence not found", Code: 404,
-		})
+		custodyError(c, "prepare the court verification", err)
 		return
 	}
 	c.JSON(http.StatusOK, view)

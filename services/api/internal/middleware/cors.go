@@ -63,7 +63,9 @@ func CORS() gin.HandlerFunc {
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-CSRF-Token")
-		c.Header("Access-Control-Expose-Headers", "Content-Length, Content-Type")
+		// Evidence downloads carry the recorded digest and filename in headers; a
+		// browser on another origin can read only headers listed here.
+		c.Header("Access-Control-Expose-Headers", "Content-Length, Content-Type, Content-Disposition, X-Evidence-SHA256, X-Evidence-Number")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {

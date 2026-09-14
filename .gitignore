@@ -46,3 +46,7 @@ next-env.d.ts
 
 # Compiled Go binary
 services/api/api
+
+# Evidence files written by a local API (STORAGE_PATH=./data/evidence). Evidence
+# bytes never belong in the repository.
+services/api/data/

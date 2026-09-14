@@ -2,12 +2,14 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npdms/api/internal/models"
@@ -130,8 +132,109 @@ func (r *CustodyRepository) List(ctx context.Context, f EvidenceFilter) ([]model
 	return out, total, rows.Err()
 }
 
+// ErrEvidenceNotFound is returned for an id with no register entry.
+var ErrEvidenceNotFound = errors.New("evidence not found")
+
 func (r *CustodyRepository) Get(ctx context.Context, id uuid.UUID) (*models.EvidenceRecord, error) {
-	return scanEvidence(r.db.QueryRow(ctx, evidenceSelect+" WHERE e.id = $1", id))
+	item, err := scanEvidence(r.db.QueryRow(ctx, evidenceSelect+" WHERE e.id = $1", id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrEvidenceNotFound
+	}
+	return item, err
+}
+
+// ErrUnknownLink is returned when a registration or transfer names a case,
+// FIR or officer that does not exist.
+var ErrUnknownLink = errors.New("the linked case, FIR or officer does not exist")
+
+// Register creates the register entry and its first custody leg, signed, in
+// one transaction: an item never exists without the record of who took it in.
+func (r *CustodyRepository) Register(ctx context.Context, req models.RegisterEvidenceRequest, collectedBy *uuid.UUID, sign LegSigner) (uuid.UUID, error) {
+	number, err := formatRecordNumber(ctx, r.db, "EVD")
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// A case carries its FIR; take it from the case so the two cannot disagree.
+	firID := req.FIRID
+	if req.CaseID != nil {
+		var caseFIR *uuid.UUID
+		if err := tx.QueryRow(ctx, "SELECT fir_id FROM cases WHERE id = $1", *req.CaseID).Scan(&caseFIR); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return uuid.Nil, ErrUnknownLink
+			}
+			return uuid.Nil, err
+		}
+		if caseFIR != nil {
+			firID = caseFIR
+		}
+	}
+
+	id := uuid.New()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO evidence (
+			id, evidence_number, case_id, fir_id, evidence_type, description,
+			collection_location, collection_date, collected_by, storage_location,
+			container_type, seal_number, status
+		) VALUES ($1,$2,$3,$4,$5::evidence_type,$6,$7,COALESCE($8, NOW()),$9,$10,$11,$12,'COLLECTED')
+	`, id, number, req.CaseID, firID, req.EvidenceType, strings.TrimSpace(req.Description),
+		req.CollectionLocation, req.CollectionDate, collectedBy, req.StorageLocation,
+		req.ContainerType, req.SealNumber)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return uuid.Nil, ErrUnknownLink
+		}
+		return uuid.Nil, err
+	}
+
+	toLocation := "Registered"
+	if req.StorageLocation != nil && strings.TrimSpace(*req.StorageLocation) != "" {
+		toLocation = strings.TrimSpace(*req.StorageLocation)
+	}
+	leg := models.CustodyLeg{
+		EvidenceID: id, Sequence: 1,
+		ToUser: collectedBy, ToLocation: toLocation,
+		Purpose:    "Registered in the evidence register",
+		SealNumber: req.SealNumber, SealIntact: true,
+		SignedBy: collectedBy, SignedAt: signingTime(),
+	}
+	if err := insertLeg(ctx, tx, uuid.New(), leg, sign(leg)); err != nil {
+		return uuid.Nil, err
+	}
+	return id, tx.Commit(ctx)
+}
+
+// LegSigner returns the signature for a leg. It is supplied by the service,
+// which holds the key; the repository decides the leg's contents inside the
+// transaction that writes it.
+type LegSigner func(leg models.CustodyLeg) string
+
+// signingTime is truncated to the database's precision so the moment that is
+// signed is exactly the moment that is stored.
+func signingTime() time.Time {
+	return time.Now().UTC().Truncate(time.Microsecond)
+}
+
+func insertLeg(ctx context.Context, tx pgx.Tx, id uuid.UUID, leg models.CustodyLeg, signature string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO evidence_custody
+		  (id, evidence_id, sequence_number, from_user, from_location,
+		   to_user, to_location, purpose, seal_number, seal_intact,
+		   condition_note, signed_by, signed_at, signature, signature_version,
+		   hash_at_transfer, transfer_date, verified)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$13,TRUE)
+	`, id, leg.EvidenceID, leg.Sequence, leg.FromUser, leg.FromLocation,
+		leg.ToUser, leg.ToLocation, leg.Purpose, leg.SealNumber, leg.SealIntact,
+		leg.ConditionNote, leg.SignedBy, leg.SignedAt, signature, models.CustodySignatureVersion,
+		nullIfEmpty(leg.HashAtTransfer))
+	return err
 }
 
 // AttachFile records the stored object against the item and marks it verified:
@@ -163,7 +266,7 @@ func (r *CustodyRepository) CustodyChain(ctx context.Context, evidenceID uuid.UU
 		       c.to_user, COALESCE(tu.name, ''), c.to_location,
 		       c.purpose, c.seal_number, c.seal_intact, c.condition_note, c.notes,
 		       c.signed_by, COALESCE(su.name, ''), c.signed_at, c.signature, c.hash_at_transfer,
-		       c.transfer_date, c.created_at
+		       c.transfer_date, c.created_at, c.sequence_number, c.signature_version
 		FROM evidence_custody c
 		LEFT JOIN users fu ON c.from_user = fu.id
 		LEFT JOIN users tu ON c.to_user = tu.id
@@ -184,7 +287,7 @@ func (r *CustodyRepository) CustodyChain(ctx context.Context, evidenceID uuid.UU
 			&e.ToUserID, &e.ToName, &e.ToLocation,
 			&e.Purpose, &e.SealNumber, &e.SealIntact, &e.ConditionNote, &e.Notes,
 			&e.SignedBy, &e.SignedByName, &e.SignedAt, &e.Signature, &e.HashAtTransfer,
-			&e.TransferDate, &e.CreatedAt); err != nil {
+			&e.TransferDate, &e.CreatedAt, &e.StoredSequence, &e.SignatureVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -192,36 +295,50 @@ func (r *CustodyRepository) CustodyChain(ctx context.Context, evidenceID uuid.UU
 	return out, rows.Err()
 }
 
-// RecordTransfer appends a leg to the chain. The previous holder is read from
-// the chain itself rather than supplied, so the sequence cannot be forged by a
-// caller claiming to hold something they do not.
-func (r *CustodyRepository) RecordTransfer(ctx context.Context, evidenceID uuid.UUID, req models.TransferCustodyRequest, signature, hashAtTransfer string, signedBy *uuid.UUID) (*models.CustodyEvent, error) {
-	var lastSeq int
-	var fromUser *uuid.UUID
-	var fromLocation *string
-	err := r.db.QueryRow(ctx, `
-		SELECT COALESCE(MAX(sequence_number), 0) FROM evidence_custody WHERE evidence_id = $1
-	`, evidenceID).Scan(&lastSeq)
+// RecordTransfer appends a signed leg to the chain.
+//
+// The item row is locked for the duration, so concurrent transfers are
+// serialised: each reads the true previous leg and takes the next position.
+// The previous holder is read from the chain rather than supplied, so a caller
+// cannot claim to hold something they do not.
+func (r *CustodyRepository) RecordTransfer(ctx context.Context, evidenceID uuid.UUID, req models.TransferCustodyRequest, hashAtTransfer string, signedBy *uuid.UUID, sign LegSigner) (*models.CustodyEvent, error) {
+	tx, err := r.db.Begin(ctx)
 	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var storageLocation *string
+	if err := tx.QueryRow(ctx,
+		"SELECT storage_location FROM evidence WHERE id = $1 FOR UPDATE", evidenceID,
+	).Scan(&storageLocation); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrEvidenceNotFound
+		}
+		return nil, err
+	}
+
+	var lastSeq int
+	if err := tx.QueryRow(ctx,
+		"SELECT COALESCE(MAX(sequence_number), 0) FROM evidence_custody WHERE evidence_id = $1", evidenceID,
+	).Scan(&lastSeq); err != nil {
 		return nil, err
 	}
 
 	// Where it is coming from: the destination of the previous leg, or the
 	// storage location if this is the first movement.
-	err = r.db.QueryRow(ctx, `
-		SELECT c.to_user, c.to_location FROM evidence_custody c
+	var fromUser *uuid.UUID
+	var fromLocation, previousSignature *string
+	err = tx.QueryRow(ctx, `
+		SELECT c.to_user, c.to_location, c.signature FROM evidence_custody c
 		WHERE c.evidence_id = $1
 		ORDER BY c.sequence_number DESC NULLS LAST, c.created_at DESC LIMIT 1
-	`, evidenceID).Scan(&fromUser, &fromLocation)
-	if err != nil {
-		if err != pgx.ErrNoRows {
-			return nil, err
-		}
-		var storage *string
-		if err := r.db.QueryRow(ctx,
-			"SELECT storage_location FROM evidence WHERE id = $1", evidenceID).Scan(&storage); err == nil {
-			fromLocation = storage
-		}
+	`, evidenceID).Scan(&fromUser, &fromLocation, &previousSignature)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		fromLocation = storageLocation
+	case err != nil:
+		return nil, err
 	}
 
 	sealIntact := true
@@ -229,25 +346,36 @@ func (r *CustodyRepository) RecordTransfer(ctx context.Context, evidenceID uuid.
 		sealIntact = *req.SealIntact
 	}
 
+	leg := models.CustodyLeg{
+		EvidenceID: evidenceID, Sequence: lastSeq + 1,
+		FromUser: fromUser, FromLocation: fromLocation,
+		ToUser: req.ToUserID, ToLocation: strings.TrimSpace(req.ToLocation),
+		Purpose:    strings.TrimSpace(req.Purpose),
+		SealNumber: req.SealNumber, SealIntact: sealIntact, ConditionNote: req.ConditionNote,
+		HashAtTransfer: hashAtTransfer, SignedBy: signedBy, SignedAt: signingTime(),
+	}
+	if previousSignature != nil {
+		leg.PreviousSignature = strings.TrimSpace(*previousSignature)
+	}
+
 	id := uuid.New()
-	_, err = r.db.Exec(ctx, `
-		INSERT INTO evidence_custody
-		  (id, evidence_id, sequence_number, from_user, from_location,
-		   to_user, to_location, purpose, seal_number, seal_intact,
-		   condition_note, notes, signed_by, signed_at, signature,
-		   hash_at_transfer, transfer_date, verified)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),$14,$15,NOW(),TRUE)
-	`, id, evidenceID, lastSeq+1, fromUser, fromLocation,
-		req.ToUserID, req.ToLocation, req.Purpose, req.SealNumber, sealIntact,
-		req.ConditionNote, req.Notes, signedBy, signature, hashAtTransfer)
-	if err != nil {
+	if err := insertLeg(ctx, tx, id, leg, sign(leg)); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return nil, ErrUnknownLink
+		}
 		return nil, err
 	}
 
 	// A broken seal is a change in the item's condition and is recorded as such.
 	if !sealIntact {
-		_, _ = r.db.Exec(ctx,
-			"UPDATE evidence SET condition = 'SEAL BROKEN', updated_at = NOW() WHERE id = $1", evidenceID)
+		if _, err := tx.Exec(ctx,
+			"UPDATE evidence SET condition = 'SEAL BROKEN', updated_at = NOW() WHERE id = $1", evidenceID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 
 	chain, err := r.CustodyChain(ctx, evidenceID)

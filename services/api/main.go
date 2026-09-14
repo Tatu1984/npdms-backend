@@ -280,7 +280,8 @@ func main() {
 				evidence.POST("", evidenceHandler.Create)
 				evidence.PUT("/:id", evidenceHandler.Update)
 				evidence.GET("/:id/custody", evidenceHandler.GetChainOfCustody)
-				evidence.POST("/:id/transfer", evidenceHandler.Transfer)
+				// No legacy transfer route: every custody movement goes through the
+				// signed POST /custody/:id/transfer.
 			}
 
 			// Warrant routes
@@ -572,6 +573,7 @@ func main() {
 			custody := protected.Group("/custody")
 			{
 				custody.GET("", custodyHandler.List)
+				custody.POST("", custodyHandler.Register)
 				custody.GET("/stats", custodyHandler.Stats)
 				custody.GET("/:id", custodyHandler.Get)
 

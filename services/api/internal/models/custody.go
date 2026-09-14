@@ -63,8 +63,8 @@ type EvidenceRecord struct {
 	BlockchainAnchorTx *string `json:"blockchainAnchorTx,omitempty"`
 
 	// Where the item is now, and how many movements it has been through.
-	CurrentHolder  string `json:"currentHolder,omitempty"`
-	TransferCount  int    `json:"transferCount"`
+	CurrentHolder string `json:"currentHolder,omitempty"`
+	TransferCount int    `json:"transferCount"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -72,9 +72,9 @@ type EvidenceRecord struct {
 
 // CustodyEvent is one leg of the chain.
 type CustodyEvent struct {
-	ID             uuid.UUID  `json:"id"`
-	EvidenceID     uuid.UUID  `json:"evidenceId"`
-	SequenceNumber int        `json:"sequenceNumber"`
+	ID             uuid.UUID `json:"id"`
+	EvidenceID     uuid.UUID `json:"evidenceId"`
+	SequenceNumber int       `json:"sequenceNumber"`
 
 	FromUserID   *uuid.UUID `json:"fromUserId,omitempty"`
 	FromName     string     `json:"fromName,omitempty"`
@@ -95,8 +95,49 @@ type CustodyEvent struct {
 	Signature      *string    `json:"signature,omitempty"`
 	HashAtTransfer *string    `json:"hashAtTransfer,omitempty"`
 
+	// SignatureStatus is computed on every read by re-deriving the signature:
+	// "valid", "invalid", "legacy" (signed before signatures became checkable,
+	// cannot be re-derived) or "unsigned".
+	SignatureStatus  SignatureStatus `json:"signatureStatus"`
+	SignatureVersion *int16          `json:"signatureVersion,omitempty"`
+	// StoredSequence is the signed position; SequenceNumber is the display position.
+	StoredSequence *int `json:"-"`
+
 	TransferDate time.Time `json:"transferDate"`
 	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type SignatureStatus string
+
+const (
+	SignatureValid    SignatureStatus = "valid"
+	SignatureInvalid  SignatureStatus = "invalid"
+	SignatureLegacy   SignatureStatus = "legacy"
+	SignatureUnsigned SignatureStatus = "unsigned"
+)
+
+// CustodySignatureVersion is the payload layout signCustody produces.
+const CustodySignatureVersion int16 = 2
+
+// CustodyLeg is exactly what a custody signature covers. Every field that
+// establishes where an item was, who held it and in what state is included,
+// along with the previous leg's signature so legs cannot be removed or
+// reordered without the following signature failing.
+type CustodyLeg struct {
+	EvidenceID        uuid.UUID
+	Sequence          int
+	FromUser          *uuid.UUID
+	FromLocation      *string
+	ToUser            *uuid.UUID
+	ToLocation        string
+	Purpose           string
+	SealNumber        *string
+	SealIntact        bool
+	ConditionNote     *string
+	HashAtTransfer    string
+	SignedBy          *uuid.UUID
+	SignedAt          time.Time
+	PreviousSignature string
 }
 
 // AccessLogEntry records one interaction with an evidence item.
@@ -156,8 +197,13 @@ type CourtVerification struct {
 	LastVerifiedAt *time.Time     `json:"lastVerifiedAt,omitempty"`
 	CustodyEvents  int            `json:"custodyEvents"`
 	CustodyChain   []CustodyEvent `json:"custodyChain"`
-	SealIntact     bool           `json:"sealIntact"`
-	VerifiedAt     time.Time      `json:"verifiedAt"`
+	// ChainIntact is true when every leg's signature re-derives; legacy and
+	// unsigned legs are counted separately rather than treated as intact.
+	ChainIntact    bool      `json:"chainIntact"`
+	InvalidLegs    int       `json:"invalidLegs"`
+	UnverifiedLegs int       `json:"unverifiedLegs"`
+	SealIntact     bool      `json:"sealIntact"`
+	VerifiedAt     time.Time `json:"verifiedAt"`
 }
 
 /* ------------------------------- requests -------------------------------- */
@@ -170,6 +216,19 @@ type TransferCustodyRequest struct {
 	SealIntact    *bool      `json:"sealIntact"`
 	ConditionNote *string    `json:"conditionNote"`
 	Notes         *string    `json:"notes"`
+}
+
+// RegisterEvidenceRequest creates a register entry with a signed first leg.
+type RegisterEvidenceRequest struct {
+	CaseID             *uuid.UUID `json:"caseId"`
+	FIRID              *uuid.UUID `json:"firId"`
+	EvidenceType       string     `json:"evidenceType" binding:"required"`
+	Description        string     `json:"description" binding:"required"`
+	CollectionLocation *string    `json:"collectionLocation"`
+	CollectionDate     *time.Time `json:"collectionDate"`
+	StorageLocation    *string    `json:"storageLocation"`
+	ContainerType      *string    `json:"containerType"`
+	SealNumber         *string    `json:"sealNumber"`
 }
 
 type VerifyRequest struct {
