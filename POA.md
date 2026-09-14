@@ -7,7 +7,7 @@ One platform, fourteen phased modules, for Kolkata Police / West Bengal Police /
 |---|---|
 | Canonical location | `npdms-backend/POA.md` — the frontend repo points here |
 | Last updated | 2026-09-14 |
-| Current focus | Phases 01 and 02 complete; Phase 03 or the core records next |
+| Current focus | Phases 01 and 02 complete. Staging API now live on Vercel; core records onto the API is next |
 
 ---
 
@@ -56,7 +56,8 @@ Work that is not a phase but that every phase depends on.
 | Local Postgres + reproducible bootstrap | `DONE` | `scripts/bootstrap-db.sh` — idempotent, offline, two-pass migration apply. 101 tables clean from scratch. |
 | Migration chain repaired | `DONE` | Five real bugs fixed (partitioned PK, non-immutable index predicates, six wrong column names, undeclared ordering). Drift captured in migration `000027`. |
 | Edge deployment | `DONE` | `deploy/edge/` — compose with only Postgres, Redis, MinIO, API. Datastores bind to loopback. Offline install path. `IP_INTEL_ENABLED=false` for air-gapped boxes. |
-| Free demo/staging deployment | `DONE` | `deploy/oracle-free/` — Oracle Always Free micro shape (1 GB). MinIO dropped for the filesystem storage backend, Postgres and Redis tuned down, per-service memory limits, 2 GB swapfile, and `setup.sh` covering both Oracle Linux and Ubuntu images plus the instance firewall. Demo and rehearsal only; live case data stays on the MDC box. |
+| Free demo/staging deployment — Oracle | `ABANDONED` | `deploy/oracle-free/` remains in the repo and is still correct, but the Oracle Always Free shape was dropped. See the note below. |
+| Staging deployment — Vercel | `DONE` | Go API live at `https://api-black-pi.vercel.app`, Vercel project `api`, region `bom1`, database Neon. Demo and integration only; **not** the system of record. See "Deployed environments". |
 | Backup and restore | `DONE` | `scripts/backup.sh` — verifies the dump before pruning, states plainly when evidence files are not included. |
 | API contract and versioning | `DONE` | `docs/api/CONTRACT.md`, `docs/api/openapi.yaml`, `docs/api/routes.txt` (all 292 routes). Served live at `GET /openapi.yaml`. |
 | Audit trail | `DONE` | Hash-chained append-only `audit_logs`. Every state change appended; failures logged, never discarded. |
@@ -66,7 +67,51 @@ Work that is not a phase but that every phase depends on.
 | RBAC and permissions model | `PLANNED` | Role checks exist per-route; needs a coherent model documented and enforced centrally. |
 | Offline / sync layer | `PLANNED` | Deferred by decision. Online-first now; the offline queue is added across modules once workflows settle. |
 | CCTNS / ICJS integration | `PLANNED` | The platform consumes authorised data from systems Kolkata Police already operates. Needs their interface specifications. |
-| TLS / reverse proxy | `PLANNED` | Required before any traffic crosses a network we do not control. |
+| TLS / reverse proxy | `PLANNED` | Still required for the MDC box. The Vercel staging tier terminates TLS itself, so this is outstanding only for the edge deployment. |
+
+### Deployed environments
+
+Two tiers, deliberately different. The architecture decisions above are unchanged: the MDC box with local Postgres is the system of record, and **Neon is a scratch environment only**. The Vercel tier exists so the frontend has a real API to build against, not to hold case data.
+
+| | Staging (Vercel) | Edge (MDC box) |
+|---|---|---|
+| API | `https://api-black-pi.vercel.app` | `deploy/edge/`, not yet provisioned |
+| Vercel project | `api` (Go runtime, region `bom1`) | — |
+| Database | Neon `ep-fancy-rain-admoirx7-pooler`, db `neondb` | Local Postgres beside the API |
+| Frontend | `https://npdms.infinititechpartners.com` (project `npdms`) | — |
+| Evidence files | **Do not persist** — see below | MinIO or local disk |
+
+Verified on the staging tier: `GET /health` returns `200 healthy`, `GET /ready` reports `database: healthy`, and the CORS preflight for `POST /api/v1/auth/login` returns `204` advertising `X-CSRF-Token`. **A real login has not been exercised** — no seeded credentials to hand. The database holds 99 tables, 9 users and 0 cases.
+
+Environment variables, staging API (Vercel project `api`):
+
+```
+DATABASE_URL           Neon pooler URL, sslmode=require
+JWT_SECRET             set
+CUSTODY_SIGNING_KEY    set, separate from JWT_SECRET by design
+CORS_ALLOWED_ORIGINS   https://npdms.infinititechpartners.com
+MINIO_ENDPOINT         disabled
+MINIO_ACCESS_KEY       disabled
+MINIO_SECRET_KEY       disabled
+STORAGE_BACKEND        filesystem
+STORAGE_PATH           /tmp/evidence
+ENV                    production
+GIN_MODE               release
+MAX_CONCURRENT_SESSIONS 5
+IP_INTEL_ENABLED       true
+```
+
+Environment variables, frontend (Vercel project `npdms`): `NEXT_PUBLIC_API_URL=https://api-black-pi.vercel.app/api/v1` and `NEXT_PUBLIC_DEBUG=false`. Those are the only two needed — `NODE_ENV` is set by Vercel, and `NEXT_PUBLIC_NLP_SERVICE_URL` is left unset until `services/ml` is deployed. `NEXT_PUBLIC_*` is compiled in at build time, so changing it requires a rebuild, not just a save.
+
+Three things known to be wrong on the staging tier, none blocking:
+
+- **Evidence uploads do not persist.** Vercel's filesystem is read-only apart from `/tmp`, which is wiped between invocations. `STORAGE_PATH` is set so the service boots, not because uploads survive. Real storage needs S3/R2, or the edge box.
+- **`DATABASE_URL` must not carry `channel_binding=require`.** `main.go` opens the database twice — pgx and sqlx via `lib/pq` — and `lib/pq` has no channel-binding support.
+- **Redis is absent**, so `/ready` reports `not ready` and every cold start burns a 5-second Redis ping timeout. Sessions and rate-limit counters degrade rather than fail.
+
+Why Oracle Always Free was dropped: the `VM.Standard.E2.1.Micro` shape reports 1 GB but has **498 MB usable**, against a profile budgeted at roughly 550 MB. It wedged twice in one session — once merely installing packages — in a way that leaves the kernel answering TCP on port 22 while sshd never sends a banner, so it looks like a network fault rather than an out-of-memory event. Recovery needs a forced `RESET` from the console, which a graceful reboot will not do. `deploy/oracle-free/` is kept because the profile itself is sound; it needs an Ampere A1 shape (4 OCPU / 24 GB, also Always Free) rather than the micro.
+
+---
 
 ### Core records onto the API — `NEXT`
 
@@ -77,6 +122,17 @@ The largest outstanding foundation item. Thirteen stores hold mock data in the b
 | Endpoint already exists | fir, cases, evidence, warrant, bail, court, forensics, personnel, vehicles, alerts | Pure rewiring — replace ~2,400 lines of client-side mock with API calls |
 | No endpoint yet | accesslog (495 lines), armoury (321), lookout (324) | Tables, repository, handlers and routes first |
 | Correctly client-side | auth (already API-backed), toast | None |
+
+---
+
+## Open decisions
+
+Raised, not yet ruled on. Neither blocks current work.
+
+| | |
+|---|---|
+| `Tatu1984/npdms-backend` is a **public** GitHub repository | No credentials are in it — `.env` is ignored and secrets were deliberately kept out of `vercel.json` — but the schema, auth logic and chain-of-custody implementation are publicly readable. For a police platform this should be a deliberate choice rather than a default. |
+| `services/api/Dockerfile` pins `golang:1.22-alpine` against a `go 1.25` go.mod | Any container build fails on this — `deploy/edge/`, `deploy/oracle-free/`, Fly, Railway. Not hit by Vercel's Go runtime or by cross-compiling, which is why it went unnoticed. |
 
 ---
 
@@ -273,6 +329,10 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-14 | **Staging API deployed to Vercel** at `https://api-black-pi.vercel.app`, against Neon. Vercel's Go runtime runs a `package main` that listens on `$PORT`, which `main.go` already did, so no application change was needed — `services/api/vercel.json` supplies the build command, region and non-secret environment. Health, readiness and CORS preflight verified; login not yet exercised. |
+| 2026-09-14 | **Fixed a CORS defect that would have blocked every write from the deployed frontend.** The web client attaches `X-CSRF-Token` to each state-changing request, but that header was missing from `Access-Control-Allow-Headers`, so cross-origin preflights failed while `GET` kept working — a frontend that looks half alive. Also stopped pairing `Access-Control-Allow-Credentials: true` with a `*` origin, which browsers reject outright; origins now come from `CORS_ALLOWED_ORIGINS`. |
+| 2026-09-14 | **Fixed conflicting `NEXT_PUBLIC_API_URL` conventions in the frontend.** Eighteen callers treated it as a base already ending in `/api/v1`; `ui/web/src/lib/upload.ts` treated it as a bare host and appended `/api/v1` itself, so no single deployed value could satisfy both. `upload.ts` now follows the majority. |
+| 2026-09-14 | Oracle Always Free dropped as the demo host — 498 MB usable against a ~550 MB profile, wedged twice. `deploy/oracle-free/` retained; it needs an Ampere A1 shape, not the micro. |
 | 2026-09-14 | Added `deploy/oracle-free/` — a 1 GB-shape profile for free demo hosting. Possible only because the Phase 02 storage abstraction lets evidence files sit on local disk instead of MinIO. |
 | 2026-09-14 | **Phase 02 Evidence & Chain of Custody completed.** Storage abstraction (filesystem default, MinIO optional), streaming SHA-256 on upload, signed custody transfers, append-only access log, verification with full history, court verification view. Migrations `000030`/`000031`. Proven by tampering with a stored file and confirming the check catches it. |
 | 2026-09-14 | Phase 01 re-verified before starting Phase 02 — both suites pass, zero audit failures. |
