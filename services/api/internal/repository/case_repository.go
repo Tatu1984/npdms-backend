@@ -212,14 +212,16 @@ func (r *CaseRepository) AddAccused(ctx context.Context, accused *models.Accused
 	query := `
 		INSERT INTO accused (
 			id, case_id, fir_id, name, alias, description, age, gender,
-			address, id_type, id_number, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			address, id_type, id_number, status, arrest_date
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`
 
+	// arrest_date was accepted in the request but never written, so no accused
+	// recorded through the API carried the date the custody period runs from.
 	_, err := r.db.Exec(ctx, query,
 		accused.ID, accused.CaseID, accused.FIRID, accused.Name, accused.Alias,
 		accused.Description, accused.Age, accused.Gender, accused.Address,
-		accused.IDType, accused.IDNumber, accused.Status,
+		accused.IDType, accused.IDNumber, accused.Status, accused.ArrestDate,
 	)
 
 	return err

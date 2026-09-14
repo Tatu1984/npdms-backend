@@ -71,6 +71,7 @@ func main() {
 	armouryRepo := repository.NewArmouryRepository(db)
 	lookoutRepo := repository.NewLookoutRepository(db)
 	accessLogRepo := repository.NewAccessLogRepository(db)
+	workloadRepo := repository.NewWorkloadRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
 	courtRepo := repository.NewCourtRepository(db)
 	alertRepo := repository.NewAlertRepository(db)
@@ -145,6 +146,7 @@ func main() {
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
 	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
+	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -559,6 +561,19 @@ func main() {
 				// Any officer may report a sighting; verifying one needs rank.
 				lookouts.POST("/:id/sightings", lookoutHandler.ReportSighting)
 				lookouts.POST("/:id/sightings/:sightingId/verify", middleware.RequireRole("ASI"), lookoutHandler.VerifySighting)
+			}
+
+			// Phase 08 — Station Workload. SHO and above; an SHO is held to their
+			// own station by the service, and station comparison is DSP and above.
+			workload := protected.Group("/workload", middleware.RequireRole("SHO"))
+			{
+				workload.GET("/scopes", workloadHandler.Scopes)
+				workload.GET("/summary", workloadHandler.Summary)
+				workload.GET("/backlog", workloadHandler.Backlog)
+				workload.GET("/sla", workloadHandler.SLA)
+				workload.GET("/trends", workloadHandler.Trends)
+				workload.GET("/officers", workloadHandler.Officers)
+				workload.GET("/stations", middleware.RequireRole("DSP"), workloadHandler.Stations)
 			}
 
 			// Access log — sign-in activity from the audit trail
