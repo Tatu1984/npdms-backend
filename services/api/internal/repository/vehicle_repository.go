@@ -108,6 +108,9 @@ func (r *VehicleRepository) List(ctx context.Context, filter VehicleFilter) ([]m
 		}
 		vehicles = append(vehicles, v)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return vehicles, total, nil
 }

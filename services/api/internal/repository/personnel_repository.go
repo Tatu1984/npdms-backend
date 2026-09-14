@@ -111,6 +111,9 @@ func (r *PersonnelRepository) List(ctx context.Context, filter PersonnelFilter) 
 		}
 		personnel = append(personnel, p)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return personnel, total, nil
 }

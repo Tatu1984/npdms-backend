@@ -251,6 +251,9 @@ func (r *AuditRepository) List(ctx context.Context, page, pageSize int) ([]model
 		}
 		logs = append(logs, log)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return logs, total, nil
 }

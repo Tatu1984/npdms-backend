@@ -81,7 +81,7 @@ func (r *AlertRepository) List(ctx context.Context, filter AlertFilter) ([]model
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
 			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
 			a.created_at, a.updated_at,
-			u1.name as issued_by_name, u2.name as acknowledged_by_name
+			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
 		LEFT JOIN users u1 ON a.issued_by = u1.id
 		LEFT JOIN users u2 ON a.acknowledged_by = u2.id
@@ -113,6 +113,9 @@ func (r *AlertRepository) List(ctx context.Context, filter AlertFilter) ([]model
 		}
 		alerts = append(alerts, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return alerts, total, nil
 }
@@ -124,7 +127,7 @@ func (r *AlertRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.A
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
 			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
 			a.created_at, a.updated_at,
-			u1.name as issued_by_name, u2.name as acknowledged_by_name
+			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
 		LEFT JOIN users u1 ON a.issued_by = u1.id
 		LEFT JOIN users u2 ON a.acknowledged_by = u2.id
@@ -247,7 +250,7 @@ func (r *AlertRepository) GetActiveAlerts(ctx context.Context) ([]models.Alert, 
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
 			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
 			a.created_at, a.updated_at,
-			u1.name as issued_by_name, u2.name as acknowledged_by_name
+			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
 		LEFT JOIN users u1 ON a.issued_by = u1.id
 		LEFT JOIN users u2 ON a.acknowledged_by = u2.id
@@ -276,6 +279,9 @@ func (r *AlertRepository) GetActiveAlerts(ctx context.Context) ([]models.Alert, 
 		}
 		alerts = append(alerts, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return alerts, nil
 }
@@ -287,7 +293,7 @@ func (r *AlertRepository) GetUnacknowledgedAlerts(ctx context.Context) ([]models
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
 			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
 			a.created_at, a.updated_at,
-			u1.name as issued_by_name, u2.name as acknowledged_by_name
+			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
 		LEFT JOIN users u1 ON a.issued_by = u1.id
 		LEFT JOIN users u2 ON a.acknowledged_by = u2.id
@@ -315,6 +321,9 @@ func (r *AlertRepository) GetUnacknowledgedAlerts(ctx context.Context) ([]models
 			return nil, err
 		}
 		alerts = append(alerts, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return alerts, nil

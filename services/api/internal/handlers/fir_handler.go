@@ -91,16 +91,25 @@ func (h *FIRHandler) Create(c *gin.Context) {
 
 	userID := middleware.GetUserID(c)
 
-	// Get station code from user's station in context
-	stationCode := "UNK"
-	if code, exists := c.Get("stationCode"); exists {
-		stationCode = code.(string)
+	// The FIR is registered at the station named in the request, or else at
+	// the officer's own station. Its number is issued under that station's
+	// code; an unknown station is rejected rather than numbered under a
+	// placeholder.
+	if fir.StationID == uuid.Nil {
+		if sid, exists := c.Get("stationID"); exists {
+			if id, ok := sid.(uuid.UUID); ok {
+				fir.StationID = id
+			}
+		}
 	}
-
-	// Fallback: try to get from request body or use station ID
-	if stationCode == "UNK" && fir.StationID != uuid.Nil {
-		// Will generate FIR number using station ID prefix
-		stationCode = fir.StationID.String()[:3]
+	stationCode, err := h.firService.StationCode(c.Request.Context(), fir.StationID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "validation_error",
+			Message: "FIR must be registered at a known police station",
+			Code:    400,
+		})
+		return
 	}
 
 	if err := h.firService.Create(c.Request.Context(), &fir, userID, stationCode); err != nil {

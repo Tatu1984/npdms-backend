@@ -112,6 +112,9 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 		}
 		forensics = append(forensics, f)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return forensics, total, nil
 }

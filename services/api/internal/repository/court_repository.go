@@ -114,6 +114,9 @@ func (r *CourtRepository) ListHearings(ctx context.Context, filter CourtHearingF
 		}
 		hearings = append(hearings, h)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return hearings, total, nil
 }
@@ -274,6 +277,9 @@ func (r *CourtRepository) ListOrders(ctx context.Context, filter CourtOrderFilte
 		}
 		orders = append(orders, o)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return orders, total, nil
 }
@@ -332,32 +338,33 @@ func (r *CourtRepository) CreateOrder(ctx context.Context, order *models.CourtOr
 func (r *CourtRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	today := time.Now().Truncate(24 * time.Hour)
-	weekEnd := today.Add(7 * 24 * time.Hour)
-
-	query := `
+	// Day boundaries come from the database clock, not time.Truncate, which
+	// cuts at midnight UTC and so counts the wrong day for the first five and
+	// a half hours of every IST day.
+	var todayHearings, thisWeekHearings, activeCases int64
+	err := r.db.QueryRow(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE hearing_date::date = $1) as today_hearings,
-			COUNT(*) FILTER (WHERE hearing_date >= $1 AND hearing_date < $2) as this_week_hearings
+			COUNT(*) FILTER (WHERE hearing_date = CURRENT_DATE),
+			COUNT(*) FILTER (WHERE hearing_date >= CURRENT_DATE AND hearing_date < CURRENT_DATE + 7),
+			COUNT(DISTINCT case_id) FILTER (WHERE hearing_date >= CURRENT_DATE)
 		FROM court_hearings
-	`
-
-	var todayHearings, thisWeekHearings int64
-	err := r.db.QueryRow(ctx, query, today, weekEnd).Scan(&todayHearings, &thisWeekHearings)
+	`).Scan(&todayHearings, &thisWeekHearings, &activeCases)
 	if err != nil {
 		return nil, err
 	}
 
-	var pendingOrders int64
-	err = r.db.QueryRow(ctx, "SELECT COUNT(*) FROM court_orders").Scan(&pendingOrders)
+	// Orders carry no pending/complete state, so this is every order recorded.
+	var ordersRecorded int64
+	err = r.db.QueryRow(ctx, "SELECT COUNT(*) FROM court_orders").Scan(&ordersRecorded)
 	if err != nil {
 		return nil, err
 	}
 
 	stats["todayHearings"] = todayHearings
 	stats["thisWeekHearings"] = thisWeekHearings
-	stats["pendingOrders"] = pendingOrders
-	stats["activeCases"] = 143 // This should come from cases table
+	stats["pendingOrders"] = ordersRecorded
+	// Cases with a hearing today or later. Was the constant 143.
+	stats["activeCases"] = activeCases
 
 	return stats, nil
 }

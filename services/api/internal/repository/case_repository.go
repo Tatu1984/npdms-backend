@@ -2,8 +2,6 @@ package repository
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,6 +66,9 @@ func (r *CaseRepository) List(ctx context.Context, page, pageSize int) ([]models
 		}
 		cases = append(cases, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return cases, total, nil
 }
@@ -102,7 +103,11 @@ func (r *CaseRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Ca
 
 func (r *CaseRepository) Create(ctx context.Context, c *models.Case) error {
 	c.ID = uuid.New()
-	c.CaseNumber = fmt.Sprintf("CASE-%d-%05d", time.Now().Year(), time.Now().UnixNano()%100000)
+	number, err := formatRecordNumber(ctx, r.db, "CASE")
+	if err != nil {
+		return err
+	}
+	c.CaseNumber = number
 
 	query := `
 		INSERT INTO cases (
@@ -112,7 +117,7 @@ func (r *CaseRepository) Create(ctx context.Context, c *models.Case) error {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`
 
-	_, err := r.db.Exec(ctx, query,
+	_, err = r.db.Exec(ctx, query,
 		c.ID, c.CaseNumber, c.FIRID, c.Title, c.Synopsis, c.Category,
 		c.Status, c.Priority, c.IPCSections, c.InvestigatingOfficer,
 		c.CourtName, c.CourtCaseNumber, c.NextHearingDate,
@@ -167,6 +172,9 @@ func (r *CaseRepository) GetAccused(ctx context.Context, caseID uuid.UUID) ([]mo
 		}
 		accused = append(accused, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return accused, nil
 }
@@ -216,6 +224,9 @@ func (r *CaseRepository) GetWitnesses(ctx context.Context, caseID uuid.UUID) ([]
 			return nil, err
 		}
 		witnesses = append(witnesses, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return witnesses, nil

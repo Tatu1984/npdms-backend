@@ -138,6 +138,9 @@ func (r *WarrantRepository) List(ctx context.Context, filter WarrantFilter) ([]m
 		}
 		warrants = append(warrants, w)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return warrants, total, nil
 }
@@ -282,15 +285,7 @@ func (r *WarrantRepository) UpdateStatus(ctx context.Context, id uuid.UUID, stat
 }
 
 func (r *WarrantRepository) GenerateWarrantNumber(ctx context.Context) (string, error) {
-	var count int64
-	year := time.Now().Year()
-	query := "SELECT COUNT(*) FROM warrants WHERE EXTRACT(YEAR FROM created_at) = $1"
-	err := r.db.QueryRow(ctx, query, year).Scan(&count)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("WAR-%d-%05d", year, count+1), nil
+	return formatRecordNumber(ctx, r.db, "WAR")
 }
 
 func (r *WarrantRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {

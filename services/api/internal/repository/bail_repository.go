@@ -115,6 +115,9 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 		}
 		bails = append(bails, b)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return bails, total, nil
 }
@@ -220,15 +223,20 @@ func (r *BailRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 	query := `
 		UPDATE bail SET
 			status = $2,
-			approval_date = $3,
-			rejection_date = $4,
-			rejection_reason = $5,
-			cancellation_date = $6,
-			cancellation_reason = $7,
-			release_date = $8,
+			approval_date = COALESCE($3, approval_date),
+			rejection_date = COALESCE($4, rejection_date),
+			rejection_reason = COALESCE($5, rejection_reason),
+			cancellation_date = COALESCE($6, cancellation_date),
+			cancellation_reason = COALESCE($7, cancellation_reason),
+			release_date = COALESCE($8, release_date),
 			updated_at = $9
 		WHERE id = $1
 	`
+
+	// Each transition stamps only its own date and reason. Earlier outcomes
+	// are part of the record: releasing a granted bail must not erase when it
+	// was granted, which the previous query did by writing NULL to every
+	// column but the new status's.
 
 	now := time.Now()
 	var approvalDate, rejectionDate, cancellationDate, releaseDate *time.Time
@@ -266,15 +274,7 @@ func (r *BailRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 }
 
 func (r *BailRepository) GenerateApplicationNumber(ctx context.Context) (string, error) {
-	var count int64
-	year := time.Now().Year()
-	query := "SELECT COUNT(*) FROM bail WHERE EXTRACT(YEAR FROM created_at) = $1"
-	err := r.db.QueryRow(ctx, query, year).Scan(&count)
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("BAIL-%d-%05d", year, count+1), nil
+	return formatRecordNumber(ctx, r.db, "BAIL")
 }
 
 func (r *BailRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {

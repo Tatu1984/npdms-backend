@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +66,9 @@ func (r *EvidenceRepository) List(ctx context.Context, page, pageSize int) ([]mo
 		}
 		evidence = append(evidence, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return evidence, total, nil
 }
@@ -101,7 +103,11 @@ func (r *EvidenceRepository) FindByID(ctx context.Context, id uuid.UUID) (*model
 
 func (r *EvidenceRepository) Create(ctx context.Context, e *models.Evidence) error {
 	e.ID = uuid.New()
-	e.EvidenceNumber = fmt.Sprintf("EVD-%d-%05d", time.Now().Year(), time.Now().UnixNano()%100000)
+	number, err := formatRecordNumber(ctx, r.db, "EVD")
+	if err != nil {
+		return err
+	}
+	e.EvidenceNumber = number
 
 	query := `
 		INSERT INTO evidence (
@@ -112,7 +118,7 @@ func (r *EvidenceRepository) Create(ctx context.Context, e *models.Evidence) err
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 	`
 
-	_, err := r.db.Exec(ctx, query,
+	_, err = r.db.Exec(ctx, query,
 		e.ID, e.EvidenceNumber, e.CaseID, e.FIRID, e.EvidenceType, e.Description,
 		e.CollectionLocation, e.CollectionDate, e.CollectedBy, e.StorageLocation,
 		e.ContainerType, e.SealNumber, e.Weight, e.Dimensions, e.Condition,
@@ -173,6 +179,9 @@ func (r *EvidenceRepository) GetChainOfCustody(ctx context.Context, evidenceID u
 			return nil, err
 		}
 		custody = append(custody, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return custody, nil

@@ -145,6 +145,9 @@ func (r *FIRRepository) List(ctx context.Context, filter FIRFilter) ([]models.FI
 		}
 		firs = append(firs, fir)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 
 	return firs, total, nil
 }
@@ -226,22 +229,24 @@ func (r *FIRRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status m
 	return err
 }
 
+// GenerateFIRNumber issues CODE/YYYY/NNNNN, sequential per station per year.
 func (r *FIRRepository) GenerateFIRNumber(ctx context.Context, stationCode string) (string, error) {
 	year := time.Now().Year()
-
-	// Get count for this station this year
-	query := `
-		SELECT COUNT(*) FROM firs
-		WHERE fir_number LIKE $1
-		AND EXTRACT(YEAR FROM created_at) = $2
-	`
-	var count int
-	err := r.db.QueryRow(ctx, query, stationCode+"/%", year).Scan(&count)
+	n, err := nextRecordNumber(ctx, r.db, "FIR:"+stationCode, year)
 	if err != nil {
 		return "", err
 	}
+	return fmt.Sprintf("%s/%d/%05d", stationCode, year, n), nil
+}
 
-	return fmt.Sprintf("%s/%d/%05d", stationCode, year, count+1), nil
+// StationCode returns the short code FIR numbers are issued under, such as BHW.
+func (r *FIRRepository) StationCode(ctx context.Context, stationID uuid.UUID) (string, error) {
+	var code string
+	err := r.db.QueryRow(ctx, "SELECT code FROM stations WHERE id = $1", stationID).Scan(&code)
+	if err != nil {
+		return "", err
+	}
+	return code, nil
 }
 
 func (r *FIRRepository) GetStats(ctx context.Context, stationID *uuid.UUID) (map[string]int64, error) {
@@ -286,32 +291,30 @@ func (r *FIRRepository) GetStats(ctx context.Context, stationID *uuid.UUID) (map
 	return stats, nil
 }
 
+// GetTimeline returns the FIR's history from the hash-chained audit trail.
 func (r *FIRRepository) GetTimeline(ctx context.Context, firID uuid.UUID) ([]models.TimelineEntry, error) {
-	var timeline []models.TimelineEntry
+	timeline := []models.TimelineEntry{}
 
-	// Get audit logs for this FIR
-	query := `
-		SELECT a.id::text, a.action, COALESCE(a.description, ''), a.created_at, COALESCE(u.name, 'System')
+	// audit_logs is the immutable schema: the actor is actor_user_id, the
+	// human-readable detail is outcome_reason and the time is event_timestamp.
+	rows, err := r.db.Query(ctx, `
+		SELECT a.id::text, a.action, COALESCE(a.outcome_reason, ''), a.event_timestamp, COALESCE(u.name, 'System')
 		FROM audit_logs a
-		LEFT JOIN users u ON a.user_id = u.id
+		LEFT JOIN users u ON a.actor_user_id = u.id
 		WHERE a.resource_type = 'FIR' AND a.resource_id = $1
-		ORDER BY a.created_at ASC
-	`
-
-	rows, err := r.db.Query(ctx, query, firID)
+		ORDER BY a.sequence_number ASC
+	`, firID)
 	if err != nil {
-		return timeline, err
+		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var id, action, description, userName string
 		var createdAt time.Time
-
 		if err := rows.Scan(&id, &action, &description, &createdAt, &userName); err != nil {
-			continue
+			return nil, err
 		}
-
 		timeline = append(timeline, models.TimelineEntry{
 			ID:          id,
 			Type:        action,
@@ -322,35 +325,8 @@ func (r *FIRRepository) GetTimeline(ctx context.Context, firID uuid.UUID) ([]mod
 			Icon:        getIconForAuditAction(action),
 		})
 	}
-
-	// Get case diary entries if any
-	diaryQuery := `
-		SELECT id::text, entry_date, entry_type, description, COALESCE(u.name, 'Unknown')
-		FROM case_diary_entries cde
-		LEFT JOIN users u ON cde.created_by = u.id
-		WHERE cde.fir_id = $1
-		ORDER BY cde.entry_date ASC
-	`
-
-	diaryRows, _ := r.db.Query(ctx, diaryQuery, firID)
-	if diaryRows != nil {
-		defer diaryRows.Close()
-		for diaryRows.Next() {
-			var id, entryType, description, userName string
-			var entryDate time.Time
-
-			if err := diaryRows.Scan(&id, &entryDate, &entryType, &description, &userName); err == nil {
-				timeline = append(timeline, models.TimelineEntry{
-					ID:          id,
-					Type:        "DIARY_ENTRY",
-					Title:       "Case Diary: " + entryType,
-					Description: description,
-					Timestamp:   entryDate,
-					User:        userName,
-					Icon:        "book-open",
-				})
-			}
-		}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return timeline, nil

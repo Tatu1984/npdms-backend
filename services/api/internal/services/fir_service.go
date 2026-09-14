@@ -44,6 +44,11 @@ func (s *FIRService) Get(ctx context.Context, id uuid.UUID) (*models.FIR, error)
 	return s.firRepo.FindByID(ctx, id)
 }
 
+// StationCode resolves the code FIR numbers are issued under for a station.
+func (s *FIRService) StationCode(ctx context.Context, stationID uuid.UUID) (string, error) {
+	return s.firRepo.StationCode(ctx, stationID)
+}
+
 func (s *FIRService) Create(ctx context.Context, fir *models.FIR, userID uuid.UUID, stationCode string) error {
 	// Generate FIR number
 	firNumber, err := s.firRepo.GenerateFIRNumber(ctx, stationCode)
