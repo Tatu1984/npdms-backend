@@ -478,13 +478,26 @@ Deliberately **not** "crime prediction". This scores places, never people, and p
 - Dispatch calls and traffic incidents (Phases 07 and 06) are not yet factors; add them once those branches merge, as new factors with their own weights.
 - Beats are circles; polygon boundaries would need PostGIS or stored vertex lists.
 
-### Phase 11 — Police Knowledge Assistant · `PLANNED`
+### Phase 11 — Police Knowledge Assistant · `DONE` (functional layer)
 
-**Functional without AI.** Document repository for SOPs, circulars, manuals and BNS/BNSS/BSA text; OCR of scanned documents; keyword and metadata search; role-based visibility; procedure checklists.
+**Functional without AI.** A document repository for standing orders, SOPs, circulars, manuals, notifications and statute text; keyword and metadata search in English and বাংলা; classification enforced in SQL; versioning by supersession; procedure checklists officers follow for a case or FIR.
 
-Semantic search and source-cited answering are the AI layer. **Non-negotiable when it lands:** if no authoritative source covers a question, the assistant says so and does not answer.
+**Delivered** — migration `000058` (`000059` reserved, unused), 16 routes under `/api/v1/knowledge`, screens `/knowledge`, `/knowledge/[id]`, `/knowledge/checklists/[id]`.
+- **Repository.** Files stream through the Phase 02 storage abstraction; the SHA-256 is taken as the bytes are stored and sent back as `X-Document-SHA256` on download, where the screen recomputes it. Numbers `KD-YYYY-NNNNN` from the shared counter. Upload limit 50 MB.
+- **Text, honestly.** `pdftotext` reads PDFs with a text layer; plain text is read as UTF-8. A PDF with no text layer or an image is recorded `OCR_UNAVAILABLE` with the note "OCR is not available on this server (tesseract is not installed)… findable by its metadata only" — no text is invented. The note is shown on the document.
+- **Search.** `simple` tsvector (no Bengali configuration ships with Postgres) weighted title › description › file text, plus substring matching, plus pg_trgm word similarity **only for queries with non-Latin letters** — it catches Bengali inflections (গ্রেফতারের → গ্রেফতার) without matching near-miss English reference numbers. Each hit says where it matched (title, details, document text) and shows a highlighted passage. The edge database must use a UTF-8 locale or Bengali tokenisation degrades.
+- **Visibility.** `PUBLIC` every officer, `RESTRICTED` ASI+, `CONFIDENTIAL` SHO+, `SECRET` SP+ — the floor is a generated column and every query is bounded by it, so hidden documents are never listed, counted or returned; a direct request answers 404, not 403. An officer cannot file or reclassify above their own clearance. Opening any non-public document and every download is audited.
+- **Versioning.** Filing a new version inserts it and marks the old `SUPERSEDED` in one locked transaction (a unique `supersedes_id` stops a double supersede); the old version stays readable with a link forward. Withdrawal (SP+) and reclassification (SP+) need a reason and are audited.
+- **Checklists.** SI+ create a checklist from an effective document and a section reference; ASI+ follow it for a case or FIR and tick steps with an optional note. Ticks are append-only (database trigger) and audited; a checklist whose source is later superseded says so.
+- **Removed from the screen:** the sample answers, confidence meter, suggested questions, training quiz, fake "Queue for OCR" and the mock document list. The module is marked live and not AI-assisted; its description no longer claims source-cited answers.
 
----
+**Verified.** API probe 60/60 — visibility by rank including counts and 404s, supersession and its conflicts, reclassification, withdrawal, English phrase inside a PDF, Bengali title, Bengali body phrase and inflected form, scanned PDF found by reference but not by image text, checklist rules, append-only ticks, and every audit event with its actor. Browser run 34/34 as inspector and constable: filing through the form, searches, download digest check, new version, checklist creation, run and tick, Bengali screens, and a constable meeting "Document not found" for a restricted document. Writes confirmed in Postgres.
+
+**Open**
+- **OCR.** Needs tesseract (with Bengali data) on the edge server; the pipeline stage records its absence today but the OCR call itself is not wired.
+- **Semantic search and answering** are the AI layer. Non-negotiable when it lands: cite the document relied on, and refuse when no filed document covers the question.
+- **Statute text** is filed as documents; there is no section-level index of BNS/BNSS/BSA yet.
+- **Login form** rejects usernames under three characters, so the seeded `si` account cannot sign in through the UI (outside this phase).
 
 ### Phase 12 — Case File & Court Readiness · `PLANNED`
 
