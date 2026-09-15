@@ -286,13 +286,36 @@ Severity scoring and ETA prediction are the AI layer. Distance-based recommendat
 
 ---
 
-### Phase 08 — Station Workload & Performance · `PLANNED`
+### Phase 08 — Station Workload · `DONE`
 
-**Needs no new tables** — aggregation queries over FIRs, cases, forensic requests, court matters and personnel.
+Renamed from "Station Workload & Performance": it measures operational load, never individual officer performance, and the screen now says so.
 
-**Functional without AI.** Station dashboard, backlog by age band, officer workload, SLA monitoring, bottleneck identification, trend analysis.
+**No new tables and no migration.** Read-only aggregation over FIRs, cases, forensic requests, court hearings, warrants, bail, evidence, lookouts, investigation tasks, weapon issuances and personnel. Existing indexes cover the joins; every endpoint answers in under 10 ms on the local data.
 
-Forecasting is the AI layer. Note: this measures operational load, never individual officer performance.
+**Delivered** — `/api/v1/workload/*`, SHO and above:
+- **Station dashboard** (`/summary`): 19 open-item counts in four groups, each returned with a one-line definition of exactly what it counts and a link to the module holding the records. Counts that represent something past a recorded date are marked.
+- **Backlog by age band** (`/backlog`): open items in four pipeline stages — under investigation, awaiting forensic results, charge-sheeted or in court, open tasks — banded 0–30, 31–90, 91–180 and over 180 days, with the date each stage's age is counted from stated.
+- **Bottleneck**: a deterministic rule, returned with its text — the stage holding the most items older than 90 days; ties go to more items older than 180 days, then the larger open total; no stage is named when nothing is older than 90 days.
+- **Officer load** (`/officers`): per officer, FIRs and cases as IO, cases in court, workspaces, open and overdue tasks, pending forensics on their cases, hearings in the next 14 days. Listed by name, never ranked or scored; no single "load score". Every view is written to the audit trail with the actor.
+- **Time limits** (`/sla`), each with its source and what it cannot see: accused in custody without a charge-sheet against BNSS s.187(3) (listed from day 45, banded past 60 and past 90); forensic requests past the expected date recorded on the request (no turnaround norm assumed); active warrants past validity; tasks past due; weapons not returned on time.
+- **Trends** (`/trends`): weekly or monthly counts of dated events — FIRs and cases registered, forensic requests submitted and completed, warrants executed, investigations closed, bail decided.
+- **Station comparison** (`/stations`, DSP and above): per station open investigations with age bands, over 90 days, pending forensics, in court, open tasks, roster and available strength, and open investigations per available officer as a station-level ratio.
+- **Scope rule**, enforced by the service: an SHO sees their own station only (another station or a district is 403); DSP and above see any station, a district rollup or all stations. Filters by station, district and an opened-between date range.
+
+**Frontend** — `/workload` rebuilt on the API: scope and date filters, overview, backlog, time limits, officer load (with a sheet per officer), trends and, for DSP and above, stations. The fabricated station table, "Executive brief", AI bottleneck notes and the 30-day forecast with confidence scores were removed. English and বাংলা labels for every figure.
+
+**Verified** — 40 API checks against a dataset seeded through the API at Kasba PS and backdated in Postgres: every count equals an independent SQL count and the change the seed makes; age bands, the date window, the bottleneck tie-break, each time-limit rule, officer figures, trend totals, the audit entry, and 403/400 for scope and input violations. 25 browser checks: every figure on each tab equals the API response, filters and row actions work, Bengali labels render, and an SHO sees only their own station with no comparison tab.
+
+**Fixed while building it** — `CaseRepository.AddAccused` accepted `arrestDate` and never wrote it, so no accused recorded through the API carried the date the BNSS custody period runs from.
+
+**Open**
+- **Custody period start.** BNSS s.187(3) runs from the first remand, which is not recorded, so the arrest date is used; and the punishment class of the sections is not recorded, so a case past 60 days must be checked against the 90-day period by the officer. The screen states both.
+- **FIR and case closures are not trended** — the records hold a status but not the date it was reached. A status-change timestamp on FIRs and cases would make them trendable.
+- **Stations have no `district_id`** in the local data, so district rollups group by the `stations.district` text.
+- **Definitions and rule texts come from the API in English**; labels are bilingual.
+- `/dashboard` still reads station figures from `lib/platform/mock.ts`; it could now use `/workload/summary`.
+
+Forecasting remains the AI layer.
 
 ---
 
