@@ -1,0 +1,8 @@
+# Runtime only. All permissive: FastAPI MIT, Uvicorn BSD-3-Clause, NumPy BSD-3-Clause,
+# ONNX Runtime MIT, OpenCV (headless) Apache-2.0, python-multipart Apache-2.0.
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+numpy==2.5.3
+onnxruntime==1.30.0
+opencv-python-headless==5.0.0.93

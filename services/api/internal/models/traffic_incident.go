@@ -105,6 +105,11 @@ type TrafficPlateRead struct {
 	CameraRef          *string   `json:"cameraRef"`
 	Source             string    `json:"source"`
 	SourceDetail       string    `json:"sourceDetail"`
+	// Set when the read came from the ANPR module: the machine read it was
+	// attached from, the model that produced it and its confidence.
+	ANPRPlateReadID *uuid.UUID `json:"anprPlateReadId"`
+	ModelVersion    *string    `json:"modelVersion"`
+	ReadConfidence  *float64   `json:"readConfidence"`
 	// The involved vehicle with the same registration, if any — matched on read.
 	MatchedVehicleID *uuid.UUID `json:"matchedVehicleId"`
 	CreatedByName    string     `json:"createdByName"`

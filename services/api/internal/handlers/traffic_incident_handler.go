@@ -32,10 +32,11 @@ func trafficError(c *gin.Context, op string, err error) {
 		errors.Is(err, repository.ErrTrafficSelfReview):
 		badRequest(c, err.Error())
 	case errors.Is(err, repository.ErrTrafficIncidentNotFound), errors.Is(err, repository.ErrTrafficRecordNotFound),
-		errors.Is(err, repository.ErrTrafficReportNotFound):
+		errors.Is(err, repository.ErrTrafficReportNotFound), errors.Is(err, repository.ErrANPRReadNotFound):
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: err.Error(), Code: 404})
 	case errors.Is(err, repository.ErrTrafficReportState), errors.Is(err, repository.ErrTrafficReportOpen),
-		errors.Is(err, repository.ErrTrafficDuplicate), errors.Is(err, repository.ErrTrafficRecordInUse):
+		errors.Is(err, repository.ErrTrafficDuplicate), errors.Is(err, repository.ErrTrafficRecordInUse),
+		errors.Is(err, repository.ErrANPRReadAttached):
 		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "conflict", Message: err.Error(), Code: 409})
 	default:
 		log.Printf("traffic incident %s failed: %v", op, err)
@@ -265,6 +266,14 @@ func (h *TrafficIncidentHandler) PlateReads(c *gin.Context) {
 func (h *TrafficIncidentHandler) AddPlateRead(c *gin.Context) {
 	addChild(c, "record plate read", func(id uuid.UUID, in models.TrafficPlateReadInput, actor uuid.UUID) (*models.TrafficPlateRead, error) {
 		return h.service.AddPlateRead(c.Request.Context(), id, in, actor)
+	})
+}
+
+// AttachANPRRead records a read from the vehicle detection module as a plate
+// read, keeping its model version and confidence.
+func (h *TrafficIncidentHandler) AttachANPRRead(c *gin.Context) {
+	addChild(c, "attach ANPR read", func(id uuid.UUID, in models.AttachANPRReadRequest, actor uuid.UUID) (*models.TrafficPlateRead, error) {
+		return h.service.AttachANPRRead(c.Request.Context(), id, in, actor)
 	})
 }
 

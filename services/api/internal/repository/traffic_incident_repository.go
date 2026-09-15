@@ -445,7 +445,8 @@ func (r *TrafficIncidentRepository) AddCamera(ctx context.Context, incidentID uu
 func (r *TrafficIncidentRepository) PlateReads(ctx context.Context, incidentID uuid.UUID) ([]models.TrafficPlateRead, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT p.id, p.incident_id, p.registration_number, p.read_at, p.location, p.camera_ref,
-		       p.source, p.source_detail, v.id, COALESCE(u.name, ''), p.created_at
+		       p.source, p.source_detail, p.anpr_plate_read_id, p.model_version, p.read_confidence::float8,
+		       v.id, COALESCE(u.name, ''), p.created_at
 		FROM traffic_incident_plate_reads p
 		LEFT JOIN traffic_incident_vehicles v ON v.incident_id = p.incident_id AND v.registration_number = p.registration_number
 		LEFT JOIN users u ON u.id = p.created_by
@@ -458,7 +459,8 @@ func (r *TrafficIncidentRepository) PlateReads(ctx context.Context, incidentID u
 	for rows.Next() {
 		var p models.TrafficPlateRead
 		if err := rows.Scan(&p.ID, &p.IncidentID, &p.RegistrationNumber, &p.ReadAt, &p.Location, &p.CameraRef,
-			&p.Source, &p.SourceDetail, &p.MatchedVehicleID, &p.CreatedByName, &p.CreatedAt); err != nil {
+			&p.Source, &p.SourceDetail, &p.ANPRPlateReadID, &p.ModelVersion, &p.ReadConfidence,
+			&p.MatchedVehicleID, &p.CreatedByName, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

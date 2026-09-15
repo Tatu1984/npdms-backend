@@ -163,9 +163,17 @@ func main() {
 	searchHandler := handlers.NewRecordSearchHandler(repository.NewSearchRepository(db), auditRepo)
 	legalHandler := handlers.NewLegalHandler(services.NewLegalService(repository.NewLegalRepository(db), repository.NewGazetteerRepository(db), auditRepo))
 	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
+	// AI layer A4 — vehicle detection and number-plate reading. The detection
+	// service runs on the edge server (services/ml/vehicle_detection). With no
+	// address configured the module reports "service not connected"; the
+	// watchlist, stored-read search and hit review still work.
+	anprRepo := repository.NewANPRRepository(db)
+	anprHandler := handlers.NewANPRHandler(services.NewANPRService(
+		anprRepo, services.NewANPRClient(os.Getenv("ML_VEHICLE_DETECTION_URL")), evidenceStore, auditRepo))
+
 	// Phase 06 — traffic incidents and accident reconstruction
 	trafficIncidentHandler := handlers.NewTrafficIncidentHandler(
-		services.NewTrafficIncidentService(repository.NewTrafficIncidentRepository(db), auditRepo))
+		services.NewTrafficIncidentService(repository.NewTrafficIncidentRepository(db), auditRepo).WithANPR(anprRepo))
 
 	// Phase 07 — Dispatch. The escalation rules are applied on a timer as well
 	// as on every read, so an unacknowledged unit escalates unattended.
@@ -704,6 +712,36 @@ func main() {
 				video.GET("/access-log", middleware.RequireRole("DSP"), videoHandler.AccessLog)
 			}
 
+			// AI layer A4 — Vehicle detection and ANPR (AI-assisted)
+			//
+			// Role floors:
+			//   module status .................................. any officer
+			//   submit footage or a still, ingest a camera
+			//   snapshot, open an analysis, search plate reads
+			//   (purpose required and logged), view the
+			//   watchlist, hit queue and reads map .............. ASI
+			//   add or remove watchlist entries,
+			//   confirm / dismiss hits (never the submitter) .... SI
+			//   switch the module on or off, read the purpose log DSP
+			anpr := protected.Group("/anpr")
+			{
+				anpr.GET("/status", anprHandler.Status)
+				anpr.PUT("/switch", middleware.RequireRole("DSP"), anprHandler.SetSwitch)
+				anpr.POST("/analyses", middleware.RequireRole("ASI"), anprHandler.SubmitAnalysis)
+				anpr.GET("/analyses", middleware.RequireRole("ASI"), anprHandler.ListAnalyses)
+				anpr.POST("/analyses/:id/access", middleware.RequireRole("ASI"), anprHandler.OpenAnalysis)
+				anpr.GET("/analyses/:id/frames/:frameId/image", middleware.RequireRole("ASI"), anprHandler.FrameImage)
+				anpr.POST("/snapshots", middleware.RequireRole("ASI"), anprHandler.IngestSnapshot)
+				anpr.POST("/reads/search", middleware.RequireRole("ASI"), anprHandler.SearchReads)
+				anpr.GET("/watchlist", middleware.RequireRole("ASI"), anprHandler.Watchlist)
+				anpr.POST("/watchlist", middleware.RequireRole("SI"), anprHandler.AddWatchlistEntry)
+				anpr.POST("/watchlist/:id/remove", middleware.RequireRole("SI"), anprHandler.RemoveWatchlistEntry)
+				anpr.GET("/hits", middleware.RequireRole("ASI"), anprHandler.Hits)
+				anpr.POST("/hits/:id/review", middleware.RequireRole("SI"), anprHandler.ReviewHit)
+				anpr.GET("/map", middleware.RequireRole("ASI"), anprHandler.Map)
+				anpr.GET("/access-log", middleware.RequireRole("DSP"), anprHandler.AccessLog)
+			}
+
 			// Phase 04 — Missing & Vulnerable Persons
 			// Any officer may view (a child's identifying details are restricted in the
 			// service), record a sighting or log family contact; deciding sightings and
@@ -824,6 +862,7 @@ func main() {
 				trafficIncidents.DELETE("/:id/cameras/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("cameras"))
 				trafficIncidents.GET("/:id/plate-reads", trafficIncidentHandler.PlateReads)
 				trafficIncidents.POST("/:id/plate-reads", middleware.RequireRole("ASI"), trafficIncidentHandler.AddPlateRead)
+				trafficIncidents.POST("/:id/plate-reads/from-anpr", middleware.RequireRole("ASI"), trafficIncidentHandler.AttachANPRRead)
 				trafficIncidents.DELETE("/:id/plate-reads/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("plate-reads"))
 				trafficIncidents.GET("/:id/signal-phases", trafficIncidentHandler.SignalPhases)
 				trafficIncidents.POST("/:id/signal-phases", middleware.RequireRole("ASI"), trafficIncidentHandler.AddSignalPhase)

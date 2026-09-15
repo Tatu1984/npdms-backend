@@ -694,6 +694,60 @@ Reported on `/fir/new`: location suggestions and the map did not work, and only 
 - **Adding places:** Settings → Map places lets SP and above add a missing place, with the addition audited.
 - **Verified:** an API probe covering search, correspondence, admin writes, 409 and 403 refusals, and rejection of half or out-of-state coordinates; and a 21-check browser run as SI and as admin with writes confirmed in Postgres.
 
+### Vehicle detection and ANPR (AI layer A4) · `DONE` (branch `feat/anpr`, not yet merged; runs on the edge server, not on Vercel)
+
+Kolkata Police asked where vehicle detection was. It had been deferred with the AI layer (workstream A4 in the plan); this delivers the vehicle and plate part of A4. Speed estimation, natural-language search and appearance matching remain planned.
+
+**Models and licences** (details, digests and the licence review in `services/ml/vehicle_detection/MODELS.md`)
+- Vehicle detection: **YOLOX-s** (COCO), Megvii release 0.1.1rc0 — Apache-2.0.
+- Plate localisation and reading: **PaddleOCR PP-OCRv4** mobile detection and recognition, ONNX files from the pinned `rapidocr_onnxruntime` 1.4.4 wheel — Apache-2.0.
+- Runtime: ONNX Runtime (MIT), OpenCV headless (Apache-2.0), FastAPI (MIT). CPU only, no cloud APIs; the running service downloads nothing.
+- Rejected: Ultralytics (AGPL-3.0); the "MIT" open-image-models YOLOv9 plate detector, whose checkpoints show it was trained with the GPL-3.0 yolov9 code; fast-plate-ocr (MIT, but 62% on WB plates against 94%).
+
+**What it detects and reads**
+- Classes: car, motorcycle, bus, truck, bicycle. **No class for auto-rickshaw, e-rickshaw, cycle-rickshaw, taxi or LCV** — autos come out as truck or car or are missed. **Colour is not estimated.** Both are stated by the service and on screen.
+- Plates: standard (`WB 06 AX 3304`, `WB 19 6695`), BH series and the old Bengal three-letter series (`WBC 1844`), one- and two-line. Normalised with the Phase 06 rule; OCR confusions corrected only where the format fixes the character type, reported with the raw text. Only format-valid reads are kept, which is what keeps shop signs out. Confidence per character.
+
+**Measured** (CPU, 2 threads)
+- Synthetic WB plate crops, held-out set of 240: **97.5%** exact (small plates 92.5%, two-line 87.5%). Upper bound — synthetic plates are clean.
+- Synthetic plates placed on vehicles in real Kolkata photographs, 198 scenes: **83.8%** found and read; 96% when the plate is ≥150 px wide, 70% under 90 px; simulated night 69%, angled 80%.
+- Real licensed photographs (Wikimedia Commons, attribution recorded): 5 of 7 legible plates read correctly, 1 missed, 1 unverifiable; no false plates in 14 photos.
+- Detection, manual review of 91 detections in 8 photographs: precision 97.8% (vehicle present), 91.2% with the right class; recall 78.1%.
+- Speed: ~46 ms detection, ~0.3–0.5 s for a full 1280 px frame with plate reading.
+- Not measured on real night, rain or motion-blurred footage: none was available with a usable licence.
+
+**Delivered**
+- `services/ml/vehicle_detection` (FastAPI, stateless): `/health` with model versions, licences and digests; `/v1/analyse/image`; `/v1/analyse/video` sampling frames. Models pinned by SHA-256 (`fetch_models.py`); a missing or altered file makes the service answer 503, never mock output. Dockerfile for the edge server. Plate rules unit-tested; evaluation scripts in `eval/`.
+- Migrations `000074`/`000075`: module switch (starts **off**), analyses, frames (object key + SHA-256), vehicle detections, plate reads (confidence, per-character confidence, model version, box), append-only purpose log, vehicle watchlist, watchlist hits, and ANPR provenance columns on the Phase 06 plate-read register.
+- API `/api/v1/anpr` (15 routes): status; switch (DSP, reason, audited); submit a still or footage (ASI, purpose required and logged); camera snapshot ingestion; open an analysis with a purpose; frames served only to an officer who submitted or opened the analysis within 12 hours; purpose-logged plate search by full or partial plate, time window, camera and place (radius around a point); watchlist (SI adds/removes with reason and expiry, at most a year; active STOLEN_VEHICLE lookouts included automatically from their registration detail or subject); hit queue and review (SI, never the submitter; dismissal needs a note); reads map; purpose log (DSP). `POST /traffic-incidents/:id/plate-reads/from-anpr` attaches a read with its model version and confidence; the collision timeline shows it as **observed, AI-assisted**, never measured.
+- Storage: stills are kept (they are the frame); **footage is never stored whole** — its SHA-256 and size are recorded and only sampled frames with output are kept. On the `database` storage backend (8 MB per object) files over the cap are refused before analysis with a clear message.
+- `cmd/anpr-snapshot`: pulls frames from an RTSP URL with ffmpeg and posts them as snapshots; credentials come from the environment and never appear in logs.
+- Frontend `/vehicle-detection` (nav: Surveillance, live, AI-assisted, ASI+): service and switch state, upload with purpose, results with frame, boxes, plate reads and per-character confidence, recent analyses opened with a purpose, hit review with frame view, plate search, watchlist, map of reads and hits at camera locations, purpose log. The traffic incident page gains "Attach ANPR read". English and Bengali.
+
+**Safeguards held**
+- Detections and reads are stored and shown as machine output with confidence, model version and source frame.
+- A watchlist match is a PENDING hit; only confirmation by an officer other than the submitter raises an alert (BOLO, station scope, 24 h) and, for a lookout, records an unverified sighting at the camera's coordinates — in one transaction. Enforced in the service and by table constraints.
+- Every submission, snapshot, search and opening is written to an append-only purpose log before results are released; every change is audited with its actor.
+- When the service URL is unset or the service is down, status says "not connected", analysis returns 503 `service_not_connected`, nothing is stored and nothing is fabricated; watchlist, search over stored reads and hit review keep working.
+
+**Verified — 2026-09-15.** API probe 61/61 across seven runs: switch off refuses analysis, DSP floor, purpose required, constable refused, detections and reads stored with model versions, frame SHA-256 equal to the upload, lookout match creates a PENDING hit, frame refused before opening with a purpose, partial plate and place/time search, uploader's confirmation refused, dismissal needs a note, confirmation raises an alert and a sighting with the camera's coordinates, double review refused, manual watchlist entry matches, map counts, attach to a traffic incident (window enforced, no duplicates, timeline OBSERVED), footage analysed with only frames stored, service down and URL unset both give "not connected" with nothing stored, 8 MB database-backend refusal, audit entries with actors, purpose log append-only in the database, RTSP CLI against a stream and a refused connection. Browser run 18/18: ASI uploads a still with a WB plate on a stolen-vehicle lookout and sees detection, read and pending hit; confirm disabled for the uploader; SI opens the frame with a purpose and confirms; alert on `/alerts`; sighting on the lookout; map point at the camera; manual watchlist entry; Bengali; attach to a traffic incident; not-connected state with watchlist still working.
+
+**To run it live**
+- **Hosting:** the detection service must run on the Kolkata Police edge server (or any on-premises host the API can reach); set `ML_VEHICLE_DETECTION_URL` on the API. The Vercel staging API has no ML service, so the module shows "not connected" there. A DSP must switch the module on.
+- **Hardware:** CPU is enough for uploads and a few cameras at one frame every few seconds (4 cores ≈ 4–8 frames/s, ~1 GB RAM for the service). Continuous reading of many junction cameras needs a GPU box (NVIDIA T4 class or an edge accelerator) or one CPU node per few cameras.
+- **Cameras:** RTSP/ONVIF access and credentials from the camera owners (KP, KMC, Traffic), network reachability from the edge server, cameras registered with coordinates, and plate-capable placement (plates ≥ ~150 px wide, IR illumination at night). Run `anpr-snapshot` per camera under a service officer account.
+- **Before operational use:** a labelled set of real Kolkata junction footage (day, night, rain) to measure accuracy on the cameras that will be used, and fine-tuning for autos/e-rickshaws and Indian plates if the numbers warrant it; a legal review of pretrained weights and of retention.
+
+**Open**
+- **Retention** is not enforced for analyses and frames yet (Phase 03 has classes and purge for events; ANPR should follow the camera's class).
+- Exact plate matching only; no fuzzy matching.
+- No auto-rickshaw/e-rickshaw class and no colour; no real night or rain footage in the evaluation.
+- The map uses the platform's Leaflet component, which loads OSM tiles and marker images from the internet; an offline tile server is needed for an air-gapped deployment.
+- The Dockerfile was written but not built here (the Docker daemon is not running on the build machine); `docker-compose.yml` does not yet include the service.
+- Snapshot ingestion via the CLI polls; there is no continuous stream reader or NVR integration.
+
+---
+
 ## Later layers
 
 The detailed plan of action for both layers — workstreams, ground rules, the verdict on each prototype in `services/ml`, anchoring options and everything Kolkata Police must provide — is in [`docs/plans/ai-and-anchoring-plan.html`](docs/plans/ai-and-anchoring-plan.html).
@@ -839,6 +893,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-15 | **Vehicle detection and ANPR** (branch `feat/anpr`, AI layer A4). YOLOX-s and PaddleOCR PP-OCRv4 (Apache-2.0) in a stateless CPU service on the edge server; migrations `000074`/`000075`; `/api/v1/anpr` with purpose-logged submission and search, a watchlist that includes stolen-vehicle lookouts, operator-confirmed hits raising alerts and sightings, camera snapshot CLI and ANPR reads in the traffic plate-read register; `/vehicle-detection` screen in English and Bengali. Measured 97.5% on synthetic WB plate crops, 83.8% on synthetic plates in real scenes, detection precision 97.8%. Shows "not connected" wherever the ML service is absent, including Vercel. |
 | 2026-09-15 | **Face recognition for missing persons** (branch `feat/facerec`). Migrations `000072`/`000073`. On-premises service in `services/ml/face_recognition`: YuNet (MIT) and SFace (Apache-2.0) from the OpenCV Zoo, hash-checked. Recorded ORDER and DEMO authorisations; a per-module switch the database will not turn on without one. Enrolment with a quality gate that gives a reason. Purpose-logged footage, still and camera-snapshot searches. Immutable candidates confirmed by a second officer into verified sightings at the camera's coordinates. City-wide review queue and settings. DEMO enrols only synthetic test faces and labels everything it produces; without the service every screen says "not connected". Default threshold 0.50, measured on synthetic faces with limits stated. Probe 54/54, pytest 7/7, browser 12/12. |
 | 2026-09-15 | **Missing persons: face photographs, city-wide board, station checks, search map** (branch `feat/mpboard`). Migrations `000070`/`000071`. Photographs checked by magic bytes with GPS removed and a server-drawn thumbnail, one primary per report, retired never deleted. Every open report broadcast to every station (photo, name, age, sex, description, last seen, station) with the rest still restricted; the board polls every 20 seconds because the Vercel API cannot hold streams. Each station records no match, possible match or a sighting. A linked BOLO alert is raised on lodging. The map plots only stored points and reads face-match candidates when that table exists. New `database` storage backend (8 MB cap) makes photographs persist on Vercel. |
 | 2026-09-15 | **Statute library and incident location on the FIR form** (branch `feat/fir-location-statutes`). Migrations `000068` and `000069`. The full BNS, BNSS, BSA and IPC, six special Acts and the BPR&D correspondence table load by default from official sources. Picker, settings and audited custom entries added. The FIR form gets gazetteer suggestions and a map pin, and FIRs store coordinates. The Calcutta Police Acts are not included: no official source could be reached. |

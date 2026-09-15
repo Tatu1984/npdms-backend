@@ -24,6 +24,13 @@ const trafficTimelineWindow = 24 * time.Hour
 type TrafficIncidentService struct {
 	repo      *repository.TrafficIncidentRepository
 	auditRepo *repository.AuditRepository
+	anpr      *repository.ANPRRepository
+}
+
+// WithANPR lets ANPR reads be attached to the plate-read register.
+func (s *TrafficIncidentService) WithANPR(anpr *repository.ANPRRepository) *TrafficIncidentService {
+	s.anpr = anpr
+	return s
 }
 
 func NewTrafficIncidentService(repo *repository.TrafficIncidentRepository, auditRepo *repository.AuditRepository) *TrafficIncidentService {
@@ -296,6 +303,44 @@ func (s *TrafficIncidentService) AddPlateRead(ctx context.Context, id uuid.UUID,
 	return trafficFindByID(list, err, rid, func(p models.TrafficPlateRead) uuid.UUID { return p.ID })
 }
 
+// AttachANPRRead records a stored ANPR read in the incident's plate-read
+// register. It keeps the read's machine provenance — model version and
+// confidence — and names the camera, or the analysis when there was none.
+func (s *TrafficIncidentService) AttachANPRRead(ctx context.Context, id uuid.UUID, in models.AttachANPRReadRequest, actor uuid.UUID) (*models.TrafficPlateRead, error) {
+	if s.anpr == nil {
+		return nil, invalid("the ANPR module is not installed on this server")
+	}
+	read, err := s.anpr.Read(ctx, in.PlateReadID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.within(ctx, id, read.FrameTime); err != nil {
+		return nil, err
+	}
+	location := strings.TrimSpace(in.Location)
+	cameraRef := read.AnalysisNumber
+	if read.CameraID != nil {
+		cameraRef = read.CameraCode
+		if location == "" {
+			location = read.CameraLocation
+		}
+	}
+	if location == "" {
+		return nil, invalid("this read has no camera; state where the footage was recorded")
+	}
+	detail := fmt.Sprintf("AI-assisted read %s from %s, confidence %.2f (weakest character %.2f), %s",
+		read.DisplayNumber, read.AnalysisNumber, read.Confidence, read.MinCharConfidence, read.ModelVersion)
+	rid, err := s.anpr.AttachReadToIncident(ctx, id, read, location, cameraRef, detail, actor)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "traffic_incident_plate_read_recorded", actor, id,
+		fmt.Sprintf("ANPR read %s at %s attached from %s (confidence %.2f, %s)",
+			read.RegistrationNumber, location, read.AnalysisNumber, read.Confidence, read.ModelVersion))
+	list, err := s.repo.PlateReads(ctx, id)
+	return trafficFindByID(list, err, rid, func(p models.TrafficPlateRead) uuid.UUID { return p.ID })
+}
+
 func (s *TrafficIncidentService) SignalPhases(ctx context.Context, id uuid.UUID) ([]models.TrafficSignalPhase, error) {
 	if _, err := s.repo.Get(ctx, id); err != nil {
 		return nil, err
@@ -498,10 +543,16 @@ func (s *TrafficIncidentService) assemble(ctx context.Context, id uuid.UUID) (*m
 	}
 	for _, p := range c.PlateReads {
 		prov := models.ProvenanceObserved
-		if p.Source == "ANPR_SYSTEM" {
+		// A read from an external ANPR system is a measurement; a read from the
+		// platform's own ANPR module is a machine observation shown with its
+		// model and confidence, never promoted to measured.
+		if p.Source == "ANPR_SYSTEM" && p.ANPRPlateReadID == nil {
 			prov = models.ProvenanceMeasured
 		}
 		src := p.Source
+		if p.ANPRPlateReadID != nil && p.ModelVersion != nil && p.ReadConfidence != nil {
+			src = fmt.Sprintf("ANPR (AI-assisted, confidence %.2f, %s)", *p.ReadConfidence, *p.ModelVersion)
+		}
 		if p.CameraRef != nil {
 			src += " · " + *p.CameraRef
 		}
