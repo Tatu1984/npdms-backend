@@ -324,11 +324,28 @@ Semantic search and source-cited answering are the AI layer. **Non-negotiable wh
 
 ---
 
-### Phase 12 — Case File & Court Readiness · `PLANNED`
+### Phase 12 — Case File & Court Readiness · `DONE`
 
-**Functional without AI.** Case file index with serial numbering, evidence matrix, witness matrix, document completeness checks, version history, submission pack assembly, officer and supervisor approval.
+A court file assembled over an investigation workspace (Phase 01) and the signed evidence register (Phase 02). It owns no persons, evidence or chronology: every entry references a stored record — the investigation's FIR, an evidence item, a forensic request — or a document uploaded through the evidence storage with its SHA-256 taken as the bytes are stored.
 
-Completeness and consistency checking are deterministic rules over the file, the same approach proven in Phase 01. Builds directly on Phase 01 and Phase 02.
+**Delivered**
+- Migration `000060` (case files, entries, charges, evidence support, witness facts, versions, packs). 27 routes under `/api/v1/case-files`. Reading needs ASI, building the file SI, approval Inspector.
+- **File index** with serial numbers derived on read from the order the court expects — FIR, statements, seizure lists, forensic reports, custody records, police report, other — and frozen into a pack's manifest. Statements name the witness, the BNSS provision and the date. Removal needs a reason and the document stays in earlier versions.
+- **Evidence matrix** — each charged section against the evidence supporting it, with each item's integrity state and custody-chain verdict read live from Phase 02 (every signature re-derived on each read). A support row's composite key into `workspace_evidence` means only the investigation's own evidence can be linked.
+- **Witness matrix** — witnesses, victims and complainants against the facts they speak to, citing their statements and the provision each was recorded under.
+- **Completeness** — ten deterministic rules in the Phase 01 gap style, evaluated on every read, so none can be dismissed while its condition holds: FIR filed; a statement for every witness; seizure list; forensic requests completed with reports filed; no evidence with a failed integrity check; stored files verified (advisory); every custody leg verifiable; legacy legs (advisory); every charge supported by evidence; the parts of the BNSS s.193(3) report the record can show. Each states what it examined.
+- **Version history** — every successful change increments the version and writes a full snapshot in the same transaction; versions refuse UPDATE and DELETE.
+- **Submission packs** — submitting freezes an ordered manifest (documents with file or record digests, charges with supporting evidence, evidence integrity and chain state, open findings) stored as the exact text hashed, so `manifest_sha256` can be recomputed by anyone. Open findings do not stop submission but a pack frozen with blocking findings cannot be approved. Approver must differ from submitter (service and table constraint); approving a pack older than the file is refused; one undecided submission per file; frozen and decided packs refuse change at the database. A change after approval marks the file stale.
+- Every write is scoped to the file in the path — a child id from another file is a 404, and references outside the file's investigation are refused with the reason. Every change is audited with its actor.
+- Frontend: typed client, scoped hooks, list and detail screens with every form, credentialed download that recomputes the digest on arrival, browser-side manifest hash check; English and বাংলা. The mock documents, readiness percentages and AI governance notice are removed.
+
+**Verified — 2026-09-15.** API probe 113/113, including: cross-file writes (linking another file's evidence, removing or downloading through another file's path, another investigation's FIR or witness); every completeness rule opening and closing itself as its condition changes; a stored evidence file tampered with outside the platform — the next verification is broken, the matrix shows it live, the rule opens as blocking, the pack submitted in that state records it in its manifest and cannot be approved, and restoring and re-verifying closes the rule; self-approval refused; approval of a stale pack refused; direct UPDATE/DELETE on packs and versions refused by the database; the manifest hash recomputed independently. Browser run 23/23 as Inspector (build and submit), SHO (approve, second session) and constable (refused): open from an investigation, file a FIR record, a statement (first refused without its provision, with the API's reason shown), seizure list, police report and forensic report; download with the received digest matching; add a charge and link evidence showing live integrity and a verified chain; record a witness fact citing a statement; every blocking rule closes; view version 1 empty; submit and see the manifest hash match in the browser; approval by the second officer confirmed in Postgres; a later removal marks the approved file stale; screens checked in বাংলা.
+
+**Open**
+- Arrest and custody particulars required by s.193(3) are not recorded in the workspace, so that rule cannot check them and says so.
+- Completeness details are returned in English; rule titles and descriptions are bilingual.
+- Consistency checking across documents is the AI layer and is not built.
+- The login form rejects usernames shorter than three characters, so the demo `si` and `hc` accounts cannot sign in through the UI (shared code, not changed here).
 
 ---
 
