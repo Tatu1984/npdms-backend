@@ -26,6 +26,9 @@ func NewBodycamHandler(service *services.BodycamService) *BodycamHandler {
 }
 
 func bodycamError(c *gin.Context, op string, err error) {
+	if storageLimitError(c, err) {
+		return
+	}
 	conflict := func() {
 		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "conflict", Message: err.Error(), Code: 409})
 	}

@@ -1,11 +1,15 @@
 // Package storage holds evidence files.
 //
-// Two backends, chosen by configuration:
+// Three backends, chosen by configuration:
 //
 //   - filesystem: a directory on the edge server. The default, because a single
 //     central server already has local disk, and one fewer service to run is one
 //     fewer service to operate, secure and back up.
 //   - minio: S3-compatible object storage, for deployments that want it.
+//   - database: rows in Postgres (storage_objects), for hosting whose disk does
+//     not persist, such as the staging API on Vercel. Capped per object (8 MB by
+//     default, STORAGE_DB_MAX_OBJECT_BYTES); larger objects — recordings — are
+//     refused with ErrObjectTooLarge rather than stored badly.
 //
 // Both satisfy the same interface, so nothing above this package knows which is
 // in use. Writes always return the SHA-256 of what was actually stored,

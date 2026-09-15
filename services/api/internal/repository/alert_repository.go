@@ -79,7 +79,7 @@ func (r *AlertRepository) List(ctx context.Context, filter AlertFilter) ([]model
 		SELECT
 			a.id, a.type, a.scope, a.title, a.description,
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
-			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
+			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id, a.resource_type, a.resource_id,
 			a.created_at, a.updated_at,
 			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
@@ -104,7 +104,7 @@ func (r *AlertRepository) List(ctx context.Context, filter AlertFilter) ([]model
 		err := rows.Scan(
 			&a.ID, &a.Type, &a.Scope, &a.Title, &a.Description,
 			&a.IssuedAt, &a.ExpiresAt, &a.IssuedBy, &a.Acknowledged,
-			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID,
+			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID, &a.ResourceType, &a.ResourceID,
 			&a.CreatedAt, &a.UpdatedAt,
 			&a.IssuedByName, &a.AcknowledgedByName,
 		)
@@ -125,7 +125,7 @@ func (r *AlertRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.A
 		SELECT
 			a.id, a.type, a.scope, a.title, a.description,
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
-			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
+			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id, a.resource_type, a.resource_id,
 			a.created_at, a.updated_at,
 			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
@@ -138,7 +138,7 @@ func (r *AlertRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.A
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&a.ID, &a.Type, &a.Scope, &a.Title, &a.Description,
 		&a.IssuedAt, &a.ExpiresAt, &a.IssuedBy, &a.Acknowledged,
-		&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID,
+		&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID, &a.ResourceType, &a.ResourceID,
 		&a.CreatedAt, &a.UpdatedAt,
 		&a.IssuedByName, &a.AcknowledgedByName,
 	)
@@ -248,7 +248,7 @@ func (r *AlertRepository) GetActiveAlerts(ctx context.Context) ([]models.Alert, 
 		SELECT
 			a.id, a.type, a.scope, a.title, a.description,
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
-			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
+			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id, a.resource_type, a.resource_id,
 			a.created_at, a.updated_at,
 			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
@@ -270,7 +270,7 @@ func (r *AlertRepository) GetActiveAlerts(ctx context.Context) ([]models.Alert, 
 		err := rows.Scan(
 			&a.ID, &a.Type, &a.Scope, &a.Title, &a.Description,
 			&a.IssuedAt, &a.ExpiresAt, &a.IssuedBy, &a.Acknowledged,
-			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID,
+			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID, &a.ResourceType, &a.ResourceID,
 			&a.CreatedAt, &a.UpdatedAt,
 			&a.IssuedByName, &a.AcknowledgedByName,
 		)
@@ -291,7 +291,7 @@ func (r *AlertRepository) GetUnacknowledgedAlerts(ctx context.Context) ([]models
 		SELECT
 			a.id, a.type, a.scope, a.title, a.description,
 			a.issued_at, a.expires_at, a.issued_by, a.acknowledged,
-			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id,
+			a.acknowledged_by, a.acknowledged_at, a.priority, a.has_image, a.station_id, a.resource_type, a.resource_id,
 			a.created_at, a.updated_at,
 			COALESCE(u1.name, '') AS issued_by_name, COALESCE(u2.name, '') AS acknowledged_by_name
 		FROM alerts a
@@ -313,7 +313,7 @@ func (r *AlertRepository) GetUnacknowledgedAlerts(ctx context.Context) ([]models
 		err := rows.Scan(
 			&a.ID, &a.Type, &a.Scope, &a.Title, &a.Description,
 			&a.IssuedAt, &a.ExpiresAt, &a.IssuedBy, &a.Acknowledged,
-			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID,
+			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.Priority, &a.HasImage, &a.StationID, &a.ResourceType, &a.ResourceID,
 			&a.CreatedAt, &a.UpdatedAt,
 			&a.IssuedByName, &a.AcknowledgedByName,
 		)

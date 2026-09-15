@@ -11,6 +11,7 @@ import (
 
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
+	"github.com/npdms/api/internal/storage"
 )
 
 // ErrChildRecordRestricted is returned when an officer below the rank allowed
@@ -50,10 +51,12 @@ type MissingPersonService struct {
 	repo      *repository.MissingPersonRepository
 	lookouts  *LookoutService
 	auditRepo *repository.AuditRepository
+	// store holds photographs (the configured evidence storage backend).
+	store storage.Store
 }
 
-func NewMissingPersonService(repo *repository.MissingPersonRepository, lookouts *LookoutService, auditRepo *repository.AuditRepository) *MissingPersonService {
-	return &MissingPersonService{repo: repo, lookouts: lookouts, auditRepo: auditRepo}
+func NewMissingPersonService(repo *repository.MissingPersonRepository, lookouts *LookoutService, auditRepo *repository.AuditRepository, store storage.Store) *MissingPersonService {
+	return &MissingPersonService{repo: repo, lookouts: lookouts, auditRepo: auditRepo, store: store}
 }
 
 // Viewer is the authenticated officer making a request.
@@ -211,6 +214,9 @@ func (s *MissingPersonService) Register(ctx context.Context, req models.Register
 	if req.LastSeenAt.After(time.Now().Add(5 * time.Minute)) {
 		return nil, invalid("last seen time cannot be in the future")
 	}
+	if err := validatePoint(req.LastSeenLatitude, req.LastSeenLongitude); err != nil {
+		return nil, err
+	}
 	flags, err := normaliseVulnerabilities(*req.Age, req.Vulnerabilities)
 	if err != nil {
 		return nil, err
@@ -230,6 +236,7 @@ func (s *MissingPersonService) Register(ctx context.Context, req models.Register
 	}
 	s.audit(ctx, "missing_person_registered", v.ID, id,
 		fmt.Sprintf("Registered %s, priority %s, flags %v; search started", p.ReportNumber, p.Priority, p.Vulnerabilities))
+	s.raiseBroadcast(ctx, p, v)
 	return p, nil
 }
 
@@ -242,12 +249,20 @@ func (s *MissingPersonService) StartSearch(ctx context.Context, id uuid.UUID, v 
 		return nil, err
 	}
 	s.audit(ctx, "missing_person_search_accepted", v.ID, id, "Took up citizen report "+p.ReportNumber+"; search started")
-	return s.repo.Get(ctx, id)
+	updated, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.raiseBroadcast(ctx, updated, v)
+	return updated, nil
 }
 
 func (s *MissingPersonService) Update(ctx context.Context, id uuid.UUID, req models.UpdateMissingPersonRequest, v Viewer) (*models.MissingPerson, error) {
 	p, err := s.authorised(ctx, id, v)
 	if err != nil {
+		return nil, err
+	}
+	if err := validatePoint(req.LastSeenLatitude, req.LastSeenLongitude); err != nil {
 		return nil, err
 	}
 	flags := p.Vulnerabilities
@@ -330,24 +345,8 @@ func (s *MissingPersonService) RecordSighting(ctx context.Context, id uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	req.Source = strings.ToUpper(strings.TrimSpace(req.Source))
-	if !validSightingSources[req.Source] {
-		return nil, invalid("unknown sighting source %q", req.Source)
-	}
-	if strings.TrimSpace(req.Location) == "" {
-		return nil, invalid("location is required")
-	}
-	if (req.Latitude == nil) != (req.Longitude == nil) {
-		return nil, invalid("latitude and longitude must be given together")
-	}
-	if req.Latitude != nil && (*req.Latitude < -90 || *req.Latitude > 90 || *req.Longitude < -180 || *req.Longitude > 180) {
-		return nil, invalid("coordinates are out of range")
-	}
-	if req.SightedAt.After(time.Now().Add(5 * time.Minute)) {
-		return nil, invalid("a sighting cannot be in the future")
-	}
-	if req.SightedAt.Before(p.LastSeenAt) {
-		return nil, invalid("a sighting cannot be earlier than when the person was last seen")
+	if err := validateSighting(&req, p); err != nil {
+		return nil, err
 	}
 	sighting, err := s.repo.RecordSighting(ctx, id, req, v.ID)
 	if err != nil {
@@ -513,6 +512,37 @@ func (s *MissingPersonService) IssueLookout(ctx context.Context, id uuid.UUID, v
 	}
 	s.audit(ctx, "missing_person_lookout_linked", v.ID, id, fmt.Sprintf("%s: lookout %s issued and linked", p.ReportNumber, lookout.LookoutNumber))
 	return s.repo.Get(ctx, id)
+}
+
+// validateSighting normalises and checks a sighting against its report.
+func validateSighting(req *models.RecordMissingSightingRequest, p *models.MissingPerson) error {
+	req.Source = strings.ToUpper(strings.TrimSpace(req.Source))
+	if !validSightingSources[req.Source] {
+		return invalid("unknown sighting source %q", req.Source)
+	}
+	if strings.TrimSpace(req.Location) == "" {
+		return invalid("location is required")
+	}
+	if err := validatePoint(req.Latitude, req.Longitude); err != nil {
+		return err
+	}
+	if req.SightedAt.After(time.Now().Add(5 * time.Minute)) {
+		return invalid("a sighting cannot be in the future")
+	}
+	if req.SightedAt.Before(p.LastSeenAt) {
+		return invalid("a sighting cannot be earlier than when the person was last seen")
+	}
+	return nil
+}
+
+func validatePoint(lat, lng *float64) error {
+	if (lat == nil) != (lng == nil) {
+		return invalid("latitude and longitude must be given together")
+	}
+	if lat != nil && (*lat < -90 || *lat > 90 || *lng < -180 || *lng > 180) {
+		return invalid("coordinates are out of range")
+	}
+	return nil
 }
 
 func istLocation() *time.Location {

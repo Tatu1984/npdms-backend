@@ -29,6 +29,9 @@ func NewCaseFileHandler(service *services.CaseFileService) *CaseFileHandler {
 }
 
 func caseFileError(c *gin.Context, op string, err error) {
+	if storageLimitError(c, err) {
+		return
+	}
 	var ref *repository.CaseFileReferenceError
 	notFound := func(msg string) {
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: msg, Code: 404})

@@ -39,6 +39,9 @@ func knowledgeViewer(c *gin.Context) (services.KnowledgeViewer, bool) {
 }
 
 func knowledgeError(c *gin.Context, op string, err error) {
+	if storageLimitError(c, err) {
+		return
+	}
 	var maxErr *http.MaxBytesError
 	switch {
 	case errors.As(err, &maxErr):

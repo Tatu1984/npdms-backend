@@ -39,7 +39,8 @@ func NewMissingPersonRepository(db *pgxpool.Pool) *MissingPersonRepository {
 const missingPersonSelect = `
 	SELECT m.id, m.report_number, m.status, m.source, m.priority, m.vulnerabilities,
 	       m.person_name, m.age, m.gender, m.height, m.complexion, m.identifying_marks,
-	       m.last_seen_location, m.last_seen_date, m.last_seen_wearing, m.circumstances,
+	       m.last_seen_location, m.last_seen_date, m.last_seen_latitude, m.last_seen_longitude,
+	       m.last_seen_wearing, m.circumstances,
 	       m.reporter_name, m.reporter_phone, m.reporter_relation,
 	       m.station_id, COALESCE(s.name, ''), m.assigned_to, COALESCE(ao.name, ''),
 	       m.fir_id, COALESCE(f.fir_number, ''), m.lookout_id, COALESCE(l.lookout_number, ''),
@@ -53,6 +54,8 @@ const missingPersonSelect = `
 	       (SELECT COUNT(*) FROM missing_person_sightings x WHERE x.report_id = m.id),
 	       (SELECT COUNT(*) FROM missing_person_sightings x WHERE x.report_id = m.id AND x.decision = 'VERIFIED'),
 	       (SELECT MAX(x.sighted_at) FROM missing_person_sightings x WHERE x.report_id = m.id AND x.decision = 'VERIFIED'),
+	       (SELECT ph.id FROM missing_person_photos ph WHERE ph.report_id = m.id AND ph.is_primary AND ph.retired_at IS NULL),
+	       (SELECT COUNT(*) FROM missing_person_photos ph WHERE ph.report_id = m.id AND ph.retired_at IS NULL),
 	       COALESCE(m.created_at, NOW()), COALESCE(m.updated_at, NOW())
 	FROM missing_person_reports m
 	LEFT JOIN stations s ON s.id = m.station_id
@@ -68,7 +71,8 @@ func scanMissingPerson(row pgx.Row) (*models.MissingPerson, error) {
 	err := row.Scan(
 		&p.ID, &p.ReportNumber, &p.Status, &p.Source, &p.Priority, &p.Vulnerabilities,
 		&p.PersonName, &p.Age, &p.Gender, &p.Height, &p.Complexion, &p.IdentifyingMarks,
-		&p.LastSeenLocation, &p.LastSeenAt, &p.LastSeenWearing, &p.Circumstances,
+		&p.LastSeenLocation, &p.LastSeenAt, &p.LastSeenLatitude, &p.LastSeenLongitude,
+		&p.LastSeenWearing, &p.Circumstances,
 		&p.ReporterName, &p.ReporterPhone, &p.ReporterRelation,
 		&p.StationID, &p.StationName, &p.AssignedTo, &p.AssignedToName,
 		&p.FIRID, &p.FIRNumber, &p.LookoutID, &p.LookoutNumber,
@@ -77,6 +81,7 @@ func scanMissingPerson(row pgx.Row) (*models.MissingPerson, error) {
 		&p.FoundLocation, &p.FoundCondition,
 		&p.ChecklistTotal, &p.ChecklistDone, &p.ChecklistOverdue,
 		&p.SightingCount, &p.VerifiedSightings, &p.LastVerifiedAt,
+		&p.PrimaryPhotoID, &p.PhotoCount,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
@@ -215,14 +220,15 @@ func (r *MissingPersonRepository) Register(ctx context.Context, req models.Regis
 			reporter_name, reporter_phone, reporter_relation,
 			person_name, age, gender, height, complexion, identifying_marks,
 			last_seen_location, last_seen_date, last_seen_wearing, circumstances,
-			station_id, assigned_to, fir_id, search_started_at, search_started_by
+			station_id, assigned_to, fir_id, search_started_at, search_started_by,
+			last_seen_latitude, last_seen_longitude
 		) VALUES ($1, $2, 'SEARCHING', 'OFFICER', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-		          $15, $16, $17, $18, $19, $20, $21, $22, $3)
+		          $15, $16, $17, $18, $19, $20, $21, $22, $3, $23, $24)
 	`, id, number, actor, priority, req.Vulnerabilities,
 		strings.TrimSpace(req.ReporterName), strings.TrimSpace(req.ReporterPhone), strings.TrimSpace(req.ReporterRelation),
 		strings.TrimSpace(req.PersonName), *req.Age, req.Gender, req.Height, req.Complexion, req.IdentifyingMarks,
 		strings.TrimSpace(req.LastSeenLocation), req.LastSeenAt, req.LastSeenWearing, req.Circumstances,
-		stationID, req.AssignedTo, req.FIRID, now)
+		stationID, req.AssignedTo, req.FIRID, now, req.LastSeenLatitude, req.LastSeenLongitude)
 	if err != nil {
 		return uuid.Nil, referenceError(err)
 	}
@@ -289,10 +295,12 @@ func (r *MissingPersonRepository) Update(ctx context.Context, id uuid.UUID, req 
 			priority = $8,
 			assigned_to = COALESCE($9, assigned_to),
 			fir_id = COALESCE($10, fir_id),
+			last_seen_latitude = CASE WHEN $11::float8 IS NULL THEN last_seen_latitude ELSE $11 END,
+			last_seen_longitude = CASE WHEN $12::float8 IS NULL THEN last_seen_longitude ELSE $12 END,
 			updated_at = NOW()
 		WHERE id = $1 AND status IN ('REPORTED', 'SEARCHING')
 	`, id, req.Height, req.Complexion, req.IdentifyingMarks, req.LastSeenWearing, req.Circumstances,
-		vulnerabilities, priority, req.AssignedTo, req.FIRID)
+		vulnerabilities, priority, req.AssignedTo, req.FIRID, req.LastSeenLatitude, req.LastSeenLongitude)
 	if err != nil {
 		return referenceError(err)
 	}
@@ -496,7 +504,8 @@ func (r *MissingPersonRepository) Movement(ctx context.Context, id uuid.UUID) ([
 	if err != nil {
 		return nil, err
 	}
-	points := []models.MovementPoint{{Kind: "LAST_SEEN", Location: p.LastSeenLocation, At: p.LastSeenAt}}
+	points := []models.MovementPoint{{Kind: "LAST_SEEN", Location: p.LastSeenLocation, At: p.LastSeenAt,
+		Latitude: p.LastSeenLatitude, Longitude: p.LastSeenLongitude}}
 	rows, err := r.db.Query(ctx, `
 		SELECT id, location, latitude, longitude, sighted_at FROM missing_person_sightings
 		WHERE report_id = $1 AND decision = 'VERIFIED'
@@ -595,6 +604,13 @@ func (r *MissingPersonRepository) Close(ctx context.Context, id uuid.UUID, req m
 			return err
 		}
 		return ErrMissingPersonNotOpen
+	}
+	// The city-wide broadcast ends with the search.
+	if _, err := r.db.Exec(ctx, `
+		UPDATE alerts SET expires_at = LEAST(expires_at, NOW()::timestamp), updated_at = NOW()
+		WHERE resource_type = 'missing_person' AND resource_id = $1
+	`, id); err != nil {
+		return fmt.Errorf("report closed but its broadcast alert could not be expired: %w", err)
 	}
 	return nil
 }

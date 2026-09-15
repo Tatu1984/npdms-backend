@@ -110,9 +110,11 @@ func main() {
 	ipIntelService := services.NewIPIntelService(rdb, auditRepo)
 
 	// Evidence storage. Filesystem by default so a single edge server needs no
-	// extra service; set STORAGE_BACKEND=minio for S3-compatible storage.
+	// extra service; set STORAGE_BACKEND=minio for S3-compatible storage, or
+	// STORAGE_BACKEND=database where disk does not persist (Vercel) — that
+	// backend refuses objects over its cap (8 MB), so recordings need MinIO/S3.
 	storageCfg := storage.FromEnv()
-	evidenceStore, err := storage.Open(storageCfg)
+	evidenceStore, err := storage.Open(storageCfg, db)
 	if err != nil {
 		log.Fatalf("Failed to open evidence storage (%s): %v", storageCfg.Backend, err)
 	}
@@ -146,7 +148,7 @@ func main() {
 	lookoutService := services.NewLookoutService(lookoutRepo, auditRepo)
 	lookoutHandler := handlers.NewLookoutHandler(lookoutService)
 	missingPersonHandler := handlers.NewMissingPersonHandler(services.NewMissingPersonService(
-		repository.NewMissingPersonRepository(db), lookoutService, auditRepo))
+		repository.NewMissingPersonRepository(db), lookoutService, auditRepo, evidenceStore))
 	// Phase 03: stream credentials are encrypted with their own key where one
 	// is provided; otherwise the JWT secret is the key material.
 	cctvCredentialKey := os.Getenv("CCTV_CREDENTIAL_KEY")
@@ -701,6 +703,9 @@ func main() {
 			{
 				missingPersons.GET("", missingPersonHandler.List)
 				missingPersons.GET("/stats", missingPersonHandler.Stats)
+				// City-wide board: every open report from every station, in its
+				// broadcast form, polled by every open screen.
+				missingPersons.GET("/board", missingPersonHandler.Board)
 				missingPersons.POST("", middleware.RequireRole("ASI"), missingPersonHandler.Register)
 				missingPersons.GET("/:id", missingPersonHandler.Get)
 				missingPersons.PATCH("/:id", middleware.RequireRole("SI"), missingPersonHandler.Update)
@@ -716,6 +721,18 @@ func main() {
 				missingPersons.POST("/:id/family-contacts", missingPersonHandler.RecordFamilyContact)
 				missingPersons.POST("/:id/close", middleware.RequireRole("SI"), missingPersonHandler.Close)
 				missingPersons.POST("/:id/lookout", middleware.RequireRole("SI"), missingPersonHandler.IssueLookout)
+				// Photographs: ASI and above add them and choose the primary; SI and
+				// above retire one (never deleted). Bytes are served privately.
+				missingPersons.GET("/:id/photos", missingPersonHandler.Photos)
+				missingPersons.POST("/:id/photos", middleware.RequireRole("ASI"), missingPersonHandler.UploadPhoto)
+				missingPersons.GET("/:id/photos/:photoId/image", missingPersonHandler.PhotoImage)
+				missingPersons.GET("/:id/photos/:photoId/thumbnail", missingPersonHandler.PhotoThumbnail)
+				missingPersons.POST("/:id/photos/:photoId/primary", middleware.RequireRole("ASI"), missingPersonHandler.SetPrimaryPhoto)
+				missingPersons.POST("/:id/photos/:photoId/retire", middleware.RequireRole("SI"), missingPersonHandler.RetirePhoto)
+				// Each station's check of an open report (ASI and above record).
+				missingPersons.GET("/:id/station-checks", missingPersonHandler.StationChecks)
+				missingPersons.POST("/:id/station-checks", middleware.RequireRole("ASI"), missingPersonHandler.RecordStationCheck)
+				missingPersons.GET("/:id/map", missingPersonHandler.SearchMap)
 			}
 
 			// Phase 11 — Police Knowledge Assistant (functional, no AI)

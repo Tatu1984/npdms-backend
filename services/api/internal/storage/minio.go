@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
@@ -141,13 +143,15 @@ func isNotFound(err error) bool {
 
 // Config describes which backend to use.
 type Config struct {
-	Backend        string // "filesystem" (default) or "minio"
+	Backend        string // "filesystem" (default), "minio" or "database"
 	FilesystemRoot string
 	MinioEndpoint  string
 	MinioAccessKey string
 	MinioSecretKey string
 	MinioBucket    string
 	MinioUseSSL    bool
+	// DatabaseMaxObjectBytes caps each object on the database backend.
+	DatabaseMaxObjectBytes int64
 }
 
 // FromEnv reads storage configuration.
@@ -171,22 +175,34 @@ func FromEnv() Config {
 		bucket = "npdms"
 	}
 
+	maxDB := DefaultDatabaseMaxObjectBytes
+	if v, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("STORAGE_DB_MAX_OBJECT_BYTES")), 10, 64); err == nil && v > 0 {
+		maxDB = v
+	}
+
 	return Config{
-		Backend:        backend,
-		FilesystemRoot: root,
-		MinioEndpoint:  os.Getenv("MINIO_ENDPOINT"),
-		MinioAccessKey: os.Getenv("MINIO_ACCESS_KEY"),
-		MinioSecretKey: os.Getenv("MINIO_SECRET_KEY"),
-		MinioBucket:    bucket,
-		MinioUseSSL:    useSSL,
+		DatabaseMaxObjectBytes: maxDB,
+		Backend:                backend,
+		FilesystemRoot:         root,
+		MinioEndpoint:          os.Getenv("MINIO_ENDPOINT"),
+		MinioAccessKey:         os.Getenv("MINIO_ACCESS_KEY"),
+		MinioSecretKey:         os.Getenv("MINIO_SECRET_KEY"),
+		MinioBucket:            bucket,
+		MinioUseSSL:            useSSL,
 	}
 }
 
-// Open builds the configured store.
-func Open(cfg Config) (Store, error) {
-	if cfg.Backend == "minio" {
+// Open builds the configured store. db is used only by the database backend.
+func Open(cfg Config, db *pgxpool.Pool) (Store, error) {
+	switch cfg.Backend {
+	case "database":
+		return NewDatabaseStore(db, cfg.DatabaseMaxObjectBytes)
+	case "filesystem", "":
+	case "minio":
 		return NewMinioStore(cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey,
 			cfg.MinioBucket, cfg.MinioUseSSL)
+	default:
+		return nil, fmt.Errorf("unknown STORAGE_BACKEND %q (use filesystem, minio or database)", cfg.Backend)
 	}
 	return NewFilesystemStore(cfg.FilesystemRoot)
 }

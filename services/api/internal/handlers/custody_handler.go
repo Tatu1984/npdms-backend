@@ -59,6 +59,9 @@ func evidenceID(c *gin.Context) (uuid.UUID, bool) {
 // custodyError maps service errors to status codes. The cause of anything
 // unrecognised is logged and never sent to the client.
 func custodyError(c *gin.Context, op string, err error) {
+	if storageLimitError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, services.ErrInvalid):
 		badRequest(c, err.Error())

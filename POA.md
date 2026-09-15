@@ -129,7 +129,7 @@ Environment variables, frontend (Vercel project `npdms`): `NEXT_PUBLIC_API_URL=h
 
 Three things known to be wrong on the staging tier, none blocking:
 
-- **Evidence uploads do not persist.** Vercel's filesystem is read-only apart from `/tmp`, which is wiped between invocations. `STORAGE_PATH` is set so the service boots, not because uploads survive. Real storage needs S3/R2, or the edge box.
+- **Evidence uploads do not persist.** Vercel's filesystem is read-only apart from `/tmp`, which is wiped between invocations. `STORAGE_PATH` is set so the service boots, not because uploads survive. Real storage needs S3/R2, or the edge box. `STORAGE_BACKEND=database` (branch `feat/mpboard`, migration `000070`) now makes files up to 8 MB persist in Postgres — enough for photographs and document scans — and refuses larger ones (recordings) with a message that object storage is required.
 - **`DATABASE_URL` must not carry `channel_binding=require`.** `main.go` opens the database twice — pgx and sqlx via `lib/pq` — and `lib/pq` has no channel-binding support.
 - **Redis is absent**, so `/ready` reports `not ready` and every cold start burns a 5-second Redis ping timeout. Sessions and rate-limit counters degrade rather than fail.
 
@@ -317,9 +317,68 @@ Local operational workflow for missing persons, functional without AI. National 
 - Citizen portal MIS numbers counted rows; now the shared counter. Its tracking query used `SELECT *`, which the new columns would break. Its tracking route could never match `MIS/YYYY/NNNNN` (a path parameter cannot hold slashes). Public tracking returned the full record — reporter's phone, a child's description — to anyone guessing a sequential number; it now returns progress only. A citizen report for a minor is flagged as a child.
 - **Every kebab-menu action that opened a dialog froze the page** after the dialog closed (`pointer-events: none` left on `<body>` by stacked Radix modal layers). Fixed in `components/platform/actions.tsx`; affects all modules.
 
+**Photographs, city-wide board and search map** (branch `feat/mpboard`, not yet merged)
+
+Requested by Kolkata Police: a face thumbnail on every row, the family's photographs first when a report is opened, one list of every report from every station that each station checks as soon as it is lodged, and a map of where the person was seen.
+
+- **Migration `000070`.**
+  - `missing_person_photos`: storage key, SHA-256, type, width and height, source (`FAMILY`, `FRIEND`, `REPORTING_PERSON`, `OFFICER`, `CCTV_STILL`, `OTHER`), who provided it and their relationship (both required), consent flag and note, date taken, quality note, uploader.
+  - Photos are retired with a reason, never deleted; a trigger refuses `DELETE`.
+  - A partial unique index allows only one active primary per report. The first photo becomes primary. When the primary is retired, the next family photo is promoted.
+  - `missing_person_reports` gains a paired last-seen coordinate.
+  - `storage_objects` backs the database storage backend.
+- **Photograph handling.** Only JPEG, PNG and WebP are accepted, decided by magic bytes; the limit is 8 MB and the pixel count is capped.
+  - Location metadata is removed before storage without re-encoding the picture. The EXIF GPS directory is emptied in place, keeping orientation and other fields; XMP is dropped. This applies to JPEG APP1, PNG `eXIf`/`iTXt` and WebP `EXIF`/`XMP`. The photo records what was removed.
+  - A 160 px JPEG thumbnail is drawn on the server and stored as its own object.
+  - Bytes are served with `Cache-Control: private, no-cache` and an ETag, so every view is authorised again and a repeat view gets a 304.
+  - ASI and above upload and choose the primary. SI and above retire.
+  - Upload, set-primary, retire, every view of a child's photograph and every refused view are audited with the actor.
+- **Broadcast visibility (decision).** While a report is open, its purpose is to have the person found.
+  - Every officer may see the broadcast view: the primary photograph, name, age, sex, physical description (height, complexion, marks, clothing), last-seen place and time, and the reporting station. This applies to a child's report too.
+  - Everything else keeps the rule above: the informant and phone, family contacts, circumstances, other photographs, sightings, the map and the full record.
+  - The existing list masking is unchanged.
+  - A constable who opens a child's report gets the broadcast card instead of a bare 403.
+  - When the report closes, the broadcast ends and the primary photograph falls back under the child-record rule.
+- **City-wide board** (`GET /missing-persons/board`, screen `/missing-persons/board`). It lists every open report from every station, newest first. Each report shows its thumbnail, flags, last seen, reporting station, time since lodged and each station's latest check. Any station that has not checked is listed.
+  - **Updates arrive by polling every 20 seconds, not streaming.** The staging API runs on Vercel functions, which do not hold long-lived connections, so Server-Sent Events would be cut off and would tie up an instance per viewer.
+  - A banner announces reports lodged since the board was opened. The polling cost is 3 requests a minute per open board.
+- **Station checks (migration `000071`, append-only).** ASI and above at any station record one of three results for their station:
+  - "checked — no match here";
+  - "possible match" (details required);
+  - "sighting". This creates an ordinary sighting in the same transaction, and a different officer must still verify it.
+  - The check is open for a child's report too, because it is part of the broadcast.
+- **Automatic alert.** Registering a report, or taking up a citizen-filed one, raises a `BOLO` alert linked to the report through the new `alerts.resource_type`/`resource_id` columns. The alerts screen links back to the report.
+  - Scope is `DISTRICT` (Kolkata Police), or `STATE` with priority 1 for a critical report (child or trafficking risk).
+  - Closing the report expires the alert.
+  - Phase 04 has no reopen workflow, so there is no reopen alert.
+- **Search map** (`GET /missing-persons/:id/map`, the Map tab). It is restricted like the full record. Only stored coordinates are plotted.
+  - It shows the last-seen point, sightings (verified, awaiting verification and rejected, each drawn differently), active cameras as context, and a time-ordered route through the last-seen point, verified sightings and confirmed camera matches. A slider walks the route.
+  - Selecting a point shows who reported it, when, the source and the review status. For camera matches it also shows similarity, model version and the reviewer.
+  - Camera matches are read from the face recognition layer's `face_match_candidates` (`PENDING` and `CONFIRMED`), guarded by `to_regclass`. Until that table exists the map says camera matching is not connected. A confirmed match that has already become a sighting is not drawn twice.
+  - The last-seen and sighting forms now use the gazetteer location picker. SI and above can place a missing last-seen pin on older reports.
+- **Storage backend `database`** (`STORAGE_BACKEND=database`). Objects live in Postgres (`storage_objects`), streamed through SHA-256, with a per-object cap: `STORAGE_DB_MAX_OBJECT_BYTES`, 8 MB by default.
+  - This is the persistent option on Vercel today.
+  - **Anything over the cap is refused with 413.** The message says object storage (MinIO/S3) must be configured. On this backend, body-worn camera recordings and most footage cannot be stored.
+  - To use it on staging: apply `000070` to Neon first (the API refuses to start on this backend without the table), then set `STORAGE_BACKEND=database`. `vercel.json` still says `filesystem` and was not changed.
+- **Verified.**
+  - API probe: 79 checks, run on the database backend.
+    - Uploads: valid JPEG, PNG and WebP; text renamed `.jpg`, GIF, over 8 MB, missing provider or relationship, duplicate and rank all refused.
+    - GPS removed in all three formats and still decodable; SHA-256 of the served bytes equals the recorded hash equals `sha256(data)` in Postgres; thumbnail ≤ 160 px.
+    - Primary: one active primary, enforced by the database; retirement promotes the next photo; deletion refused.
+    - Masking: unchanged for a constable (403 on the child's record, gallery, family contacts and map). The broadcast thumbnail and photograph are served and audited; a non-primary child photo is refused and audited.
+    - Board and alerts: the board shows Park Street reports to Jadavpur and omits the informant; checks and their append-only trigger work; alert scope, link and expiry on closure are correct.
+    - Sighting, verification by a second officer, and map path.
+  - `go test ./internal/storage` database round trip, including refusal over the cap.
+  - Browser: 29 checks with two contexts.
+    - Park Street registers with a synthetic family photograph. Jadavpur's open board shows the report within 20 seconds, with a banner, no reload and a thumbnail. Jadavpur opens it and sees the photographs first, then records "checked — no match".
+    - Jadavpur records a pinned sighting and Park Street verifies it. The map shows the last-seen point, the sighting and the route.
+    - The Bengali board renders, and every write is confirmed in Postgres. A further 5 checks cover a constable opening a child's report and seeing the broadcast card.
+
 **Open**
-- Appearance matching is the AI layer and is not built.
-- Photographs: `photo_url` exists but there is no storage behind it, so none are taken.
+- Appearance matching is the AI layer; the face recognition branch builds it on `missing_person_photos` (migrations `000072`+).
+- No reopen workflow exists, so there is no reopen broadcast.
+- The board limits itself to the newest 300 open reports.
+- The legacy `photo_url` column is unused.
 - `inter-agency` screens still read the old mock missing-person list.
 
 ---
@@ -666,6 +725,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-15 | **Missing persons: face photographs, city-wide board, station checks, search map** (branch `feat/mpboard`). Migrations `000070`/`000071`. Photographs checked by magic bytes with GPS removed and a server-drawn thumbnail, one primary per report, retired never deleted. Every open report broadcast to every station (photo, name, age, sex, description, last seen, station) with the rest still restricted; the board polls every 20 seconds because the Vercel API cannot hold streams. Each station records no match, possible match or a sighting. A linked BOLO alert is raised on lodging. The map plots only stored points and reads face-match candidates when that table exists. New `database` storage backend (8 MB cap) makes photographs persist on Vercel. |
 | 2026-09-15 | **Statute library and incident location on the FIR form** (branch `feat/fir-location-statutes`). Migrations `000068` and `000069`. The full BNS, BNSS, BSA and IPC, six special Acts and the BPR&D correspondence table load by default from official sources. Picker, settings and audited custom entries added. The FIR form gets gazetteer suggestions and a map pin, and FIRs store coordinates. The Calcutta Police Acts are not included: no official source could be reached. |
 | 2026-09-15 | **Phases 03–14 merged and deployed.** Each phase was built in its own worktree and verified there (API probes and browser runs), then merged into the working branches and re-verified together on one integrated API: every phase probe passes on the merged build (Phase 10's fixed-score checks drift with shared data, so its scores were re-checked as weighted sums of the factors the API reports — all consistent). Merging surfaced cross-phase clashes that git merged silently but that did not compile — duplicate helpers (`bind`, `bindJSON`, `trimPtr`, `ErrStationNotFound`, `Viewer`), same-named complaint identifiers in Phases 05 and 09, a restored duplicate lookout handler, mangled dictionary braces and duplicated dead mocks — all resolved. Fast-forwarded to `main`; Vercel production deploys for API and web; Neon brought to migration `000066` in place (162 tables). Login form accepted only usernames of three or more characters, locking out demo `si` and `hc`; fixed. |
 | 2026-09-15 | **Kolkata demo dataset; no fabricated records in migrations.** The base schema and migrations no longer insert any records; the Karnataka seed users, Koramangala station and KOR FIRs are gone (`000064` converts existing databases in place, keeping demo usernames and passwords working). Reference data is 17 real Kolkata Police stations across the eight divisions. `scripts/seed-kolkata-demo.py` creates fictional operational records through the API as the recording officer, so numbers, rules, signatures and audit entries are genuine; idempotent via `demo_seed_ledger`. Loaded into the live Neon database. The dashboard now reads live figures; the login page no longer fabricates a user when the API rejects a sign-in. |

@@ -659,6 +659,10 @@ type Alert struct {
 	Priority        int        `json:"priority" db:"priority"`
 	HasImage        bool       `json:"image" db:"has_image"`
 	StationID       *uuid.UUID `json:"stationId" db:"station_id"`
+	// The record the alert was raised from, when the platform raised it
+	// (resource_type "missing_person" is the report).
+	ResourceType    *string    `json:"resourceType" db:"resource_type"`
+	ResourceID      *uuid.UUID `json:"resourceId" db:"resource_id"`
 	CreatedAt       time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt       time.Time  `json:"updatedAt" db:"updated_at"`
 }

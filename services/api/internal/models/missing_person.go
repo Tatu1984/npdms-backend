@@ -34,43 +34,45 @@ var Vulnerabilities = []string{
 }
 
 type MissingPerson struct {
-	ID               uuid.UUID           `json:"id"`
-	ReportNumber     string              `json:"reportNumber"`
-	Status           MissingPersonStatus `json:"status"`
-	Source           string              `json:"source"`
-	Priority         string              `json:"priority"`
-	Vulnerabilities  []string            `json:"vulnerabilities"`
-	PersonName       string              `json:"personName"`
-	Age              int                 `json:"age"`
-	Gender           string              `json:"gender"`
-	Height           *string             `json:"height"`
-	Complexion       *string             `json:"complexion"`
-	IdentifyingMarks *string             `json:"identifyingMarks"`
-	LastSeenLocation string              `json:"lastSeenLocation"`
-	LastSeenAt       time.Time           `json:"lastSeenAt"`
-	LastSeenWearing  *string             `json:"lastSeenWearing"`
-	Circumstances    *string             `json:"circumstances"`
-	ReporterName     string              `json:"reporterName"`
-	ReporterPhone    string              `json:"reporterPhone"`
-	ReporterRelation string              `json:"reporterRelation"`
-	StationID        *uuid.UUID          `json:"stationId"`
-	StationName      string              `json:"stationName"`
-	AssignedTo       *uuid.UUID          `json:"assignedTo"`
-	AssignedToName   string              `json:"assignedToName"`
-	FIRID            *uuid.UUID          `json:"firId"`
-	FIRNumber        string              `json:"firNumber"`
-	LookoutID        *uuid.UUID          `json:"lookoutId"`
-	LookoutNumber    string              `json:"lookoutNumber"`
-	RegisteredBy     *uuid.UUID          `json:"registeredBy"`
-	RegisteredByName string              `json:"registeredByName"`
-	SearchStartedBy  *uuid.UUID          `json:"searchStartedBy"`
-	SearchStartedAt  *time.Time          `json:"searchStartedAt"`
-	ClosureOutcome   *string             `json:"closureOutcome"`
-	ClosedAt         *time.Time          `json:"closedAt"`
-	ClosedByName     string              `json:"closedByName"`
-	ClosureNote      *string             `json:"closureNote"`
-	FoundLocation    *string             `json:"foundLocation"`
-	FoundCondition   *string             `json:"foundCondition"`
+	ID                uuid.UUID           `json:"id"`
+	ReportNumber      string              `json:"reportNumber"`
+	Status            MissingPersonStatus `json:"status"`
+	Source            string              `json:"source"`
+	Priority          string              `json:"priority"`
+	Vulnerabilities   []string            `json:"vulnerabilities"`
+	PersonName        string              `json:"personName"`
+	Age               int                 `json:"age"`
+	Gender            string              `json:"gender"`
+	Height            *string             `json:"height"`
+	Complexion        *string             `json:"complexion"`
+	IdentifyingMarks  *string             `json:"identifyingMarks"`
+	LastSeenLocation  string              `json:"lastSeenLocation"`
+	LastSeenAt        time.Time           `json:"lastSeenAt"`
+	LastSeenLatitude  *float64            `json:"lastSeenLatitude"`
+	LastSeenLongitude *float64            `json:"lastSeenLongitude"`
+	LastSeenWearing   *string             `json:"lastSeenWearing"`
+	Circumstances     *string             `json:"circumstances"`
+	ReporterName      string              `json:"reporterName"`
+	ReporterPhone     string              `json:"reporterPhone"`
+	ReporterRelation  string              `json:"reporterRelation"`
+	StationID         *uuid.UUID          `json:"stationId"`
+	StationName       string              `json:"stationName"`
+	AssignedTo        *uuid.UUID          `json:"assignedTo"`
+	AssignedToName    string              `json:"assignedToName"`
+	FIRID             *uuid.UUID          `json:"firId"`
+	FIRNumber         string              `json:"firNumber"`
+	LookoutID         *uuid.UUID          `json:"lookoutId"`
+	LookoutNumber     string              `json:"lookoutNumber"`
+	RegisteredBy      *uuid.UUID          `json:"registeredBy"`
+	RegisteredByName  string              `json:"registeredByName"`
+	SearchStartedBy   *uuid.UUID          `json:"searchStartedBy"`
+	SearchStartedAt   *time.Time          `json:"searchStartedAt"`
+	ClosureOutcome    *string             `json:"closureOutcome"`
+	ClosedAt          *time.Time          `json:"closedAt"`
+	ClosedByName      string              `json:"closedByName"`
+	ClosureNote       *string             `json:"closureNote"`
+	FoundLocation     *string             `json:"foundLocation"`
+	FoundCondition    *string             `json:"foundCondition"`
 	// Computed on read.
 	ChecklistTotal    int        `json:"checklistTotal"`
 	ChecklistDone     int        `json:"checklistDone"`
@@ -78,6 +80,9 @@ type MissingPerson struct {
 	SightingCount     int        `json:"sightingCount"`
 	VerifiedSightings int        `json:"verifiedSightings"`
 	LastVerifiedAt    *time.Time `json:"lastVerifiedAt"`
+	// The active primary photograph, if any.
+	PrimaryPhotoID *uuid.UUID `json:"primaryPhotoId"`
+	PhotoCount     int        `json:"photoCount"`
 	// Masked is true when the viewer's rank does not permit identifying details
 	// of a child; those fields are blanked server-side.
 	Masked    bool      `json:"masked"`
@@ -160,36 +165,41 @@ type MissingPersonStats struct {
 }
 
 type RegisterMissingPersonRequest struct {
-	PersonName       string     `json:"personName" binding:"required"`
-	Age              *int       `json:"age" binding:"required"`
-	Gender           string     `json:"gender" binding:"required"`
-	Height           *string    `json:"height"`
-	Complexion       *string    `json:"complexion"`
-	IdentifyingMarks *string    `json:"identifyingMarks"`
-	LastSeenLocation string     `json:"lastSeenLocation" binding:"required"`
-	LastSeenAt       time.Time  `json:"lastSeenAt" binding:"required"`
-	LastSeenWearing  *string    `json:"lastSeenWearing"`
-	Circumstances    *string    `json:"circumstances"`
-	Vulnerabilities  []string   `json:"vulnerabilities"`
-	ReporterName     string     `json:"reporterName" binding:"required"`
-	ReporterPhone    string     `json:"reporterPhone" binding:"required"`
-	ReporterRelation string     `json:"reporterRelation" binding:"required"`
-	StationID        *uuid.UUID `json:"stationId"`
-	AssignedTo       *uuid.UUID `json:"assignedTo"`
-	FIRID            *uuid.UUID `json:"firId"`
+	PersonName        string     `json:"personName" binding:"required"`
+	Age               *int       `json:"age" binding:"required"`
+	Gender            string     `json:"gender" binding:"required"`
+	Height            *string    `json:"height"`
+	Complexion        *string    `json:"complexion"`
+	IdentifyingMarks  *string    `json:"identifyingMarks"`
+	LastSeenLocation  string     `json:"lastSeenLocation" binding:"required"`
+	LastSeenAt        time.Time  `json:"lastSeenAt" binding:"required"`
+	LastSeenLatitude  *float64   `json:"lastSeenLatitude"`
+	LastSeenLongitude *float64   `json:"lastSeenLongitude"`
+	LastSeenWearing   *string    `json:"lastSeenWearing"`
+	Circumstances     *string    `json:"circumstances"`
+	Vulnerabilities   []string   `json:"vulnerabilities"`
+	ReporterName      string     `json:"reporterName" binding:"required"`
+	ReporterPhone     string     `json:"reporterPhone" binding:"required"`
+	ReporterRelation  string     `json:"reporterRelation" binding:"required"`
+	StationID         *uuid.UUID `json:"stationId"`
+	AssignedTo        *uuid.UUID `json:"assignedTo"`
+	FIRID             *uuid.UUID `json:"firId"`
 }
 
 // UpdateMissingPersonRequest changes description, flags and assignment on an
 // open report. Omitted fields are left as they are.
 type UpdateMissingPersonRequest struct {
-	Height           *string    `json:"height"`
-	Complexion       *string    `json:"complexion"`
-	IdentifyingMarks *string    `json:"identifyingMarks"`
-	LastSeenWearing  *string    `json:"lastSeenWearing"`
-	Circumstances    *string    `json:"circumstances"`
-	Vulnerabilities  *[]string  `json:"vulnerabilities"`
-	AssignedTo       *uuid.UUID `json:"assignedTo"`
-	FIRID            *uuid.UUID `json:"firId"`
+	Height           *string `json:"height"`
+	Complexion       *string `json:"complexion"`
+	IdentifyingMarks *string `json:"identifyingMarks"`
+	LastSeenWearing  *string `json:"lastSeenWearing"`
+	Circumstances    *string `json:"circumstances"`
+	// The last-seen point; both or neither. Replaces any stored point.
+	LastSeenLatitude  *float64   `json:"lastSeenLatitude"`
+	LastSeenLongitude *float64   `json:"lastSeenLongitude"`
+	Vulnerabilities   *[]string  `json:"vulnerabilities"`
+	AssignedTo        *uuid.UUID `json:"assignedTo"`
+	FIRID             *uuid.UUID `json:"firId"`
 }
 
 type CompleteChecklistItemRequest struct {
