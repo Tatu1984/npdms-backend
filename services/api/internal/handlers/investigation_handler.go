@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
@@ -40,6 +44,30 @@ func badRequest(c *gin.Context, message string) {
 	c.JSON(http.StatusBadRequest, models.ErrorResponse{
 		Error: "validation_error", Message: message, Code: 400,
 	})
+}
+
+// investigationError answers a failed Phase 01 mutation: 404 when the record is
+// not in the workspace named in the path, 400 for input the caller must correct
+// (including values the database constraints reject), otherwise a 500 whose
+// cause is logged rather than returned.
+func investigationError(c *gin.Context, op string, err error) {
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, repository.ErrInvestigationNotFound):
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: "Not found in this workspace", Code: 404})
+	case errors.As(err, &pgErr) && pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "workspace_id"):
+		// A child record addressed to a workspace that does not exist.
+		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: "Workspace not found", Code: 404})
+	case errors.As(err, &pgErr) && pgErr.Code == "23505":
+		c.JSON(http.StatusConflict, models.ErrorResponse{Error: "conflict", Message: "A workspace already exists for this case number", Code: 409})
+	case errors.Is(err, repository.ErrInvalidInvestigationInput):
+		badRequest(c, err.Error())
+	case errors.As(err, &pgErr) && (pgErr.Code == "23514" || pgErr.Code == "22P02" || pgErr.Code == "22007" || pgErr.Code == "23503"):
+		badRequest(c, "The value supplied is not allowed for this field")
+	default:
+		log.Printf("investigation %s failed: %v", op, err)
+		serverError(c, "Failed to "+op)
+	}
 }
 
 func serverError(c *gin.Context, message string) {
@@ -125,7 +153,7 @@ func (h *InvestigationHandler) Create(c *gin.Context) {
 	}
 	ws, err := h.service.CreateWorkspace(c.Request.Context(), req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "create workspace", err)
 		return
 	}
 	c.JSON(http.StatusCreated, ws)
@@ -143,7 +171,7 @@ func (h *InvestigationHandler) Update(c *gin.Context) {
 	}
 	ws, err := h.service.UpdateWorkspace(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "update workspace", err)
 		return
 	}
 	c.JSON(http.StatusOK, ws)
@@ -176,7 +204,7 @@ func (h *InvestigationHandler) CreatePerson(c *gin.Context) {
 	}
 	p, err := h.service.CreatePerson(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "add person", err)
 		return
 	}
 	c.JSON(http.StatusCreated, p)
@@ -198,7 +226,7 @@ func (h *InvestigationHandler) UpdatePerson(c *gin.Context) {
 	}
 	items, err := h.service.UpdatePerson(c.Request.Context(), id, personID, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "update person", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -214,7 +242,7 @@ func (h *InvestigationHandler) DeletePerson(c *gin.Context) {
 		return
 	}
 	if err := h.service.DeletePerson(c.Request.Context(), id, personID, actorID(c)); err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "remove person", err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -247,13 +275,17 @@ func (h *InvestigationHandler) CreateWorkspaceTimelineEntry(c *gin.Context) {
 	}
 	e, err := h.service.CreateWorkspaceTimelineEntry(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		badRequest(c, err.Error())
+		investigationError(c, "add timeline entry", err)
 		return
 	}
 	c.JSON(http.StatusCreated, e)
 }
 
 func (h *InvestigationHandler) ReviewWorkspaceTimelineEntry(c *gin.Context) {
+	id, ok := workspaceID(c)
+	if !ok {
+		return
+	}
 	entryID, ok := childID(c, "entryId")
 	if !ok {
 		return
@@ -267,8 +299,8 @@ func (h *InvestigationHandler) ReviewWorkspaceTimelineEntry(c *gin.Context) {
 		badRequest(c, "state must be accepted or rejected")
 		return
 	}
-	if err := h.service.ReviewWorkspaceTimelineEntry(c.Request.Context(), entryID, req.State, actorID(c)); err != nil {
-		serverError(c, err.Error())
+	if err := h.service.ReviewWorkspaceTimelineEntry(c.Request.Context(), id, entryID, req.State, actorID(c)); err != nil {
+		investigationError(c, "review timeline entry", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"id": entryID, "reviewState": req.State})
@@ -284,7 +316,7 @@ func (h *InvestigationHandler) DeleteWorkspaceTimelineEntry(c *gin.Context) {
 		return
 	}
 	if err := h.service.DeleteWorkspaceTimelineEntry(c.Request.Context(), id, entryID, actorID(c)); err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "remove timeline entry", err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -317,13 +349,17 @@ func (h *InvestigationHandler) CreateContradiction(c *gin.Context) {
 	}
 	item, err := h.service.CreateContradiction(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "record contradiction", err)
 		return
 	}
 	c.JSON(http.StatusCreated, item)
 }
 
 func (h *InvestigationHandler) ReviewContradiction(c *gin.Context) {
+	id, ok := workspaceID(c)
+	if !ok {
+		return
+	}
 	contradictionID, ok := childID(c, "contradictionId")
 	if !ok {
 		return
@@ -337,8 +373,8 @@ func (h *InvestigationHandler) ReviewContradiction(c *gin.Context) {
 		badRequest(c, "state must be accepted or rejected")
 		return
 	}
-	if err := h.service.ReviewContradiction(c.Request.Context(), contradictionID, req.State, req.Note, actorID(c)); err != nil {
-		serverError(c, err.Error())
+	if err := h.service.ReviewContradiction(c.Request.Context(), id, contradictionID, req.State, req.Note, actorID(c)); err != nil {
+		investigationError(c, "review contradiction", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"id": contradictionID, "reviewState": req.State})
@@ -367,7 +403,7 @@ func (h *InvestigationHandler) RecomputeGaps(c *gin.Context) {
 	}
 	items, err := h.service.RecomputeGaps(c.Request.Context(), id)
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "re-run case rules", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -385,13 +421,17 @@ func (h *InvestigationHandler) CreateGap(c *gin.Context) {
 	}
 	g, err := h.service.CreateGap(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "record gap", err)
 		return
 	}
 	c.JSON(http.StatusCreated, g)
 }
 
 func (h *InvestigationHandler) UpdateGapStatus(c *gin.Context) {
+	id, ok := workspaceID(c)
+	if !ok {
+		return
+	}
 	gapID, ok := childID(c, "gapId")
 	if !ok {
 		return
@@ -407,8 +447,8 @@ func (h *InvestigationHandler) UpdateGapStatus(c *gin.Context) {
 		badRequest(c, "status must be open, closed or dismissed")
 		return
 	}
-	if err := h.service.UpdateGapStatus(c.Request.Context(), gapID, req.Status, actorID(c)); err != nil {
-		serverError(c, err.Error())
+	if err := h.service.UpdateGapStatus(c.Request.Context(), id, gapID, req.Status, actorID(c)); err != nil {
+		investigationError(c, "update gap", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"id": gapID, "status": req.Status})
@@ -441,7 +481,7 @@ func (h *InvestigationHandler) CreateTask(c *gin.Context) {
 	}
 	t, err := h.service.CreateTask(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "create task", err)
 		return
 	}
 	c.JSON(http.StatusCreated, t)
@@ -463,19 +503,23 @@ func (h *InvestigationHandler) UpdateTask(c *gin.Context) {
 	}
 	tasks, err := h.service.UpdateTask(c.Request.Context(), id, taskID, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "update task", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": tasks})
 }
 
 func (h *InvestigationHandler) DeleteTask(c *gin.Context) {
+	id, ok := workspaceID(c)
+	if !ok {
+		return
+	}
 	taskID, ok := childID(c, "taskId")
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteTask(c.Request.Context(), taskID, actorID(c)); err != nil {
-		serverError(c, err.Error())
+	if err := h.service.DeleteTask(c.Request.Context(), id, taskID, actorID(c)); err != nil {
+		investigationError(c, "delete task", err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -508,7 +552,7 @@ func (h *InvestigationHandler) LinkEvidence(c *gin.Context) {
 	}
 	items, err := h.service.LinkEvidence(c.Request.Context(), id, req, actorID(c))
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "attach evidence", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": items})
@@ -524,7 +568,7 @@ func (h *InvestigationHandler) UnlinkEvidence(c *gin.Context) {
 		return
 	}
 	if err := h.service.UnlinkEvidence(c.Request.Context(), id, evidenceID, actorID(c)); err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "detach evidence", err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -559,7 +603,7 @@ func (h *InvestigationHandler) LinkGraph(c *gin.Context) {
 	}
 	graph, err := h.service.LinkGraph(c.Request.Context(), id)
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "assemble relationships", err)
 		return
 	}
 	c.JSON(http.StatusOK, graph)
@@ -574,7 +618,7 @@ func (h *InvestigationHandler) Brief(c *gin.Context) {
 	}
 	brief, err := h.service.Brief(c.Request.Context(), id)
 	if err != nil {
-		serverError(c, err.Error())
+		investigationError(c, "assemble brief", err)
 		return
 	}
 	c.JSON(http.StatusOK, brief)

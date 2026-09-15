@@ -143,6 +143,7 @@ type WorkspaceTimelineEntry struct {
 	Confidence  *float64    `json:"confidence,omitempty"`
 	ReviewState ReviewState `json:"reviewState"`
 	ReviewedBy  *uuid.UUID  `json:"reviewedBy,omitempty"`
+	ReviewedByName string   `json:"reviewedByName,omitempty"`
 	ReviewedAt  *time.Time  `json:"reviewedAt,omitempty"`
 
 	Sources []WorkspaceSource `json:"sources"`
@@ -168,6 +169,7 @@ type Contradiction struct {
 	Confidence     *float64    `json:"confidence,omitempty"`
 	ReviewState    ReviewState `json:"reviewState"`
 	ReviewedBy     *uuid.UUID  `json:"reviewedBy,omitempty"`
+	ReviewedByName string      `json:"reviewedByName,omitempty"`
 	ReviewedAt     *time.Time  `json:"reviewedAt,omitempty"`
 	ResolutionNote *string     `json:"resolutionNote,omitempty"`
 
@@ -275,11 +277,17 @@ type CreatePersonRequest struct {
 }
 
 type UpdatePersonRequest struct {
-	Role            *string `json:"role"`
-	StatementsCount *int    `json:"statementsCount"`
-	Phone           *string `json:"phone"`
-	Address         *string `json:"address"`
-	RiskNote        *string `json:"riskNote"`
+	Name            *string  `json:"name"`
+	NameBn          *string  `json:"nameBn"`
+	Aliases         []string `json:"aliases"`
+	Role            *string  `json:"role"`
+	Age             *int     `json:"age"`
+	Gender          *string  `json:"gender"`
+	StatementsCount *int     `json:"statementsCount"`
+	Phone           *string  `json:"phone"`
+	Address         *string  `json:"address"`
+	Vehicles        []string `json:"vehicles"`
+	RiskNote        *string  `json:"riskNote"`
 }
 
 type CreateTimelineRequest struct {

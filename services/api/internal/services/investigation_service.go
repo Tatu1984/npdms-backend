@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,6 +94,9 @@ func (s *InvestigationService) CreateWorkspace(ctx context.Context, req models.C
 }
 
 func (s *InvestigationService) UpdateWorkspace(ctx context.Context, id uuid.UUID, req models.UpdateWorkspaceRequest, actor *uuid.UUID) (*models.InvestigationWorkspace, error) {
+	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
+		return nil, fmt.Errorf("%w: title cannot be empty", repository.ErrInvalidInvestigationInput)
+	}
 	ws, err := s.repo.UpdateWorkspace(ctx, id, req)
 	if err != nil {
 		return nil, err
@@ -106,6 +110,8 @@ func (s *InvestigationService) UpdateWorkspace(ctx context.Context, id uuid.UUID
 		}
 	} else if req.Status != nil {
 		description = "Status changed to " + *req.Status
+	} else if req.Title != nil {
+		description = "Details updated: " + *req.Title
 	}
 	s.audit(ctx, actor, "investigation_workspace_updated", "investigation_workspace", &id, description)
 
@@ -135,7 +141,13 @@ func (s *InvestigationService) CreatePerson(ctx context.Context, workspaceID uui
 // UpdatePerson records developments about a person — notably that a statement
 // has been taken, which is what closes the witness-statement gap.
 func (s *InvestigationService) UpdatePerson(ctx context.Context, workspaceID, personID uuid.UUID, req models.UpdatePersonRequest, actor *uuid.UUID) ([]models.WorkspacePerson, error) {
-	if err := s.repo.UpdatePerson(ctx, personID, req); err != nil {
+	if req.Name != nil && strings.TrimSpace(*req.Name) == "" {
+		return nil, fmt.Errorf("%w: name cannot be empty", repository.ErrInvalidInvestigationInput)
+	}
+	if req.StatementsCount != nil && *req.StatementsCount < 0 {
+		return nil, fmt.Errorf("%w: statements cannot be negative", repository.ErrInvalidInvestigationInput)
+	}
+	if err := s.repo.UpdatePerson(ctx, workspaceID, personID, req); err != nil {
 		return nil, err
 	}
 	if _, err := s.RecomputeGaps(ctx, workspaceID); err != nil {
@@ -146,7 +158,7 @@ func (s *InvestigationService) UpdatePerson(ctx context.Context, workspaceID, pe
 }
 
 func (s *InvestigationService) DeletePerson(ctx context.Context, workspaceID, personID uuid.UUID, actor *uuid.UUID) error {
-	if err := s.repo.DeletePerson(ctx, personID); err != nil {
+	if err := s.repo.DeletePerson(ctx, workspaceID, personID); err != nil {
 		return err
 	}
 	_, err := s.RecomputeGaps(ctx, workspaceID)
@@ -172,8 +184,8 @@ func (s *InvestigationService) CreateWorkspaceTimelineEntry(ctx context.Context,
 	return e, nil
 }
 
-func (s *InvestigationService) ReviewWorkspaceTimelineEntry(ctx context.Context, entryID uuid.UUID, state string, actor *uuid.UUID) error {
-	if err := s.repo.ReviewWorkspaceTimelineEntry(ctx, entryID, state, actor); err != nil {
+func (s *InvestigationService) ReviewWorkspaceTimelineEntry(ctx context.Context, workspaceID, entryID uuid.UUID, state string, actor *uuid.UUID) error {
+	if err := s.repo.ReviewWorkspaceTimelineEntry(ctx, workspaceID, entryID, state, actor); err != nil {
 		return err
 	}
 	s.audit(ctx, actor, "investigation_timeline_reviewed", "workspace_timeline", &entryID, "Marked "+state)
@@ -181,7 +193,7 @@ func (s *InvestigationService) ReviewWorkspaceTimelineEntry(ctx context.Context,
 }
 
 func (s *InvestigationService) DeleteWorkspaceTimelineEntry(ctx context.Context, workspaceID, entryID uuid.UUID, actor *uuid.UUID) error {
-	if err := s.repo.DeleteWorkspaceTimelineEntry(ctx, entryID); err != nil {
+	if err := s.repo.DeleteWorkspaceTimelineEntry(ctx, workspaceID, entryID); err != nil {
 		return err
 	}
 	_, err := s.RecomputeGaps(ctx, workspaceID)
@@ -204,8 +216,8 @@ func (s *InvestigationService) CreateContradiction(ctx context.Context, workspac
 	return c, nil
 }
 
-func (s *InvestigationService) ReviewContradiction(ctx context.Context, id uuid.UUID, state string, note *string, actor *uuid.UUID) error {
-	if err := s.repo.ReviewContradiction(ctx, id, state, note, actor); err != nil {
+func (s *InvestigationService) ReviewContradiction(ctx context.Context, workspaceID, id uuid.UUID, state string, note *string, actor *uuid.UUID) error {
+	if err := s.repo.ReviewContradiction(ctx, workspaceID, id, state, note, actor); err != nil {
 		return err
 	}
 	s.audit(ctx, actor, "investigation_contradiction_reviewed", "workspace_contradiction", &id, "Marked "+state)
@@ -227,8 +239,8 @@ func (s *InvestigationService) CreateGap(ctx context.Context, workspaceID uuid.U
 	return g, nil
 }
 
-func (s *InvestigationService) UpdateGapStatus(ctx context.Context, id uuid.UUID, status string, actor *uuid.UUID) error {
-	if err := s.repo.UpdateGapStatus(ctx, id, status, actor); err != nil {
+func (s *InvestigationService) UpdateGapStatus(ctx context.Context, workspaceID, id uuid.UUID, status string, actor *uuid.UUID) error {
+	if err := s.repo.UpdateGapStatus(ctx, workspaceID, id, status, actor); err != nil {
 		return err
 	}
 	s.audit(ctx, actor, "investigation_gap_"+status, "workspace_gap", &id, "Gap marked "+status)
@@ -388,7 +400,7 @@ func (s *InvestigationService) CreateTask(ctx context.Context, workspaceID uuid.
 }
 
 func (s *InvestigationService) UpdateTask(ctx context.Context, workspaceID, taskID uuid.UUID, req models.UpdateTaskRequest, actor *uuid.UUID) ([]models.InvestigationTask, error) {
-	if err := s.repo.UpdateTask(ctx, taskID, req, actor); err != nil {
+	if err := s.repo.UpdateTask(ctx, workspaceID, taskID, req, actor); err != nil {
 		return nil, err
 	}
 
@@ -413,7 +425,7 @@ func (s *InvestigationService) UpdateTask(ctx context.Context, workspaceID, task
 			}
 			for _, g := range gaps {
 				if g.ID == *t.GapID && g.Origin == models.OriginOfficer {
-					if err := s.repo.UpdateGapStatus(ctx, g.ID, "closed", actor); err != nil {
+					if err := s.repo.UpdateGapStatus(ctx, workspaceID, g.ID, "closed", actor); err != nil {
 						return nil, err
 					}
 				}
@@ -428,8 +440,8 @@ func (s *InvestigationService) UpdateTask(ctx context.Context, workspaceID, task
 	return s.repo.ListTasks(ctx, workspaceID)
 }
 
-func (s *InvestigationService) DeleteTask(ctx context.Context, taskID uuid.UUID, actor *uuid.UUID) error {
-	if err := s.repo.DeleteTask(ctx, taskID); err != nil {
+func (s *InvestigationService) DeleteTask(ctx context.Context, workspaceID, taskID uuid.UUID, actor *uuid.UUID) error {
+	if err := s.repo.DeleteTask(ctx, workspaceID, taskID); err != nil {
 		return err
 	}
 	s.audit(ctx, actor, "investigation_task_deleted", "investigation_task", &taskID, "Task deleted")

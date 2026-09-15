@@ -2,12 +2,14 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npdms/api/internal/models"
@@ -194,7 +196,11 @@ func (r *InvestigationRepository) ListWorkspaces(ctx context.Context, f Workspac
 }
 
 func (r *InvestigationRepository) GetWorkspace(ctx context.Context, id uuid.UUID) (*models.InvestigationWorkspace, error) {
-	return scanWorkspace(r.db.QueryRow(ctx, workspaceSelect+" WHERE w.id = $1", id))
+	ws, err := scanWorkspace(r.db.QueryRow(ctx, workspaceSelect+" WHERE w.id = $1", id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrInvestigationNotFound
+	}
+	return ws, err
 }
 
 func (r *InvestigationRepository) CreateWorkspace(ctx context.Context, req models.CreateWorkspaceRequest, createdBy *uuid.UUID) (*models.InvestigationWorkspace, error) {
@@ -206,9 +212,11 @@ func (r *InvestigationRepository) CreateWorkspace(ctx context.Context, req model
 
 	var nextCourt *time.Time
 	if req.NextCourtDate != nil && *req.NextCourtDate != "" {
-		if d, err := time.Parse("2006-01-02", *req.NextCourtDate); err == nil {
-			nextCourt = &d
+		d, err := time.Parse("2006-01-02", *req.NextCourtDate)
+		if err != nil {
+			return nil, fmt.Errorf("%w: next court date must be YYYY-MM-DD", ErrInvalidInvestigationInput)
 		}
+		nextCourt = &d
 	}
 
 	sections := req.Sections
@@ -270,19 +278,24 @@ func (r *InvestigationRepository) UpdateWorkspace(ctx context.Context, id uuid.U
 	if req.NextCourtDate != nil {
 		if *req.NextCourtDate == "" {
 			add("next_court_date", nil)
-		} else if d, err := time.Parse("2006-01-02", *req.NextCourtDate); err == nil {
+		} else {
+			d, err := time.Parse("2006-01-02", *req.NextCourtDate)
+			if err != nil {
+				return nil, fmt.Errorf("%w: next court date must be YYYY-MM-DD", ErrInvalidInvestigationInput)
+			}
 			add("next_court_date", d)
 		}
 	}
-
-	if len(sets) == 0 {
-		return r.GetWorkspace(ctx, id)
-	}
+	add("updated_at", time.Now())
 
 	args = append(args, id)
 	query := fmt.Sprintf("UPDATE investigation_workspaces SET %s WHERE id = $%d", strings.Join(sets, ", "), n)
-	if _, err := r.db.Exec(ctx, query, args...); err != nil {
+	tag, err := r.db.Exec(ctx, query, args...)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrInvestigationNotFound
 	}
 	return r.GetWorkspace(ctx, id)
 }
@@ -350,7 +363,7 @@ func (r *InvestigationRepository) CreatePerson(ctx context.Context, workspaceID 
 
 // UpdatePerson supports the fields that change as an investigation develops:
 // the role a person turns out to hold, and how many statements have been taken.
-func (r *InvestigationRepository) UpdatePerson(ctx context.Context, id uuid.UUID, req models.UpdatePersonRequest) error {
+func (r *InvestigationRepository) UpdatePerson(ctx context.Context, workspaceID, id uuid.UUID, req models.UpdatePersonRequest) error {
 	var sets []string
 	var args []interface{}
 	n := 1
@@ -360,8 +373,26 @@ func (r *InvestigationRepository) UpdatePerson(ctx context.Context, id uuid.UUID
 		n++
 	}
 
+	if req.Name != nil {
+		add("name", *req.Name)
+	}
+	if req.NameBn != nil {
+		add("name_bn", *req.NameBn)
+	}
+	if req.Aliases != nil {
+		add("aliases", req.Aliases)
+	}
 	if req.Role != nil {
 		add("role", *req.Role)
+	}
+	if req.Age != nil {
+		add("age", *req.Age)
+	}
+	if req.Gender != nil {
+		add("gender", *req.Gender)
+	}
+	if req.Vehicles != nil {
+		add("vehicles", req.Vehicles)
 	}
 	if req.StatementsCount != nil {
 		add("statements_count", *req.StatementsCount)
@@ -375,19 +406,15 @@ func (r *InvestigationRepository) UpdatePerson(ctx context.Context, id uuid.UUID
 	if req.RiskNote != nil {
 		add("risk_note", *req.RiskNote)
 	}
-	if len(sets) == 0 {
-		return nil
-	}
+	add("updated_at", time.Now())
 
-	args = append(args, id)
-	query := fmt.Sprintf("UPDATE workspace_persons SET %s WHERE id = $%d", strings.Join(sets, ", "), n)
-	_, err := r.db.Exec(ctx, query, args...)
-	return err
+	args = append(args, id, workspaceID)
+	query := fmt.Sprintf("UPDATE workspace_persons SET %s WHERE id = $%d AND workspace_id = $%d", strings.Join(sets, ", "), n, n+1)
+	return affected(r.db.Exec(ctx, query, args...))
 }
 
-func (r *InvestigationRepository) DeletePerson(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM workspace_persons WHERE id = $1", id)
-	return err
+func (r *InvestigationRepository) DeletePerson(ctx context.Context, workspaceID, id uuid.UUID) error {
+	return affected(r.db.Exec(ctx, "DELETE FROM workspace_persons WHERE id = $1 AND workspace_id = $2", id, workspaceID))
 }
 
 /* -------------------------------- timeline -------------------------------- */
@@ -396,8 +423,9 @@ func (r *InvestigationRepository) ListTimeline(ctx context.Context, workspaceID 
 	rows, err := r.db.Query(ctx, `
 		SELECT id, workspace_id, occurred_at, title, title_bn, detail, detail_bn, kind,
 		       location, latitude, longitude,
-		       origin, confidence, review_state, reviewed_by, reviewed_at, created_at, updated_at
-		FROM workspace_timeline WHERE workspace_id = $1 ORDER BY occurred_at
+		       origin, confidence, review_state, reviewed_by, reviewed_at, created_at, updated_at,
+		       COALESCE((SELECT name FROM users WHERE users.id = workspace_timeline.reviewed_by), '')
+		FROM workspace_timeline WHERE workspace_id = $1 ORDER BY occurred_at, created_at
 	`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -411,7 +439,7 @@ func (r *InvestigationRepository) ListTimeline(ctx context.Context, workspaceID 
 		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.OccurredAt, &e.Title, &e.TitleBn,
 			&e.Detail, &e.DetailBn, &e.Kind, &e.Location, &e.Latitude, &e.Longitude,
 			&e.Origin, &e.Confidence, &e.ReviewState,
-			&e.ReviewedBy, &e.ReviewedAt, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			&e.ReviewedBy, &e.ReviewedAt, &e.CreatedAt, &e.UpdatedAt, &e.ReviewedByName); err != nil {
 			return nil, err
 		}
 		e.Sources = []models.WorkspaceSource{}
@@ -527,16 +555,15 @@ func (r *InvestigationRepository) CreateWorkspaceTimelineEntry(ctx context.Conte
 	return nil, pgx.ErrNoRows
 }
 
-func (r *InvestigationRepository) ReviewWorkspaceTimelineEntry(ctx context.Context, id uuid.UUID, state string, reviewer *uuid.UUID) error {
-	_, err := r.db.Exec(ctx, `
-		UPDATE workspace_timeline SET review_state = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3
-	`, state, reviewer, id)
-	return err
+func (r *InvestigationRepository) ReviewWorkspaceTimelineEntry(ctx context.Context, workspaceID, id uuid.UUID, state string, reviewer *uuid.UUID) error {
+	return affected(r.db.Exec(ctx, `
+		UPDATE workspace_timeline SET review_state = $1, reviewed_by = $2, reviewed_at = NOW(), updated_at = NOW()
+		WHERE id = $3 AND workspace_id = $4
+	`, state, reviewer, id, workspaceID))
 }
 
-func (r *InvestigationRepository) DeleteWorkspaceTimelineEntry(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM workspace_timeline WHERE id = $1", id)
-	return err
+func (r *InvestigationRepository) DeleteWorkspaceTimelineEntry(ctx context.Context, workspaceID, id uuid.UUID) error {
+	return affected(r.db.Exec(ctx, "DELETE FROM workspace_timeline WHERE id = $1 AND workspace_id = $2", id, workspaceID))
 }
 
 /* ----------------------------- contradictions ----------------------------- */
@@ -546,7 +573,8 @@ func (r *InvestigationRepository) ListContradictions(ctx context.Context, worksp
 		SELECT id, workspace_id, title, title_bn,
 		       statement_a_label, statement_a_claim, statement_b_label, statement_b_claim,
 		       severity, origin, confidence, review_state, reviewed_by, reviewed_at,
-		       resolution_note, created_at, updated_at
+		       resolution_note, created_at, updated_at,
+		       COALESCE((SELECT name FROM users WHERE users.id = workspace_contradictions.reviewed_by), '')
 		FROM workspace_contradictions WHERE workspace_id = $1 ORDER BY created_at DESC
 	`, workspaceID)
 	if err != nil {
@@ -561,7 +589,7 @@ func (r *InvestigationRepository) ListContradictions(ctx context.Context, worksp
 		if err := rows.Scan(&c.ID, &c.WorkspaceID, &c.Title, &c.TitleBn,
 			&c.StatementALabel, &c.StatementAClaim, &c.StatementBLabel, &c.StatementBClaim,
 			&c.Severity, &c.Origin, &c.Confidence, &c.ReviewState, &c.ReviewedBy,
-			&c.ReviewedAt, &c.ResolutionNote, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			&c.ReviewedAt, &c.ResolutionNote, &c.CreatedAt, &c.UpdatedAt, &c.ReviewedByName); err != nil {
 			return nil, err
 		}
 		c.Sources = []models.WorkspaceSource{}
@@ -629,14 +657,13 @@ func (r *InvestigationRepository) CreateContradiction(ctx context.Context, works
 	return nil, pgx.ErrNoRows
 }
 
-func (r *InvestigationRepository) ReviewContradiction(ctx context.Context, id uuid.UUID, state string, note *string, reviewer *uuid.UUID) error {
-	_, err := r.db.Exec(ctx, `
+func (r *InvestigationRepository) ReviewContradiction(ctx context.Context, workspaceID, id uuid.UUID, state string, note *string, reviewer *uuid.UUID) error {
+	return affected(r.db.Exec(ctx, `
 		UPDATE workspace_contradictions
 		SET review_state = $1, resolution_note = COALESCE($2, resolution_note),
-		    reviewed_by = $3, reviewed_at = NOW()
-		WHERE id = $4
-	`, state, note, reviewer, id)
-	return err
+		    reviewed_by = $3, reviewed_at = NOW(), updated_at = NOW()
+		WHERE id = $4 AND workspace_id = $5
+	`, state, note, reviewer, id, workspaceID))
 }
 
 /* ----------------------------------- gaps --------------------------------- */
@@ -682,9 +709,11 @@ func (r *InvestigationRepository) CreateGap(ctx context.Context, workspaceID uui
 
 	var dueBy *time.Time
 	if req.DueBy != nil && *req.DueBy != "" {
-		if d, err := time.Parse("2006-01-02", *req.DueBy); err == nil {
-			dueBy = &d
+		d, err := time.Parse("2006-01-02", *req.DueBy)
+		if err != nil {
+			return nil, fmt.Errorf("%w: due date must be YYYY-MM-DD", ErrInvalidInvestigationInput)
 		}
+		dueBy = &d
 	}
 
 	id := uuid.New()
@@ -734,7 +763,7 @@ func (r *InvestigationRepository) CloseRuleGap(ctx context.Context, workspaceID 
 	return err
 }
 
-func (r *InvestigationRepository) UpdateGapStatus(ctx context.Context, id uuid.UUID, status string, closedBy *uuid.UUID) error {
+func (r *InvestigationRepository) UpdateGapStatus(ctx context.Context, workspaceID, id uuid.UUID, status string, closedBy *uuid.UUID) error {
 	// closed_at is decided here rather than in a CASE over $1: reusing the same
 	// parameter as both a varchar assignment and an IN predicate leaves its type
 	// ambiguous, and the statement fails to prepare.
@@ -744,12 +773,11 @@ func (r *InvestigationRepository) UpdateGapStatus(ctx context.Context, id uuid.U
 		closedAt = &now
 	}
 
-	_, err := r.db.Exec(ctx, `
+	return affected(r.db.Exec(ctx, `
 		UPDATE workspace_gaps
 		SET status = $1, closed_at = $2, closed_by = $3, updated_at = NOW()
-		WHERE id = $4
-	`, status, closedAt, closedBy, id)
-	return err
+		WHERE id = $4 AND workspace_id = $5
+	`, status, closedAt, closedBy, id, workspaceID))
 }
 
 /* ---------------------------------- tasks --------------------------------- */
@@ -792,9 +820,11 @@ func (r *InvestigationRepository) CreateTask(ctx context.Context, workspaceID uu
 
 	var due *time.Time
 	if req.DueDate != nil && *req.DueDate != "" {
-		if d, err := time.Parse("2006-01-02", *req.DueDate); err == nil {
-			due = &d
+		d, err := time.Parse("2006-01-02", *req.DueDate)
+		if err != nil {
+			return nil, fmt.Errorf("%w: due date must be YYYY-MM-DD", ErrInvalidInvestigationInput)
 		}
+		due = &d
 	}
 
 	id := uuid.New()
@@ -820,7 +850,7 @@ func (r *InvestigationRepository) CreateTask(ctx context.Context, workspaceID uu
 	return nil, pgx.ErrNoRows
 }
 
-func (r *InvestigationRepository) UpdateTask(ctx context.Context, id uuid.UUID, req models.UpdateTaskRequest, actor *uuid.UUID) error {
+func (r *InvestigationRepository) UpdateTask(ctx context.Context, workspaceID, id uuid.UUID, req models.UpdateTaskRequest, actor *uuid.UUID) error {
 	var sets []string
 	var args []interface{}
 	n := 1
@@ -839,7 +869,11 @@ func (r *InvestigationRepository) UpdateTask(ctx context.Context, id uuid.UUID, 
 	if req.DueDate != nil {
 		if *req.DueDate == "" {
 			add("due_date", nil)
-		} else if d, err := time.Parse("2006-01-02", *req.DueDate); err == nil {
+		} else {
+			d, err := time.Parse("2006-01-02", *req.DueDate)
+			if err != nil {
+				return fmt.Errorf("%w: due date must be YYYY-MM-DD", ErrInvalidInvestigationInput)
+			}
 			add("due_date", d)
 		}
 	}
@@ -860,19 +894,15 @@ func (r *InvestigationRepository) UpdateTask(ctx context.Context, id uuid.UUID, 
 		}
 	}
 
-	if len(sets) == 0 {
-		return nil
-	}
+	add("updated_at", time.Now())
 
-	args = append(args, id)
-	query := fmt.Sprintf("UPDATE investigation_tasks SET %s WHERE id = $%d", strings.Join(sets, ", "), n)
-	_, err := r.db.Exec(ctx, query, args...)
-	return err
+	args = append(args, id, workspaceID)
+	query := fmt.Sprintf("UPDATE investigation_tasks SET %s WHERE id = $%d AND workspace_id = $%d", strings.Join(sets, ", "), n, n+1)
+	return affected(r.db.Exec(ctx, query, args...))
 }
 
-func (r *InvestigationRepository) DeleteTask(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.Exec(ctx, "DELETE FROM investigation_tasks WHERE id = $1", id)
-	return err
+func (r *InvestigationRepository) DeleteTask(ctx context.Context, workspaceID, id uuid.UUID) error {
+	return affected(r.db.Exec(ctx, "DELETE FROM investigation_tasks WHERE id = $1 AND workspace_id = $2", id, workspaceID))
 }
 
 /* --------------------------------- evidence ------------------------------- */
@@ -914,10 +944,9 @@ func (r *InvestigationRepository) LinkEvidence(ctx context.Context, workspaceID,
 }
 
 func (r *InvestigationRepository) UnlinkEvidence(ctx context.Context, workspaceID, evidenceID uuid.UUID) error {
-	_, err := r.db.Exec(ctx,
+	return affected(r.db.Exec(ctx,
 		"DELETE FROM workspace_evidence WHERE workspace_id = $1 AND evidence_id = $2",
-		workspaceID, evidenceID)
-	return err
+		workspaceID, evidenceID))
 }
 
 /* ------------------------- inputs used by gap rules ----------------------- */
@@ -964,13 +993,42 @@ func (r *InvestigationRepository) GapFacts(ctx context.Context, workspaceID uuid
 	return &f, nil
 }
 
+// parseTimestamp accepts RFC 3339, or a local date-time with no zone. A zone-less
+// value is what a datetime-local field sends, so it is read as the time on the
+// officer's clock in West Bengal — not UTC, which filed 21:10 as 02:40 next day.
 func parseTimestamp(v string) (time.Time, error) {
-	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02"} {
-		if t, err := time.Parse(layout, v); err == nil {
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t, nil
+	}
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, v, stationZone); err == nil {
 			return t, nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("unrecognised timestamp %q", v)
+	return time.Time{}, fmt.Errorf("%w: unrecognised timestamp %q", ErrInvalidInvestigationInput, v)
+}
+
+// stationZone is the jurisdiction's civil time. The platform serves Kolkata
+// Police and West Bengal only; IST has no daylight saving, so a fixed offset is
+// exact and does not depend on tzdata being installed on the edge server.
+var stationZone = time.FixedZone("IST", 5*60*60+30*60)
+
+var (
+	// ErrInvestigationNotFound means the record does not exist in the workspace
+	// named in the path — including a real record that belongs to another one.
+	ErrInvestigationNotFound     = errors.New("not found in this workspace")
+	ErrInvalidInvestigationInput = errors.New("invalid input")
+)
+
+// affected turns an Exec result into ErrInvestigationNotFound when no row matched.
+func affected(tag pgconn.CommandTag, err error) error {
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvestigationNotFound
+	}
+	return nil
 }
 
 /* --------------------------- officer directory ---------------------------- */
