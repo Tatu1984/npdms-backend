@@ -302,15 +302,28 @@ Automatic categorisation, jurisdiction suggestion, duplicate detection and voice
 
 ---
 
-### Phase 10 — Public Safety Risk & Hotspots · `PLANNED`
+### Phase 10 — Public Safety Risk & Hotspots · `DONE`
 
 Deliberately **not** "crime prediction". This scores places, never people, and produces no watchlist.
 
-**Functional without AI.** Incident aggregation by area and time, transparent weighted scoring with every factor shown, patrol recommendations, deployment simulation, period comparison.
+**Delivered** — migration `000056`, routes under `/api/v1/risk` (SHO and above; below DSP an officer sees only their own station; weights change at SP and above).
+- **Documented weighted sum.** `score = Σ weight × count` over five factors: FIRs in the period, high/critical-priority FIRs, night-time FIRs (20:00–05:59), alerts issued for the station, and the increase over the previous period of equal length. Every response carries each factor's count, weight and contribution, the formula text and what each figure counts.
+- **Versioned weights** (`risk_weight_sets`). A change is a new version with a required reason (≥10 characters); the audit entry records the actor, the old→new values and the reason. Weight history is visible to every viewer.
+- **Areas.** Station jurisdictions, plus officer-defined **beats** (named centre and radius). FIRs store no incident coordinates, so an FIR counts towards a beat only when an officer places it there (`risk_fir_placements`, one beat per FIR, same-station enforced by trigger). Each beat shows how many of its station's FIRs in the period are placed; alerts are marked as not attributable to beats.
+- **Period and shift filters** with the previous equal-length period compared per area.
+- **Patrol recommendations** — a stated rule: top N areas by score, excluding zero, ties by FIR count then name; the reasoning names the largest contributing factor with its arithmetic.
+- **Deployment simulation** — arithmetic only: coverage = scores of areas allocated at least one unit ÷ total score. No predicted change in incidents.
+- **Screen** rebuilt on the API: factor table per area, recommendations, simulation, weights and history, beats, FIR placement, map from stored coordinates only, Bengali labels. Removed the mock areas, the "projected score / response time" simulator with a confidence badge, and the AI badges; module marked live and not AI-assisted.
 
-The scoring is a documented weighted sum, not a model. Every contributing factor and its weight is visible to the officer reading it.
+**Verified**
+- API, 49 checks: station and beat scores equal hand-computed weighted sums from seeded FIRs with known dates, times and priorities (e.g. Bhowanipore 5 FIRs, 3 serious, 2 night, 1 alert, +3 → 25; after doubling the FIR weight → 30); each contribution equals weight × count; FIRs just outside the window excluded; night shift excludes FIRs without a time; placement across stations refused; beat with placements cannot be removed; SHO confined to own station; SHO and DSP refused weight changes; short reason, missing factors and unchanged weights refused; weight change audited with actor, reason and old→new. **Every one of 34 Phase 10 responses was scanned for the seeded complainant name and phone and for person-related field names — none present.**
+- Browser, 21 checks as admin, SHO and constable: screen factors, contributions and score equal the API's and the hand sum; FIR tile equals a SQL count; simulation shows 25.00 of 29.00 covered (86.21%); weight change through the dialog, rule message shown for a short reason, score updates; beat created, FIR placed and beat score shown, then both removed through the UI; Bengali renders; SHO sees one station and weight history only; constable sees the restricted state.
 
----
+**Open**
+- FIRs have no incident coordinates, so beat figures depend on officers placing FIRs. Capturing coordinates at FIR registration would remove that step.
+- Factor labels, descriptions and rule texts come from the API in English; screen labels are bilingual.
+- Dispatch calls and traffic incidents (Phases 07 and 06) are not yet factors; add them once those branches merge, as new factors with their own weights.
+- Beats are circles; polygon boundaries would need PostGIS or stored vertex lists.
 
 ### Phase 11 — Police Knowledge Assistant · `PLANNED`
 
