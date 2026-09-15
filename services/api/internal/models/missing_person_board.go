@@ -169,6 +169,9 @@ type CameraMatch struct {
 	ReviewedByName string     `json:"reviewedByName"`
 	ReviewedAt     *time.Time `json:"reviewedAt"`
 	SightingID     *uuid.UUID `json:"sightingId"`
+	// IsDemo marks a match made under a DEMO authorisation from synthetic
+	// test faces; the map labels it.
+	IsDemo bool `json:"isDemo"`
 }
 
 type CameraMatchLayer struct {

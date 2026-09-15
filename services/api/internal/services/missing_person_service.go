@@ -53,6 +53,21 @@ type MissingPersonService struct {
 	auditRepo *repository.AuditRepository
 	// store holds photographs (the configured evidence storage backend).
 	store storage.Store
+	// photoAdded, when set, is told about a new or newly primary photograph
+	// (face recognition enrols it when it is switched on under an order).
+	photoAdded func(ctx context.Context, reportID, photoID, uploader uuid.UUID)
+}
+
+// OnPhotoAdded registers the hook called after a photograph is uploaded or
+// made primary. It runs in the background and never fails the upload.
+func (s *MissingPersonService) OnPhotoAdded(hook func(ctx context.Context, reportID, photoID, uploader uuid.UUID)) {
+	s.photoAdded = hook
+}
+
+func (s *MissingPersonService) notifyPhotoAdded(reportID, photoID, actor uuid.UUID) {
+	if s.photoAdded != nil {
+		go s.photoAdded(context.Background(), reportID, photoID, actor)
+	}
 }
 
 func NewMissingPersonService(repo *repository.MissingPersonRepository, lookouts *LookoutService, auditRepo *repository.AuditRepository, store storage.Store) *MissingPersonService {

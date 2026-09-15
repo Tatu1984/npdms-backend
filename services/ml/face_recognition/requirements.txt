@@ -1,0 +1,6 @@
+# Pinned for the edge server. OpenCV's wheel bundles FFmpeg for video decoding.
+opencv-python-headless==4.10.0.84
+numpy==2.0.2
+fastapi==0.128.8
+uvicorn[standard]==0.39.0
+python-multipart==0.0.20

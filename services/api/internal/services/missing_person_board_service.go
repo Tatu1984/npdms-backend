@@ -151,6 +151,7 @@ func (s *MissingPersonService) UploadPhoto(ctx context.Context, id uuid.UUID, bo
 		desc += "; set as primary"
 	}
 	s.audit(ctx, "missing_person_photo_uploaded", v.ID, id, desc)
+	s.notifyPhotoAdded(id, photoID, v.ID)
 	return s.repo.Photo(ctx, id, photoID)
 }
 
@@ -242,6 +243,7 @@ func (s *MissingPersonService) SetPrimaryPhoto(ctx context.Context, id, photoID 
 		return nil, err
 	}
 	s.audit(ctx, "missing_person_photo_primary_set", v.ID, id, fmt.Sprintf("%s: photograph %s set as primary", p.ReportNumber, photoID))
+	s.notifyPhotoAdded(id, photoID, v.ID)
 	return s.repo.Photo(ctx, id, photoID)
 }
 

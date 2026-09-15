@@ -519,7 +519,7 @@ func (r *MissingPersonRepository) CameraMatches(ctx context.Context, reportID uu
 		SELECT f.id, f.photo_id, f.camera_id, COALESCE(c.name, ''), COALESCE(f.source_media::text, ''), f.frame_time,
 		       f.latitude::float8, f.longitude::float8, c.latitude, c.longitude,
 		       f.similarity::float8, COALESCE(f.model_version::text, ''), f.status::text,
-		       COALESCE(u.name, ''), f.reviewed_at, f.sighting_id
+		       COALESCE(u.name, ''), f.reviewed_at, f.sighting_id, COALESCE((to_jsonb(f)->>'is_demo')::boolean, FALSE)
 		FROM face_match_candidates f
 		LEFT JOIN cameras c ON c.id = f.camera_id
 		LEFT JOIN users u ON u.id = f.reviewed_by
@@ -535,7 +535,7 @@ func (r *MissingPersonRepository) CameraMatches(ctx context.Context, reportID uu
 		var camLat, camLng *float64
 		if err := rows.Scan(&m.ID, &m.PhotoID, &m.CameraID, &m.CameraName, &m.SourceMedia, &m.FrameTime,
 			&m.Latitude, &m.Longitude, &camLat, &camLng,
-			&m.Similarity, &m.ModelVersion, &m.Status, &m.ReviewedByName, &m.ReviewedAt, &m.SightingID); err != nil {
+			&m.Similarity, &m.ModelVersion, &m.Status, &m.ReviewedByName, &m.ReviewedAt, &m.SightingID, &m.IsDemo); err != nil {
 			return layer, err
 		}
 		switch {

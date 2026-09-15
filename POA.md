@@ -184,6 +184,7 @@ Raised, not yet ruled on. Neither blocks current work.
 | | |
 |---|---|
 | `Tatu1984/npdms-backend` stays **public** — `DECIDED` 2026-09-14 | Deliberate, for now. No credentials are in it: `.env` is ignored and secrets were kept out of `vercel.json`. The schema, auth logic and chain-of-custody implementation are publicly readable, which is accepted. Revisit before live case data exists. |
+| Face recognition: hosting and authorisation — `DECIDED` 2026-09-15 | Build now, host later: without `FR_SERVICE_URL` every face recognition screen says "not connected". Demo only for now: a `DEMO` authorisation runs only on synthetic test faces uploaded by an administrator, refuses real report photos and labels everything "Demo — synthetic faces". Real photos need an ORDER with reference, date and issuing authority. See "Face recognition for missing persons" under Later layers. |
 | RBAC model, CCTNS/ICJS interfaces, ML hardware sizing | Still open, tracked in Foundation and Later layers above. |
 
 ---
@@ -711,6 +712,119 @@ Non-negotiable rules, already enforced in the UI vocabulary:
 
 Hardware note: the ML services need real memory and, for video, a GPU. Sizing against the MDC / AI Edge box is an open question.
 
+### Face recognition for missing persons · `BUILT` (branch `feat/facerec`, not yet merged)
+
+**Decision.** Kolkata Police: "We will use the FR system full scale" to match missing persons' faces, from photographs given by family and friends, against CCTV footage, camera snapshots and reported sightings, with hits shown on the search map. This overrides the default in the AI plan, which left face recognition out. Use is limited to missing-person reports. Any other scope needs an authorisation that names it.
+
+**Decision, 2026-09-15 — build now, host later; demo authorisation only for now.**
+- **Not connected.** The live Vercel API has no face recognition service. Every face-matching screen and endpoint says "Face recognition service not connected" when `FR_SERVICE_URL` is unset or unreachable. There are no errors and no invented candidates.
+- **DEMO authorisation.** A `DEMO` authorisation type exists alongside real orders. It lets face recognition run only on photos flagged as synthetic test images, uploaded through an administrator-only demo path. It refuses to enrol any real report photo, in the service and in a database trigger.
+- **Labelling.** Everything produced under DEMO is labelled "Demo — synthetic faces": enrolments, candidates, searches, sightings created from them, the map popup and every audit entry.
+- **Real photos.** Enrolling real report photos needs a real `ORDER` authorisation with reference, date and issuing authority.
+
+**Models and licences** (details, hashes and measurements in `services/ml/face_recognition/MODELS.md`)
+- **Detection.** YuNet `face_detection_yunet_2023mar.onnx`, MIT. SHA-256 `8f2383e4…52fa4`.
+- **Recognition.** SFace `face_recognition_sface_2021dec.onnx`, 128-d, Apache-2.0. SHA-256 `0ba9fbfa…c34e79`.
+- **Source.** OpenCV Zoo commit `47534e27`. Both run on the CPU through OpenCV 4.10. The recorded model version is `sface-2021dec+yunet-2023mar`.
+- **Not used.** InsightFace/buffalo (non-commercial weights) and AGPL detectors.
+- **Licence caveat for counsel.** SFace's upstream describes training on CASIA-WebFace, VGGFace2 and MS-Celeb-1M, which are web-scraped, and MS-Celeb-1M was withdrawn. The licence on the weights does not settle the training-data question.
+
+**Architecture**
+- **`services/ml/face_recognition`** (FastAPI, stateless, Dockerfile for the edge server).
+  - `/health` reports model versions, hashes and licences. The service refuses to start if a model hash differs.
+  - `/v1/enrol` detects, aligns, embeds and scores quality, and rejects a poor photo with a reason: no face, several faces, too small, blurred, turned, tilted, dark or overexposed.
+  - `/v1/match` takes a still or video, samples video at 1 frame per second by default, compares every usable face with the gallery the API sends, merges hits per report within 5 s, and returns the frame and face crop with SHA-256.
+  - `tools/rtsp_snapshots.py` pulls frames from an RTSP stream and posts them to the API's snapshot endpoint, for when camera access exists. `tools/evaluate.py` produces the measurements. `tests/` holds the unit checks.
+- **API** (migrations `000072`, `000073`; `FaceRecognition{Handler,Service,Repository}`, `FRClient`).
+  - **`fr_authorisations`** — ORDER or DEMO; reference, authority, date, scope, validity; revocation with a reason.
+  - **`ai_module_switches`** — the per-module switch and its config. A trigger refuses to switch it on without an active authorisation covering `MISSING_PERSONS`. Revoking the last authorisation switches it off in the same transaction.
+  - **`fr_synthetic_photos`** — the demo path; the synthetic declaration is required.
+  - **`face_enrolments`** — `REAL[]` embeddings. An embedding exists only while status is `ENROLLED`: withdrawing, replacing, closing the report or retiring the photo removes it. A trigger enforces that a real photo needs an ORDER and a synthetic photo needs DEMO.
+  - **`face_match_searches`** — every submission with its purpose, submitter, media SHA-256, threshold, model and counts, recorded before matching runs. Media is kept only if it produced a candidate and fits the storage backend's per-object cap. On the `database` backend (8 MB) only frames and the hash are kept.
+  - **`face_match_candidates`** — the columns agreed with the map. The evidence fields cannot be changed (trigger). Review happens once; the reviewer is never the submitter; a rejection needs a reason; a confirmation needs a sighting.
+  - **pgvector is not used.** It is not installed on the edge Postgres, and the gallery (enrolled photos of open reports) is small, so the service compares by brute force.
+- **Endpoints**
+  - Status, authorisations (SP and above; DEMO administrator only) and settings (switch, threshold 0.30–0.95, sampling rate; SP and above).
+  - Enrol per report or photo (ASI and above). Enrolment is also automatic when a primary photo is uploaded or made primary under an ORDER: a hook in the photo service, plus a 2-minute reconciler that also removes stale templates.
+  - Withdraw an enrolment (SI and above).
+  - Footage or still search (ASI and above, purpose required) and camera snapshots (ASI and above).
+  - Per-report candidates and the city-wide review queue.
+  - Confirm and reject (ASI and above; not the submitter). Confirming writes a `VERIFIED` `CCTV_REVIEW` sighting in the Phase 04 sightings table, reported by the submitter, verified by the confirmer, at the camera's coordinates and the frame time.
+  - Frame, crop and enrolled-face images behind the child-record rule.
+  - Service unreachable returns 503 `fr_service_unavailable`; not configured returns 503 `fr_service_not_connected`. The search is recorded as `FAILED` and no candidates are created.
+- **Frontend.**
+  - A **Face matching** tab on the report (`components/face-recognition/FaceMatchingPanel.tsx`) shows authorisation and service status, photos with enrolment status and rejection reasons, the administrator's synthetic upload, Search footage with purpose and camera, and candidates.
+  - Each candidate shows the enrolled face beside the face in the footage, similarity, threshold, model, camera, location, frame time, frame hash and the source frame with its box, plus Confirm and Reject.
+  - **Face Match Review** (`/face-recognition/review`) is the city-wide queue.
+  - **Settings → Face recognition** records orders and demo authorisations, and holds the switch, threshold, service and models.
+  - Strings are in `face-recognition.{en,bn}.ts`. The search map's match popup carries the demo label.
+
+**Thresholds and measured accuracy** (synthetic faces only: SFHQ part 1, MIT; same-identity probes are degraded copies)
+- **Default match threshold 0.50.** OpenCV's 0.363 raised 3–9 wrong candidates per face against 500 enrolled photos.
+- **Same identity, at 0.50.** Found for 99.9% of 112 px faces, 99.6% at 64 px, 98.0% at 48 px and 92.4% at 36 px. Most 36 px faces (1,325 of 1,497) are below the 36 px detection-box rule and are not compared at all.
+- **Different identities.** p99 0.36–0.39, p99.9 0.44–0.49, maximum 0.83 (near-duplicate synthetic identities). At 0.50 the false match rate is 0.02–0.08% per comparison, which is 0.1–0.4 wrong candidates per face per 500 enrolled photos. It grows linearly with the gallery, so a city gallery of 5,000 enrolled photos means roughly 1–4 wrong candidates per clearly visible face. Human review is not optional.
+- **Enrolment quality gate.** 499 of 531 accepted (31 turned away, 1 dark).
+- **Speed** on an Apple M4, one worker. Enrolment 11 ms per photo. A 12-second 720p clip at 1 frame per second took about 0.4 s end to end, about 30 ms per sampled frame with decoding. One hour of footage is about 2 minutes per worker.
+- **Limits, stated plainly.**
+  - No real same-person variation was measured: age gap between the family photo and today (worst for children), clothes, expressions.
+  - No real CCTV conditions: overhead angles, motion blur, night IR, backlight, masks and helmets.
+  - No demographic breakdown.
+  - CPU only.
+  - The true-match figures are an upper bound. Measure on authorised, labelled Kolkata footage before enabling for real reports.
+
+**Safeguards implemented**
+- **Candidates only.** Every result is a `PENDING` candidate. A second officer of ASI rank or above confirms it before it becomes a sighting; the submitter cannot. Rejection needs a reason.
+- **Evidence on show.** Similarity, threshold, model version, source frame and frame SHA-256 are stored, shown and immutable.
+- **Audited.** Every authorisation, switch change, refusal, synthetic upload, enrolment and rejection, search (with purpose), failure, candidate and review is written to the hash-chained audit trail with the actor. Demo entries carry the demo label.
+- **Switch and authorisation.** A per-module switch, off by default. It cannot be switched on without an active authorisation, and it switches off when the last one is revoked. The order's reference, date, authority and scope are shown on every face recognition screen.
+- **On premises.** Data never leaves the platform; the service is on premises and calls nothing.
+- **Missing persons only.** Only open missing-person reports are matched. Templates of closed reports and retired photos are removed.
+- **Children.** The child-record rule applies to candidate lists, images and review.
+- **Not connected.** Without the service, nothing runs and the screens say so.
+
+**Verified**
+- `pytest`: 7 checks, all passing. Same identity above and different identity below 0.50 on synthetic faces; no-face, blurred, small-face and two-face photos rejected; model hashes and licences reported; a synthetic clip matched only in the seconds the face is on screen.
+- **API probe: 54 of 54.**
+  - Switching on without authorisation refused. Order below SP rank refused; order without reference, date or authority refused; DEMO recorded by a non-administrator refused.
+  - DEMO refuses a real report photo uploaded through the missing-persons flow. Synthetic upload refused for non-administrators and without the declaration.
+  - Blurred photo rejected as `BLURRED`. Search without a purpose, or below ASI rank, refused.
+  - Candidates carry similarity, model, threshold, camera coordinates and the demo label; the frame is served with its hash. Confirmation by the uploader, or below ASI rank, refused; rejection without a reason refused; a second review refused.
+  - Confirmation by another ASI creates a `VERIFIED` sighting at the camera's coordinates. A still-image candidate rejected with a reason.
+  - Service down: 503, no candidates, search recorded `FAILED`, status says not reachable.
+  - Under an ORDER, a report photo enrols without the demo label.
+  - All 15 audit event types present, and every demo entry labelled.
+- **Not connected.** API without `FR_SERVICE_URL`: status `configured: false`, search answers 503 `fr_service_not_connected`, the report tab shows the banner and no search form.
+- **Browser (Playwright on :3123): 12 of 12.**
+  - SP's attempt to switch on is refused, then SP records an order and switches on.
+  - The administrator records DEMO, adds two synthetic photos and enrols them: one enrolled, the blurred one rejected with its reason.
+  - SI searches a synthetic clip with a camera and purpose. The candidate shows similarity, threshold, model, camera and the demo label, with no Confirm button for the uploader.
+  - ASI confirms from the review queue. "Sighting created" appears, the report's sightings list the demo-labelled verified sighting, and Postgres holds `VERIFIED | 22.5645 | CCTV_REVIEW`.
+
+**What live camera integration still needs**
+- **Network.** Access from the edge site to the CCTV management system or the cameras, plus stream credentials for the pilot cameras, stored in the Phase 03 register.
+- **Snapshot service.** Run `tools/rtsp_snapshots.py`, or an equivalent VMS SDK integration, as a service per camera group under a control-room integration account.
+- **Service placement.** Deploy the face recognition service on the edge server's private network with `FR_SERVICE_TOKEN`, and set `FR_SERVICE_URL` on the API.
+- **Asynchronous footage searches.** Footage searches are synchronous today. Long footage needs a job queue so an upload does not hold an HTTP request for minutes.
+- **Object storage for footage.** MinIO/S3 is needed to keep footage; the database backend keeps only frames.
+- **Measurement and rules before live use.**
+  - A real ORDER authorisation, the legal opinion and DPIA from the AI plan, and a published retention policy for templates and frames.
+  - Measurement on labelled Kolkata footage, day and night, with the threshold set from it.
+  - A nodal officer signing off the threshold.
+
+**Hardware at scale** (estimates to confirm with a load test)
+- **Footage searches and enrolment.** CPU is adequate. One core handles about 30 sampled 720p frames per second with few faces. 8–16 cores cover a division's footage uploads.
+- **Live snapshots.** At one frame every 5 s per camera, that is about 150 cameras per core with light scenes; crowded scenes (stations, ghats) cost 5–10 ms per extra face. For 1,000 cameras, plan 16–32 cores dedicated to face recognition, or one data-centre GPU with a GPU build of the detector and recogniser.
+- **Memory.** About 150 MB per worker process.
+- **Gallery.** Brute-force matching of 10,000 enrolled photos is well under 1 ms per face.
+- **Storage.** Frames (100–500 KB each) for candidates only.
+
+**Open**
+- **Map labelling.** The DEMO label on the map relies on `is_demo`, which was added to the missing-persons map query in this branch. Check it on merge.
+- **Legal review of SFace training data** (above).
+- **Asynchronous footage jobs** and **camera streams**, both of which need access.
+- **Real-footage measurement and demographic evaluation.**
+- **Neon.** Neon does not yet have `000072`/`000073`. Applying them is harmless without the service: every screen says not connected.
+
 ### Blockchain anchoring · `PLANNED`
 
 The hash chain in `audit_logs` is already tamper-evident. This layer batches those hashes and anchors them externally, writing `blockchain_anchor_tx`.
@@ -725,6 +839,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-15 | **Face recognition for missing persons** (branch `feat/facerec`). Migrations `000072`/`000073`. On-premises service in `services/ml/face_recognition`: YuNet (MIT) and SFace (Apache-2.0) from the OpenCV Zoo, hash-checked. Recorded ORDER and DEMO authorisations; a per-module switch the database will not turn on without one. Enrolment with a quality gate that gives a reason. Purpose-logged footage, still and camera-snapshot searches. Immutable candidates confirmed by a second officer into verified sightings at the camera's coordinates. City-wide review queue and settings. DEMO enrols only synthetic test faces and labels everything it produces; without the service every screen says "not connected". Default threshold 0.50, measured on synthetic faces with limits stated. Probe 54/54, pytest 7/7, browser 12/12. |
 | 2026-09-15 | **Missing persons: face photographs, city-wide board, station checks, search map** (branch `feat/mpboard`). Migrations `000070`/`000071`. Photographs checked by magic bytes with GPS removed and a server-drawn thumbnail, one primary per report, retired never deleted. Every open report broadcast to every station (photo, name, age, sex, description, last seen, station) with the rest still restricted; the board polls every 20 seconds because the Vercel API cannot hold streams. Each station records no match, possible match or a sighting. A linked BOLO alert is raised on lodging. The map plots only stored points and reads face-match candidates when that table exists. New `database` storage backend (8 MB cap) makes photographs persist on Vercel. |
 | 2026-09-15 | **Statute library and incident location on the FIR form** (branch `feat/fir-location-statutes`). Migrations `000068` and `000069`. The full BNS, BNSS, BSA and IPC, six special Acts and the BPR&D correspondence table load by default from official sources. Picker, settings and audited custom entries added. The FIR form gets gazetteer suggestions and a map pin, and FIRs store coordinates. The Calcutta Police Acts are not included: no official source could be reached. |
 | 2026-09-15 | **Phases 03–14 merged and deployed.** Each phase was built in its own worktree and verified there (API probes and browser runs), then merged into the working branches and re-verified together on one integrated API: every phase probe passes on the merged build (Phase 10's fixed-score checks drift with shared data, so its scores were re-checked as weighted sums of the factors the API reports — all consistent). Merging surfaced cross-phase clashes that git merged silently but that did not compile — duplicate helpers (`bind`, `bindJSON`, `trimPtr`, `ErrStationNotFound`, `Viewer`), same-named complaint identifiers in Phases 05 and 09, a restored duplicate lookout handler, mangled dictionary braces and duplicated dead mocks — all resolved. Fast-forwarded to `main`; Vercel production deploys for API and web; Neon brought to migration `000066` in place (162 tables). Login form accepted only usernames of three or more characters, locking out demo `si` and `hc`; fixed. |

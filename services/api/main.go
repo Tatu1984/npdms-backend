@@ -147,8 +147,9 @@ func main() {
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
 	lookoutService := services.NewLookoutService(lookoutRepo, auditRepo)
 	lookoutHandler := handlers.NewLookoutHandler(lookoutService)
-	missingPersonHandler := handlers.NewMissingPersonHandler(services.NewMissingPersonService(
-		repository.NewMissingPersonRepository(db), lookoutService, auditRepo, evidenceStore))
+	missingPersonService := services.NewMissingPersonService(
+		repository.NewMissingPersonRepository(db), lookoutService, auditRepo, evidenceStore)
+	missingPersonHandler := handlers.NewMissingPersonHandler(missingPersonService)
 	// Phase 03: stream credentials are encrypted with their own key where one
 	// is provided; otherwise the JWT secret is the key material.
 	cctvCredentialKey := os.Getenv("CCTV_CREDENTIAL_KEY")
@@ -173,6 +174,14 @@ func main() {
 	dispatchCtx, stopDispatch := context.WithCancel(context.Background())
 	defer stopDispatch()
 	go dispatchService.RunEscalations(dispatchCtx, 30*time.Second)
+	// Face recognition for missing persons. The model runs in a separate
+	// on-premises service (FR_SERVICE_URL); where it is not configured every
+	// face recognition screen says "not connected" and nothing runs.
+	faceRecognitionService := services.NewFaceRecognitionService(repository.NewFaceRecognitionRepository(db),
+		repository.NewMissingPersonRepository(db), evidenceStore, auditRepo, services.NewFRClientFromEnv())
+	faceRecognitionHandler := handlers.NewFaceRecognitionHandler(faceRecognitionService)
+	missingPersonService.OnPhotoAdded(faceRecognitionService.OnPhotoAdded)
+	go faceRecognitionService.RunAutoEnrolment(dispatchCtx, 2*time.Minute)
 	riskHandler := handlers.NewRiskHandler(services.NewRiskService(riskRepo, auditRepo))
 	malkhanaHandler := handlers.NewMalkhanaHandler(services.NewMalkhanaService(repository.NewMalkhanaRepository(db), alertRepo, auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
@@ -734,6 +743,11 @@ func main() {
 				missingPersons.POST("/:id/station-checks", middleware.RequireRole("ASI"), missingPersonHandler.RecordStationCheck)
 				missingPersons.GET("/:id/map", missingPersonHandler.SearchMap)
 			}
+
+			// Face recognition for missing persons: authorisation, enrolment,
+			// footage search, candidate review. Routes and role floors are in
+			// FaceRecognitionHandler.RegisterRoutes.
+			faceRecognitionHandler.RegisterRoutes(protected)
 
 			// Phase 11 — Police Knowledge Assistant (functional, no AI)
 			// Reading is open to every officer, bounded by classification in SQL.
