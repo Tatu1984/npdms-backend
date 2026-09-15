@@ -89,6 +89,11 @@ func (h *FIRHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if err := services.ValidateIncidentPoint(fir.IncidentLatitude, fir.IncidentLongitude); err != nil {
+		badRequest(c, invalidMessage(err))
+		return
+	}
+
 	userID := middleware.GetUserID(c)
 
 	// The FIR is registered at the station named in the request, or else at
@@ -142,6 +147,11 @@ func (h *FIRHandler) Update(c *gin.Context) {
 			Message: "Invalid FIR data",
 			Code:    400,
 		})
+		return
+	}
+
+	if err := services.ValidateIncidentPoint(fir.IncidentLatitude, fir.IncidentLongitude); err != nil {
+		badRequest(c, invalidMessage(err))
 		return
 	}
 

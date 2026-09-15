@@ -107,7 +107,7 @@ func (r *FIRRepository) List(ctx context.Context, filter FIRFilter) ([]models.FI
 	query := fmt.Sprintf(`
 		SELECT f.id, f.fir_number, f.station_id, f.complainant_name, f.complainant_phone,
 		       f.complainant_address, f.complainant_id_type, f.complainant_id_number,
-		       f.incident_date, f.incident_time::text, f.incident_location, f.incident_description,
+		       f.incident_date, f.incident_time::text, f.incident_location, f.incident_latitude, f.incident_longitude, f.incident_description,
 		       f.ipc_sections, f.status, f.priority, f.registered_by, f.investigating_officer,
 		       f.created_at, f.updated_at,
 		       COALESCE(s.name, '') as station_name,
@@ -136,7 +136,7 @@ func (r *FIRRepository) List(ctx context.Context, filter FIRFilter) ([]models.FI
 		err := rows.Scan(
 			&fir.ID, &fir.FIRNumber, &fir.StationID, &fir.ComplainantName, &fir.ComplainantPhone,
 			&fir.ComplainantAddress, &fir.ComplainantIDType, &fir.ComplainantIDNumber,
-			&fir.IncidentDate, &fir.IncidentTime, &fir.IncidentLocation, &fir.IncidentDescription,
+			&fir.IncidentDate, &fir.IncidentTime, &fir.IncidentLocation, &fir.IncidentLatitude, &fir.IncidentLongitude, &fir.IncidentDescription,
 			&fir.IPCSections, &fir.Status, &fir.Priority, &fir.RegisteredBy, &fir.InvestigatingOfficer,
 			&fir.CreatedAt, &fir.UpdatedAt, &fir.StationName, &fir.RegisteredByName, &fir.IOName,
 		)
@@ -156,7 +156,7 @@ func (r *FIRRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.FIR
 	query := `
 		SELECT f.id, f.fir_number, f.station_id, f.complainant_name, f.complainant_phone,
 		       f.complainant_address, f.complainant_id_type, f.complainant_id_number,
-		       f.incident_date, f.incident_time::text, f.incident_location, f.incident_description,
+		       f.incident_date, f.incident_time::text, f.incident_location, f.incident_latitude, f.incident_longitude, f.incident_description,
 		       f.ipc_sections, f.status, f.priority, f.registered_by, f.investigating_officer,
 		       f.created_at, f.updated_at,
 		       COALESCE(s.name, '') as station_name,
@@ -173,7 +173,7 @@ func (r *FIRRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.FIR
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&fir.ID, &fir.FIRNumber, &fir.StationID, &fir.ComplainantName, &fir.ComplainantPhone,
 		&fir.ComplainantAddress, &fir.ComplainantIDType, &fir.ComplainantIDNumber,
-		&fir.IncidentDate, &fir.IncidentTime, &fir.IncidentLocation, &fir.IncidentDescription,
+		&fir.IncidentDate, &fir.IncidentTime, &fir.IncidentLocation, &fir.IncidentLatitude, &fir.IncidentLongitude, &fir.IncidentDescription,
 		&fir.IPCSections, &fir.Status, &fir.Priority, &fir.RegisteredBy, &fir.InvestigatingOfficer,
 		&fir.CreatedAt, &fir.UpdatedAt, &fir.StationName, &fir.RegisteredByName, &fir.IOName,
 	)
@@ -190,8 +190,9 @@ func (r *FIRRepository) Create(ctx context.Context, fir *models.FIR) error {
 			id, fir_number, station_id, complainant_name, complainant_phone,
 			complainant_address, complainant_id_type, complainant_id_number,
 			incident_date, incident_time, incident_location, incident_description,
-			ipc_sections, status, priority, registered_by, investigating_officer
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			ipc_sections, status, priority, registered_by, investigating_officer,
+			incident_latitude, incident_longitude
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 	`
 
 	fir.ID = uuid.New()
@@ -200,6 +201,7 @@ func (r *FIRRepository) Create(ctx context.Context, fir *models.FIR) error {
 		fir.ComplainantAddress, fir.ComplainantIDType, fir.ComplainantIDNumber,
 		fir.IncidentDate, fir.IncidentTime, fir.IncidentLocation, fir.IncidentDescription,
 		fir.IPCSections, fir.Status, fir.Priority, fir.RegisteredBy, fir.InvestigatingOfficer,
+		fir.IncidentLatitude, fir.IncidentLongitude,
 	)
 
 	return err
@@ -210,7 +212,8 @@ func (r *FIRRepository) Update(ctx context.Context, fir *models.FIR) error {
 		UPDATE firs SET
 			complainant_name = $2, complainant_phone = $3, complainant_address = $4,
 			incident_location = $5, incident_description = $6, ipc_sections = $7,
-			priority = $8, investigating_officer = $9
+			priority = $8, investigating_officer = $9,
+			incident_latitude = $10, incident_longitude = $11
 		WHERE id = $1
 	`
 
@@ -218,6 +221,7 @@ func (r *FIRRepository) Update(ctx context.Context, fir *models.FIR) error {
 		fir.ID, fir.ComplainantName, fir.ComplainantPhone, fir.ComplainantAddress,
 		fir.IncidentLocation, fir.IncidentDescription, fir.IPCSections,
 		fir.Priority, fir.InvestigatingOfficer,
+		fir.IncidentLatitude, fir.IncidentLongitude,
 	)
 
 	return err

@@ -114,6 +114,9 @@ type FIR struct {
 	IncidentDate         time.Time  `json:"incidentDate" db:"incident_date"`
 	IncidentTime         *string    `json:"incidentTime" db:"incident_time"`
 	IncidentLocation     string     `json:"incidentLocation" db:"incident_location"`
+	// Incident point on the map, both or neither, inside West Bengal.
+	IncidentLatitude     *float64   `json:"incidentLatitude" db:"incident_latitude"`
+	IncidentLongitude    *float64   `json:"incidentLongitude" db:"incident_longitude"`
 	IncidentDescription  string     `json:"incidentDescription" db:"incident_description"`
 	IPCSections          []string   `json:"ipcSections" db:"ipc_sections"`
 	Status               FIRStatus  `json:"status" db:"status"`

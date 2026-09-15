@@ -599,6 +599,41 @@ Seized property against an FIR or case: where it is kept, the seal it is kept un
 
 ---
 
+### Statute library and incident location · `DONE` (branch `feat/fir-location-statutes`, not yet merged)
+
+Reported on `/fir/new`: location suggestions and the map did not work, and only a hand-typed list of about 30 BNS sections was available.
+
+**Statute library (migration `000068`).** It is loaded by default: the tables `legal_acts`, `legal_sections` and `legal_correspondence` are shipped as reference data. Every row comes from an official published text, retrieved 2026-09-15; nothing was typed from memory.
+
+| Act | Sections | Coverage | Source |
+|---|---|---|---|
+| BNS, 2023 | 358 (1–358) | complete | India Code section records; headings checked against the Gazette text published by MHA; classification of 288 BNS sections from the BNSS First Schedule, Part I |
+| BNSS, 2023 | 531 (1–531) | complete | India Code, checked against the Gazette text (MHA) |
+| BSA, 2023 | 170 (1–170) | complete | India Code, checked against the Gazette text (MHA) |
+| IPC, 1860 | 575 (1–511 plus 64 lettered sections, 21 omitted or repealed) | complete; repealed from 1 July 2024 | India Code consolidated text A1860-45, 17 heading typos corrected from the enacted text |
+| IT Act 2000 · NDPS Act 1985 · Arms Act 1959 · POCSO Act 2012 · Dowry Prohibition Act 1961 · MV Act 1988 | 125 · 129 · 48 · 47 · 13 · 257 | complete | India Code section records |
+| IPC ↔ BNS correspondence | 533 rows | complete | BPR&D correspondence table |
+
+- **Not sourced:** the Calcutta Police Act, 1866 and the Calcutta Suburban Police Act, 1866. India Code holds no pre-1947 Bengal Acts, the Kolkata Police and WB Police sites returned 503, and the WB legislative sites did not connect. Only unofficial copies were found. SP and above can add these Acts in Settings once an official text is obtained.
+- **Checked:** 37 spot-checks against the source text all pass, including BNS 103, 303, 318, 64 and 111, and IPC 302→BNS 103(1), 379→303(2), 420→318(4) and 498A→85 and 86.
+- **Protection:** triggers make built-in rows read-only.
+- **API** (`/api/v1/legal`):
+  - Any officer can search sections by number, heading or citation (such as `IPC 420`) and see the equivalents in the other code, and can look up the correspondence in either direction.
+  - SP and above can add Acts, and add, correct or retire custom sections; each change needs a reason and is audited.
+  - An attempt to change a built-in row returns 409.
+- **Frontend:**
+  - The section picker searches on the server. For an IPC section it offers the BNS equivalent, and it warns when an IPC section is cited for an incident on or after 1 July 2024.
+  - The hand-typed lists in `wb.ts` are gone.
+  - Settings → Legal sections is available in English and Bengali.
+
+**Incident location (migration `000069`).**
+- **Cause:** commit `f94cd97` replaced the old LocationPicker, which geocoded through public Nominatim and centred on Bangalore, with a plain text box. `e9b5bd2` then deleted it as unused. FIRs had no coordinate columns.
+- **Storage:** `firs` now has `incident_latitude` and `incident_longitude`. They are stored as a pair or not at all and must fall inside West Bengal (21.4–27.3 N, 85.8–89.9 E); both the database and the API enforce this.
+- **Suggestions:** they come only from `gazetteer_places`, 2,910 Kolkata localities, roads, landmarks, police, rail and metro stations and PIN codes. This is an offline OpenStreetMap extract (© OpenStreetMap contributors, ODbL), so an address is never sent outside the platform.
+- **Map:** the picker uses Leaflet with OSM tiles. Picking a suggestion moves the map; clicking or dragging sets the pin, and with the location field empty the nearest place name is filled in. The FIR detail page shows the pin.
+- **Adding places:** Settings → Map places lets SP and above add a missing place, with the addition audited.
+- **Verified:** an API probe covering search, correspondence, admin writes, 409 and 403 refusals, and rejection of half or out-of-state coordinates; and a 21-check browser run as SI and as admin with writes confirmed in Postgres.
+
 ## Later layers
 
 The detailed plan of action for both layers — workstreams, ground rules, the verdict on each prototype in `services/ml`, anchoring options and everything Kolkata Police must provide — is in [`docs/plans/ai-and-anchoring-plan.html`](docs/plans/ai-and-anchoring-plan.html).
@@ -631,6 +666,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-15 | **Statute library and incident location on the FIR form** (branch `feat/fir-location-statutes`). Migrations `000068` and `000069`. The full BNS, BNSS, BSA and IPC, six special Acts and the BPR&D correspondence table load by default from official sources. Picker, settings and audited custom entries added. The FIR form gets gazetteer suggestions and a map pin, and FIRs store coordinates. The Calcutta Police Acts are not included: no official source could be reached. |
 | 2026-09-15 | **Phases 03–14 merged and deployed.** Each phase was built in its own worktree and verified there (API probes and browser runs), then merged into the working branches and re-verified together on one integrated API: every phase probe passes on the merged build (Phase 10's fixed-score checks drift with shared data, so its scores were re-checked as weighted sums of the factors the API reports — all consistent). Merging surfaced cross-phase clashes that git merged silently but that did not compile — duplicate helpers (`bind`, `bindJSON`, `trimPtr`, `ErrStationNotFound`, `Viewer`), same-named complaint identifiers in Phases 05 and 09, a restored duplicate lookout handler, mangled dictionary braces and duplicated dead mocks — all resolved. Fast-forwarded to `main`; Vercel production deploys for API and web; Neon brought to migration `000066` in place (162 tables). Login form accepted only usernames of three or more characters, locking out demo `si` and `hc`; fixed. |
 | 2026-09-15 | **Kolkata demo dataset; no fabricated records in migrations.** The base schema and migrations no longer insert any records; the Karnataka seed users, Koramangala station and KOR FIRs are gone (`000064` converts existing databases in place, keeping demo usernames and passwords working). Reference data is 17 real Kolkata Police stations across the eight divisions. `scripts/seed-kolkata-demo.py` creates fictional operational records through the API as the recording officer, so numbers, rules, signatures and audit entries are genuine; idempotent via `demo_seed_ledger`. Loaded into the live Neon database. The dashboard now reads live figures; the login page no longer fabricates a user when the API rejects a sign-in. |
 | 2026-09-15 | **Phase 01 verified through the UI.** 35 browser checks and a 17-check API probe across every claimed capability. Fixed a screen-freezing menu bug, cross-workspace writes on child records, 500s for bad input, IST timestamps stored as UTC, a misattributed reviewer, and missing edit/remove/assign/record-gap flows. Screens fully bilingual. |

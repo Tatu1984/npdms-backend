@@ -158,6 +158,7 @@ func main() {
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditQueryRepository(db))
 	searchHandler := handlers.NewRecordSearchHandler(repository.NewSearchRepository(db), auditRepo)
+	legalHandler := handlers.NewLegalHandler(services.NewLegalService(repository.NewLegalRepository(db), repository.NewGazetteerRepository(db), auditRepo))
 	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
 	// Phase 06 — traffic incidents and accident reconstruction
 	trafficIncidentHandler := handlers.NewTrafficIncidentHandler(
@@ -611,6 +612,36 @@ func main() {
 				dispatch.POST("/assignments/:assignmentId/on-scene", dispatchHandler.OnScene())
 				dispatch.POST("/assignments/:assignmentId/clear", dispatchHandler.Clear())
 				dispatch.GET("/analytics", middleware.RequireRole("SI"), dispatchHandler.Analytics)
+			}
+
+			// Statute library and incident location gazetteer
+			//
+			// Any officer searches Acts, sections, the IPC-BNS correspondence and
+			// map places. Published law text and imported OpenStreetMap places are
+			// read-only (409); SP and above add, correct and retire custom entries,
+			// each with a reason kept in the audit log.
+			legal := protected.Group("/legal")
+			{
+				legal.GET("/acts", legalHandler.ListActs)
+				legal.GET("/acts/:id", legalHandler.GetAct)
+				legal.GET("/acts/:id/sections", legalHandler.ListSections)
+				legal.GET("/sections", legalHandler.SearchSections)
+				legal.GET("/sections/:id", legalHandler.GetSection)
+				legal.GET("/correspondence", legalHandler.Correspondence)
+				legal.POST("/acts", middleware.RequireRole("SP"), legalHandler.CreateAct)
+				legal.PUT("/acts/:id", middleware.RequireRole("SP"), legalHandler.UpdateAct)
+				legal.POST("/acts/:id/retire", middleware.RequireRole("SP"), legalHandler.RetireAct)
+				legal.POST("/acts/:id/sections", middleware.RequireRole("SP"), legalHandler.AddSection)
+				legal.PUT("/sections/:id", middleware.RequireRole("SP"), legalHandler.UpdateSection)
+				legal.POST("/sections/:id/retire", middleware.RequireRole("SP"), legalHandler.RetireSection)
+			}
+			gazetteer := protected.Group("/gazetteer")
+			{
+				gazetteer.GET("/search", legalHandler.SearchPlaces)
+				gazetteer.GET("/nearest", legalHandler.NearestPlaces)
+				gazetteer.GET("/places", legalHandler.ListOfficerPlaces)
+				gazetteer.POST("/places", middleware.RequireRole("SP"), legalHandler.AddPlace)
+				gazetteer.POST("/places/:id/retire", middleware.RequireRole("SP"), legalHandler.RetirePlace)
 			}
 
 			// Armoury — weapon register and issue/return ledger
