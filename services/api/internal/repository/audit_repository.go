@@ -18,6 +18,10 @@ import (
 
 // auditChainLockKey identifies the advisory lock that serialises appends to the
 // hash chain. Any value works so long as nothing else uses it.
+// AuditHashAlgorithm marks entries whose current_hash can be recomputed from
+// the stored row. Older entries carry 'SHA-512'.
+const AuditHashAlgorithm = "SHA-512/v2"
+
 const auditChainLockKey int64 = 0x4e50444d53415544 // "NPDMSAUD"
 
 type AuditRepository struct {
@@ -95,8 +99,15 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 	eventType := truncate(log.Action, 50)
 	action := canonicalAuditAction(log.Action, log.Success)
 
+	// Hash exactly what is stored, so the entry can be recomputed from the row:
+	// the timestamp at the database's microsecond precision in UTC, and the
+	// reason text as written to outcome_reason. Entries written before this
+	// (hash_algorithm 'SHA-512') hashed a nanosecond local time and cannot be
+	// recomputed; only their linkage can be checked. See VerifyChain.
+	at := log.CreatedAt.UTC().Truncate(time.Microsecond)
+	reason := describeOrFailure(log)
 	currentHash := auditEventHash(eventID, eventType, action, log.UserID,
-		resourceType, log.ResourceID, outcome, log.CreatedAt, previousHash, log.Description)
+		resourceType, log.ResourceID, outcome, at, previousHash, reason)
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_logs (
@@ -108,15 +119,15 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 			event_timestamp, received_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			NULLIF($10, '')::inet, $11, $12, $13, 'SHA-512', $14, NOW()
+			NULLIF($10, '')::inet, $11, $12, $13, $15, $14, NOW()
 		)
 	`,
 		log.ID, eventID, eventType, action,
 		log.UserID, resourceType, log.ResourceID,
-		outcome, describeOrFailure(log),
+		outcome, reason,
 		derefString(log.IPAddress), log.UserAgent,
 		previousHash, currentHash,
-		log.CreatedAt,
+		at, AuditHashAlgorithm,
 	)
 	if err != nil {
 		return err

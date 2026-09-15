@@ -287,6 +287,43 @@ func (r *TrafficChallanRepository) UpdateChallanStatus(ctx context.Context, id u
 	return nil
 }
 
+// TransitionChallanStatus moves a challan from `from` to `to` only if it is
+// still in `from`, so two officers acting at once cannot both succeed. A
+// payment or compounding reference is recorded with its date.
+func (r *TrafficChallanRepository) TransitionChallanStatus(ctx context.Context, id uuid.UUID, from, to string, reference *string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE traffic_challans
+		SET status = $3::varchar,
+		    payment_reference = CASE WHEN $3::varchar IN ('PAID', 'COMPOUNDED') THEN $4::varchar ELSE payment_reference END,
+		    payment_date = CASE WHEN $3::varchar IN ('PAID', 'COMPOUNDED') THEN NOW() ELSE payment_date END,
+		    updated_at = NOW()
+		WHERE id = $1 AND status = $2`, id, from, to, reference)
+	if err != nil {
+		return false, fmt.Errorf("failed to update challan status: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// RecordDispute marks a challan disputed with the stated reason, only if it is
+// still in `from`.
+func (r *TrafficChallanRepository) RecordDispute(ctx context.Context, id uuid.UUID, from, reason string) (bool, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE traffic_challans
+		SET status = 'DISPUTED', dispute_filed = true, dispute_reason = $3, dispute_date = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = $2`, id, from, reason)
+	if err != nil {
+		return false, fmt.Errorf("failed to record dispute: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// OfficerIdentity returns the name and badge recorded on a challan.
+func (r *TrafficChallanRepository) OfficerIdentity(ctx context.Context, userID uuid.UUID) (string, string) {
+	var name, badge string
+	_ = r.db.QueryRow(ctx, `SELECT name, COALESCE(badge_number, '') FROM users WHERE id = $1`, userID).Scan(&name, &badge)
+	return name, badge
+}
+
 // RecordPayment records a payment for a challan
 func (r *TrafficChallanRepository) RecordPayment(ctx context.Context, payment *models.ChallanPayment) error {
 	tx, err := r.db.Begin(ctx)

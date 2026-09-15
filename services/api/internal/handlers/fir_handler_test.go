@@ -40,7 +40,7 @@ func TestListFIRs_Success(t *testing.T) {
 			Category:        "ROBBERY",
 			Priority:        "HIGH",
 			IncidentDate:    time.Now().Add(-48 * time.Hour),
-			IncidentAddress: "100 Ft Road, Koramangala",
+			IncidentAddress: "Rashbehari Avenue, Kolkata 700029",
 			StationID:       "station-001",
 			CreatedAt:       time.Now().Add(-48 * time.Hour),
 			UpdatedAt:       time.Now(),
@@ -119,7 +119,7 @@ func TestCreateFIR_Success(t *testing.T) {
 		"category":        "THEFT",
 		"priority":        "MEDIUM",
 		"incidentDate":    time.Now().Format(time.RFC3339),
-		"incidentAddress": "Test Address, Bangalore",
+		"incidentAddress": "Test Address, Kolkata",
 	}
 	jsonBody, _ := json.Marshal(body)
 
@@ -183,7 +183,7 @@ func TestGetFIR_Success(t *testing.T) {
 				Status:          "UNDER_INVESTIGATION",
 				Category:        "ROBBERY",
 				Priority:        "HIGH",
-				IncidentAddress: "100 Ft Road, Koramangala",
+				IncidentAddress: "Rashbehari Avenue, Kolkata 700029",
 			})
 			return
 		}

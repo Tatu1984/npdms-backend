@@ -3,12 +3,10 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/npdms/api/internal/middleware"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -164,100 +162,3 @@ func GetDashboardStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-// GetAuditLogs returns audit logs from the database (for DSP+ only)
-func GetAuditLogs(c *gin.Context) {
-	db := c.MustGet("db").(*pgxpool.Pool)
-	ctx := c.Request.Context()
-	userID := middleware.GetUserID(c)
-
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 50
-	}
-	offset := (page - 1) * pageSize
-
-	// Get total count
-	var total int64
-	db.QueryRow(ctx, "SELECT COUNT(*) FROM audit_logs").Scan(&total)
-
-	// Get logs
-	query := `
-		SELECT a.id, a.user_id, a.action, a.resource_type, a.resource_id,
-		       a.description, a.ip_address, a.user_agent, a.success,
-		       a.created_at, COALESCE(u.name, 'System') as user_name
-		FROM audit_logs a
-		LEFT JOIN users u ON a.user_id = u.id
-		ORDER BY a.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
-
-	rows, err := db.Query(ctx, query, pageSize, offset)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch audit logs"})
-		return
-	}
-	defer rows.Close()
-
-	var logs []map[string]interface{}
-	for rows.Next() {
-		var (
-			id           string
-			userId       *string
-			action       string
-			resourceType string
-			resourceId   *string
-			description  *string
-			ipAddress    *string
-			userAgent    *string
-			success      bool
-			createdAt    time.Time
-			userName     string
-		)
-
-		err := rows.Scan(&id, &userId, &action, &resourceType, &resourceId,
-			&description, &ipAddress, &userAgent, &success, &createdAt, &userName)
-		if err != nil {
-			continue
-		}
-
-		logs = append(logs, map[string]interface{}{
-			"id":           id,
-			"userId":       userId,
-			"userName":     userName,
-			"action":       action,
-			"resourceType": resourceType,
-			"resourceId":   resourceId,
-			"description":  description,
-			"ipAddress":    ipAddress,
-			"userAgent":    userAgent,
-			"success":      success,
-			"createdAt":    createdAt,
-		})
-	}
-
-	if logs == nil {
-		logs = []map[string]interface{}{}
-	}
-
-	totalPages := int(total) / pageSize
-	if int(total)%pageSize > 0 {
-		totalPages++
-	}
-
-	// Log this access
-	desc := "Viewed audit logs"
-	db.Exec(ctx, `INSERT INTO audit_logs (user_id, action, resource_type, description, success) VALUES ($1, $2, $3, $4, $5)`,
-		userID, "VIEW", "AUDIT_LOGS", desc, true)
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":       logs,
-		"total":      total,
-		"page":       page,
-		"pageSize":   pageSize,
-		"totalPages": totalPages,
-	})
-}
