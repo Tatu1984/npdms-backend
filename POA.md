@@ -266,11 +266,34 @@ Appearance matching is the AI layer. National matching via NCRB/UNIFY and ICJS r
 
 ---
 
-### Phase 06 — Traffic Incident & Accident Reconstruction · `PLANNED`
+### Phase 06 — Traffic Incident & Accident Reconstruction · `DONE` (functional layer)
 
 **Functional without AI.** Incident registration, camera correlation by location and time, ANPR association, signal-phase correlation, collision timeline, draft report for officer approval.
 
 Measured and estimated values must remain visually distinct — a speed derived from camera calibration is not the same kind of fact as a timestamp.
+
+**Delivered**
+- Migration `000050`, 8 tables; `/api/v1/traffic-incidents` — register, edit, list with search (reference, location, registration number), report-status and fatal filters, stats, and a single `/:id/workspace` read for the incident screen.
+- Attached records, each audited with its officer: vehicles (registration numbers stored normalised, so `WB-06-BC-2210` and `WB06BC2210` are one vehicle), persons with injury severity (drivers and passengers must belong to a vehicle on the same incident), camera footage windows (whether a window covers the incident time is computed on read), plate reads (matched to an involved vehicle on read), signal phases (whether a phase was in effect at the incident time is computed on read), and timeline facts.
+- Prior challans for the involved vehicles, read from `traffic_challans` on the normalised registration number.
+- **Provenance is structural.** Every timeline fact is `MEASURED`, `OBSERVED` or `ESTIMATED` with its source. An estimate cannot be stored without its method (service check and table constraint); a value range is accepted only as an estimate; units are set by the server from the quantity. The assembled timeline states provenance for every entry — an ANPR read and a controller-log phase are `MEASURED`; a footage review, officer or witness is `OBSERVED` — and the client never infers it. On screen the three differ in shape as well as colour (solid, outlined, dashed with ≈), and an estimated value is shown as a ≈ range with its method, never as a point.
+- **Reports** move DRAFT → SUBMITTED → APPROVED, or back via RETURNED with a reason. Submission freezes a snapshot of the stored facts with its SHA-256. Approval needs SI and above and an officer other than the drafter (service and table constraint). An approved report is final (trigger). If the record changes after submission, the report says so rather than silently changing.
+- Times on attached records must fall within 24 hours of the incident, which catches a date typed into the wrong year.
+- Recording needs ASI and above; reading is open to any officer.
+- Frontend: typed client, one workspace query per incident screen, list and incident pages on live data, full বাংলা strings for these screens. The previous screen's mock incidents, trajectory diagram, AI confidence meter and fake "register and correlate" flow are removed.
+
+**Verified** — an API probe covering rules and negative paths (estimate without method, measured range, inverted range, driver without vehicle, vehicle from another incident, ANPR read without camera, footage window reversed or a year off, approval by the drafter, approval below SI, editing a submitted or approved report, a second open report, drift after approval), and a browser run as ASI, SHO and constable driving every form, with writes confirmed in Postgres and the বাংলা labels checked.
+
+**Found while building** — shared, not fixed here:
+- **The global rate limit stops an officer mid-entry.** The incident screen as first built refetched each panel separately after every write; within a few edits it reached 100 requests a minute and writes began returning 429. Phase 06 now reads one workspace response, but any module with several panels per screen has the same exposure. Belongs with the rate-limit decision under Core records.
+- **Gin binding tags leak validator internals to officers** (`Key: 'X.Latitude' Error:Field validation for 'Latitude' failed on the 'required' tag`). Phase 06 request bodies carry no binding tags and are validated in the service; other modules still use them.
+- `next dev` with Turbopack refuses a `node_modules` symlinked from outside the project root; `--webpack` works (relevant only to parallel worktrees).
+
+**Open**
+- **Camera references are free identifiers.** They join the Phase 03 camera register when both branches land; correlation by radius and time window then becomes a query against that register.
+- **No ANPR data source exists.** Plate reads are officer-entered with their source; an ANPR feed is an integration.
+- Signal phases are officer-entered from controller logs; there is no controller integration.
+- Trajectory reconstruction, speed from footage and automatic detection are the AI layer and are not built.
 
 ---
 
