@@ -95,17 +95,6 @@ func normalizeIndianMobile(s string) string {
 	return d
 }
 
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	v := strings.TrimSpace(*p)
-	if v == "" {
-		return nil
-	}
-	return &v
-}
-
 func hashAccessCode(code string) string {
 	sum := sha256.Sum256([]byte(strings.ToUpper(strings.TrimSpace(code))))
 	return hex.EncodeToString(sum[:])
@@ -547,7 +536,7 @@ func (s *ComplaintService) Track(ctx context.Context, req models.PublicTrackRequ
 		return nil, ErrTrackingMismatch
 	}
 	id, phone, codeHash, anonymous, err := s.repo.TrackingCredentials(ctx, number)
-	if errors.Is(err, repository.ErrComplaintNotFound) {
+	if errors.Is(err, repository.ErrCitizenComplaintNotFound) {
 		return fail(nil)
 	}
 	if err != nil {

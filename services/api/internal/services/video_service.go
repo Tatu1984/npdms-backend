@@ -108,17 +108,6 @@ func validateCoordinates(lat, lng *float64) error {
 	return nil
 }
 
-func trimPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	v := strings.TrimSpace(*p)
-	if v == "" {
-		return nil
-	}
-	return &v
-}
-
 func (s *VideoService) ListCameras(ctx context.Context, f repository.CameraFilter) ([]models.Camera, int64, error) {
 	return s.repo.ListCameras(ctx, f)
 }

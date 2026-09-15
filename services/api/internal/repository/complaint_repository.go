@@ -16,12 +16,11 @@ import (
 )
 
 var (
-	ErrComplaintNotFound  = errors.New("complaint not found")
-	ErrResponseNotFound   = errors.New("response not found")
-	ErrResponseReviewed   = errors.New("this response has already been reviewed")
-	ErrSelfApproval       = errors.New("a response must be approved by an officer other than the one who drafted it")
-	ErrStationNotFound    = errors.New("station not found")
-	ErrComplaintDuplicate = errors.New("duplicate link not allowed")
+	ErrCitizenComplaintNotFound = errors.New("complaint not found")
+	ErrResponseNotFound         = errors.New("response not found")
+	ErrResponseReviewed         = errors.New("this response has already been reviewed")
+	ErrSelfApproval             = errors.New("a response must be approved by an officer other than the one who drafted it")
+	ErrComplaintDuplicate       = errors.New("duplicate link not allowed")
 )
 
 // ComplaintRepository backs the Phase 09 complaint register.
@@ -36,7 +35,7 @@ func NewComplaintRepository(db *pgxpool.Pool) *ComplaintRepository {
 // openStatuses are the statuses a complaint is still being worked in.
 const openStatuses = "('SUBMITTED', 'ACKNOWLEDGED', 'ASSIGNED', 'IN_PROGRESS')"
 
-var complaintSelect = fmt.Sprintf(`
+var citizenComplaintSelect = fmt.Sprintf(`
 	SELECT c.id, c.tracking_number, c.channel, c.source_reference, c.recorded_by, COALESCE(rb.name, ''),
 	       c.category::text, c.priority, c.status::text, c.text_script,
 	       COALESCE(c.is_anonymous, false), c.complainant_name, c.complainant_phone, c.complainant_email, c.complainant_address,
@@ -64,7 +63,7 @@ var complaintSelect = fmt.Sprintf(`
 	LEFT JOIN users db ON db.id = c.duplicate_linked_by
 `, models.ComplaintAcknowledgeWithinHours, openStatuses, models.ComplaintResolveWithinDays)
 
-func scanComplaint(row pgx.Row) (*models.Complaint, error) {
+func scanCitizenComplaint(row pgx.Row) (*models.Complaint, error) {
 	var c models.Complaint
 	var channel, category, status string
 	err := row.Scan(
@@ -270,7 +269,7 @@ func (r *ComplaintRepository) List(ctx context.Context, f ComplaintFilter) ([]mo
 		return nil, 0, err
 	}
 	args = append(args, f.PageSize, (f.Page-1)*f.PageSize)
-	rows, err := r.db.Query(ctx, complaintSelect+" WHERE "+clause+fmt.Sprintf(`
+	rows, err := r.db.Query(ctx, citizenComplaintSelect+" WHERE "+clause+fmt.Sprintf(`
 		ORDER BY (c.status IN %s) DESC,
 		         CASE c.priority WHEN 'URGENT' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END,
 		         COALESCE(c.submitted_at, c.created_at) DESC
@@ -281,7 +280,7 @@ func (r *ComplaintRepository) List(ctx context.Context, f ComplaintFilter) ([]mo
 	defer rows.Close()
 	out := []models.Complaint{}
 	for rows.Next() {
-		c, err := scanComplaint(rows)
+		c, err := scanCitizenComplaint(rows)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -294,22 +293,22 @@ func (r *ComplaintRepository) List(ctx context.Context, f ComplaintFilter) ([]mo
 }
 
 func (r *ComplaintRepository) Get(ctx context.Context, id uuid.UUID) (*models.Complaint, error) {
-	c, err := scanComplaint(r.db.QueryRow(ctx, complaintSelect+" WHERE c.id = $1", id))
+	c, err := scanCitizenComplaint(r.db.QueryRow(ctx, citizenComplaintSelect+" WHERE c.id = $1", id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrComplaintNotFound
+		return nil, ErrCitizenComplaintNotFound
 	}
 	return c, err
 }
 
 // TrackingCredentials returns what a public tracking request is checked
-// against. Unknown tracking numbers return ErrComplaintNotFound.
+// against. Unknown tracking numbers return ErrCitizenComplaintNotFound.
 func (r *ComplaintRepository) TrackingCredentials(ctx context.Context, trackingNumber string) (id uuid.UUID, phone *string, codeHash *string, anonymous bool, err error) {
 	err = r.db.QueryRow(ctx, `
 		SELECT id, phone_normalized, access_code_hash, COALESCE(is_anonymous, false)
 		FROM citizen_complaints WHERE tracking_number = $1
 	`, trackingNumber).Scan(&id, &phone, &codeHash, &anonymous)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrComplaintNotFound
+		err = ErrCitizenComplaintNotFound
 	}
 	return
 }
@@ -323,7 +322,7 @@ func lockForChange(ctx context.Context, tx pgx.Tx, id uuid.UUID) (models.Complai
 		"SELECT status::text, station_id, duplicate_of FROM citizen_complaints WHERE id = $1 FOR UPDATE", id,
 	).Scan(&status, &station, &duplicateOf)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, nil, ErrComplaintNotFound
+		return "", nil, nil, ErrCitizenComplaintNotFound
 	}
 	return models.ComplaintStatus(status), station, duplicateOf, err
 }
@@ -568,7 +567,7 @@ func (r *ComplaintRepository) LinkDuplicate(ctx context.Context, id, original uu
 		var one int
 		err := tx.QueryRow(ctx, "SELECT 1 FROM citizen_complaints WHERE id = $1 FOR UPDATE", x).Scan(&one)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrComplaintNotFound
+			return ErrCitizenComplaintNotFound
 		}
 		if err != nil {
 			return err

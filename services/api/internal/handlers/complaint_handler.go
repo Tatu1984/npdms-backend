@@ -55,7 +55,7 @@ func complaintError(c *gin.Context, op string, err error) {
 		c.JSON(http.StatusForbidden, models.ErrorResponse{Error: "forbidden", Message: err.Error(), Code: 403})
 	case errors.Is(err, services.ErrTrackingMismatch):
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: err.Error(), Code: 404})
-	case errors.Is(err, repository.ErrComplaintNotFound), errors.Is(err, repository.ErrResponseNotFound):
+	case errors.Is(err, repository.ErrCitizenComplaintNotFound), errors.Is(err, repository.ErrResponseNotFound):
 		c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: err.Error(), Code: 404})
 	case errors.Is(err, repository.ErrComplaintClosed), errors.Is(err, repository.ErrResponseReviewed),
 		errors.Is(err, repository.ErrComplaintDuplicate):
