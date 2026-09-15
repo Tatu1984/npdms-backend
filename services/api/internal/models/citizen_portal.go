@@ -35,80 +35,22 @@ const (
 	ComplaintCategoryOther         ComplaintCategory = "OTHER"
 )
 
-// CitizenComplaint for public complaints
-type CitizenComplaint struct {
-	ID                  uuid.UUID         `json:"id" db:"id"`
-	TrackingNumber      string            `json:"trackingNumber" db:"tracking_number"`
-	Category            ComplaintCategory `json:"category" db:"category"`
-	Status              ComplaintStatus   `json:"status" db:"status"`
-
-	// Complainant Info (can be anonymous)
-	IsAnonymous         bool              `json:"isAnonymous" db:"is_anonymous"`
-	ComplainantName     *string           `json:"complainantName" db:"complainant_name"`
-	ComplainantPhone    *string           `json:"complainantPhone" db:"complainant_phone"`
-	ComplainantEmail    *string           `json:"complainantEmail" db:"complainant_email"`
-	ComplainantAddress  *string           `json:"complainantAddress" db:"complainant_address"`
-
-	// Incident Details
-	Subject             string            `json:"subject" db:"subject"`
-	Description         string            `json:"description" db:"description"`
-	IncidentDate        *time.Time        `json:"incidentDate" db:"incident_date"`
-	IncidentLocation    *string           `json:"incidentLocation" db:"incident_location"`
-	Latitude            *float64          `json:"latitude" db:"latitude"`
-	Longitude           *float64          `json:"longitude" db:"longitude"`
-
-	// Attachments
-	Attachments         []string          `json:"attachments" db:"attachments"`
-
-	// Assignment
-	StationID           *uuid.UUID        `json:"stationId" db:"station_id"`
-	StationName         string            `json:"stationName,omitempty"`
-	AssignedTo          *uuid.UUID        `json:"assignedTo" db:"assigned_to"`
-	AssignedToName      string            `json:"assignedToName,omitempty"`
-
-	// Linked Records
-	FIRID               *uuid.UUID        `json:"firId" db:"fir_id"`
-	FIRNumber           string            `json:"firNumber,omitempty"`
-
-	// Response
-	ResponseNotes       *string           `json:"responseNotes" db:"response_notes"`
-	RejectionReason     *string           `json:"rejectionReason" db:"rejection_reason"`
-
-	// OTP Verification
-	OTPVerified         bool              `json:"otpVerified" db:"otp_verified"`
-	VerificationToken   *string           `json:"-" db:"verification_token"`
-
-	// Timestamps
-	SubmittedAt         time.Time         `json:"submittedAt" db:"submitted_at"`
-	AcknowledgedAt      *time.Time        `json:"acknowledgedAt" db:"acknowledged_at"`
-	AssignedAt          *time.Time        `json:"assignedAt" db:"assigned_at"`
-	ResolvedAt          *time.Time        `json:"resolvedAt" db:"resolved_at"`
-	CreatedAt           time.Time         `json:"createdAt" db:"created_at"`
-	UpdatedAt           time.Time         `json:"updatedAt" db:"updated_at"`
-}
-
-// FIRStatusResponse for public FIR tracking (redacted)
+// FIRStatusResponse is the public FIR status view. The db tags are what the
+// query scans into; without them every lookup failed and returned "not found".
 type FIRStatusResponse struct {
-	FIRNumber          string    `json:"firNumber"`
-	StationName        string    `json:"stationName"`
-	RegistrationDate   time.Time `json:"registrationDate"`
-	Status             string    `json:"status"`
-	StatusDescription  string    `json:"statusDescription"`
-	LastUpdated        time.Time `json:"lastUpdated"`
-	NextAction         *string   `json:"nextAction,omitempty"`
-	ExpectedCompletion *string   `json:"expectedCompletion,omitempty"`
+	FIRNumber         string    `json:"firNumber" db:"fir_number"`
+	StationName       string    `json:"stationName" db:"station_name"`
+	RegistrationDate  time.Time `json:"registrationDate" db:"registration_date"`
+	Status            string    `json:"status" db:"status"`
+	StatusDescription string    `json:"statusDescription" db:"-"`
+	LastUpdated       time.Time `json:"lastUpdated" db:"last_updated"`
 }
 
-// ComplaintUpdate for tracking complaint progress
-type ComplaintUpdate struct {
-	ID           uuid.UUID       `json:"id" db:"id"`
-	ComplaintID  uuid.UUID       `json:"complaintId" db:"complaint_id"`
-	Status       ComplaintStatus `json:"status" db:"status"`
-	Message      string          `json:"message" db:"message"`
-	UpdatedBy    *uuid.UUID      `json:"updatedBy" db:"updated_by"`
-	UpdatedByName string         `json:"updatedByName,omitempty"`
-	IsPublic     bool            `json:"isPublic" db:"is_public"`
-	CreatedAt    time.Time       `json:"createdAt" db:"created_at"`
+// PublicFIRStatusRequest carries the FIR number with the complainant's phone
+// in a body, so the phone number is not written to URL access logs.
+type PublicFIRStatusRequest struct {
+	FIRNumber string `json:"firNumber" binding:"required"`
+	Phone     string `json:"phone" binding:"required"`
 }
 
 // Grievance for citizen grievances
