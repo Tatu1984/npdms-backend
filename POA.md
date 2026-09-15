@@ -548,11 +548,31 @@ A court file assembled over an investigation workspace (Phase 01) and the signed
 
 ---
 
-### Phase 13 — Body-Worn Camera Evidence · `PLANNED`
+### Phase 13 — Body-Worn Camera Evidence · `DONE` (functional layer, no AI)
 
-**Functional without AI.** Device register, assignment, battery and storage monitoring, secure upload on docking, hashing, case association, retention classes, access control, chain of custody.
+Body-worn cameras on the Phase 02 evidence register — not a second evidence store.
 
-Transcription, speaker separation and event detection are the AI layer.
+**Delivered**
+- Migration `000062`: `bwc_devices`, `bwc_assignments`, `bwc_readings`, `bwc_recordings`, `bwc_access_log`. 20 routes under `/api/v1/bodycam`.
+- **Device register** with service status (in service, charging, faulty, retired — a reason required for the last two; a camera that is issued can be marked faulty but not retired or put on charge). Numbers `BWC-YYYY-NNNNN` from the atomic counters.
+- **Shift issue and return**, like the armoury ledger: one open assignment per camera and one camera per officer, both enforced by unique partial indexes under a row lock — a simultaneous double issue gives one 201 and one 409. Overdue returns computed on read.
+- **Battery and storage** are readings reported by a dock or an officer with the moment observed, never polled telemetry. A reading older than 12 hours is shown stale; future and week-old readings are refused.
+- **Docking**: a recording is uploaded against the open assignment in the path (the wearing officer, or ASI and above), streamed through the Phase 02 storage abstraction and hashed as it arrives — the client never supplies a digest. Upload against a returned assignment is 409; footage must fall inside the shift; 2 GiB limit. Numbers `BWR-YYYY-NNNNN`.
+- **Retention classes.** The Phase 02 register only accepts items linked to a case or FIR, and most footage never becomes evidence, so docked footage is held here as non-evidential for 31 days. **Linking** (SI and above) to an FIR or case — optionally a dispatch incident — re-hashes the stored bytes, refuses if they no longer match the docking digest, then registers the recording in the Phase 02 register: signed first custody leg, the same file attached (its register digest is required to equal the docking digest), and Phase 02 verification, chain and access log from then on. A concurrent double link gives one 200 and one 409 and exactly one evidence item.
+- **Purge** of footage past non-evidential retention is a DSP action with a reason; it removes the bytes and keeps the record. Evidence is never purged — refused by the service and by table constraints.
+- **Access control.** Listing recordings needs ASI; opening or downloading footage needs a stated purpose (10+ characters), written to an append-only access log before anything is returned; refusals are logged as DENIED. Downloads of evidential footage go through the Phase 02 register, which logs its own access with the purpose. The access log is DSP and above.
+- **Integrity held by the database**: a recording's digest, officer, device and time span cannot be rewritten, an evidential recording cannot return to non-evidential, a purge cannot be undone, recordings are never deleted, and the access log is append-only.
+- Every change audited with its actor. Domain errors map to 400/404/409/413 with officer-readable messages; 500s log the cause.
+- Frontend: `/bodycam` rebuilt on the API — camera register, camera sheet (issue, dock, return, readings, status, ledger), recordings with purpose-gated opening, download with the SHA-256 recomputed on arrival and the result shown persistently, verification, linking through the case/FIR register picker, custody chain with live signature status, access log and purge. Bengali throughout. Mock cameras, the fake transcript, AI tags and the chain-anchor badge removed; the module is marked live and not AI-assisted.
+
+**Verified**: API probe 80/80 — including the double-issue and double-link races, upload against a closed assignment, viewing without a purpose, purge of linked footage refused, a linked recording verifying intact through the register with a valid custody-leg signature, and the database refusing to rewrite a digest or delete the access log. Browser run 20/20 as SHO, ASI, Inspector and DSP with every write confirmed in Postgres. Found through the browser: the download digest header was not exposed by CORS, so every download read as a mismatch — fixed.
+
+**Open**
+- **Playback** needs a media gateway that is not deployed; the honest option is download with a purpose.
+- **No dock or device integration**: readings and uploads are officer actions; there is no vendor dock API.
+- **Custody between docking and linking** is the docking digest, the access log and the audit trail, not a signed custody leg; the signed chain starts at linking, because the register requires a case or FIR.
+- Transcription, speaker separation and event detection are the AI layer and are not built.
+- The login form rejects usernames under three characters (`si`, `hc`) — a shared defect already recorded under Phase 09.
 
 ---
 

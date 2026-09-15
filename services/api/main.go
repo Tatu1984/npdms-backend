@@ -194,6 +194,9 @@ func main() {
 	custodyHandler := handlers.NewCustodyHandler(custodyService)
 	caseFileHandler := handlers.NewCaseFileHandler(services.NewCaseFileService(
 		repository.NewCaseFileRepository(db), custodyService, evidenceStore, auditRepo))
+	// Phase 13: body-worn camera footage goes through the same evidence store and register.
+	bodycamHandler := handlers.NewBodycamHandler(services.NewBodycamService(
+		repository.NewBodycamRepository(db), custodyService, evidenceStore, auditRepo))
 	districtHandler := handlers.NewDistrictHandler(districtService)
 	stateHandler := handlers.NewStateHandler(stateService)
 	nationalHandler := handlers.NewNationalHandler(nationalService)
@@ -829,6 +832,42 @@ func main() {
 				caseFiles.GET("/:id/packs/:packId", caseFileHandler.Pack)
 				caseFiles.POST("/:id/packs/:packId/approve", middleware.RequireRole("INSPECTOR"), caseFileHandler.Approve)
 				caseFiles.POST("/:id/packs/:packId/return", middleware.RequireRole("INSPECTOR"), caseFileHandler.Return)
+			}
+
+			// Phase 13 — Body-Worn Camera Evidence (functional layer, no AI)
+			//
+			// Role floors:
+			//   view camera register, readings, assignment ledger ... any officer
+			//   dock a recording ............. the wearing officer, or ASI (checked in the handler)
+			//   record a reading, issue and return a camera ........ ASI
+			//   list recordings, open or download with a purpose,
+			//   verify, custody chain ............................... ASI
+			//   link a recording to an FIR or case (becomes evidence) SI
+			//   register a camera, change its status ............... SHO
+			//   access log, purge expired non-evidential footage ... DSP
+			bodycam := protected.Group("/bodycam")
+			{
+				bodycam.GET("/devices", bodycamHandler.ListDevices)
+				bodycam.GET("/devices/stats", bodycamHandler.Stats)
+				bodycam.GET("/devices/:id", bodycamHandler.GetDevice)
+				bodycam.POST("/devices", middleware.RequireRole("SHO"), bodycamHandler.RegisterDevice)
+				bodycam.PATCH("/devices/:id/status", middleware.RequireRole("SHO"), bodycamHandler.SetStatus)
+				bodycam.GET("/devices/:id/readings", bodycamHandler.Readings)
+				bodycam.POST("/devices/:id/readings", middleware.RequireRole("ASI"), bodycamHandler.RecordReading)
+				bodycam.GET("/devices/:id/assignments", bodycamHandler.Assignments)
+				bodycam.POST("/devices/:id/assignments", middleware.RequireRole("ASI"), bodycamHandler.Issue)
+				bodycam.POST("/devices/:id/assignments/:assignmentId/return", middleware.RequireRole("ASI"), bodycamHandler.Return)
+				bodycam.POST("/devices/:id/assignments/:assignmentId/recordings", bodycamHandler.Dock)
+
+				bodycam.GET("/recordings", middleware.RequireRole("ASI"), bodycamHandler.Recordings)
+				bodycam.POST("/recordings/purge-expired", middleware.RequireRole("DSP"), bodycamHandler.PurgeExpired)
+				bodycam.POST("/recordings/:id/access", middleware.RequireRole("ASI"), bodycamHandler.Access)
+				bodycam.GET("/recordings/:id/file", middleware.RequireRole("ASI"), bodycamHandler.Download)
+				bodycam.POST("/recordings/:id/verify", middleware.RequireRole("ASI"), bodycamHandler.Verify)
+				bodycam.GET("/recordings/:id/custody", middleware.RequireRole("ASI"), bodycamHandler.Chain)
+				bodycam.POST("/recordings/:id/link", middleware.RequireRole("SI"), bodycamHandler.Link)
+				bodycam.GET("/recordings/:id/access-log", middleware.RequireRole("DSP"), bodycamHandler.AccessLog)
+				bodycam.POST("/recordings/:id/purge", middleware.RequireRole("DSP"), bodycamHandler.Purge)
 			}
 
 			// Phase 02 — Evidence & Chain of Custody
