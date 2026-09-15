@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -164,6 +166,77 @@ func (s *TrafficChallanService) SearchChallans(ctx context.Context, params model
 }
 
 // UpdateChallanStatus updates the status of a challan
+// challanTransitions lists the statuses a challan may move to from each
+// status. PAID, CANCELLED and COMPOUNDED are final.
+var challanTransitions = map[string][]string{
+	"ISSUED":         {"PAID", "COMPOUNDED", "CANCELLED", "COURT_REFERRED", "DEFAULTED"},
+	"PENDING":        {"PAID", "COMPOUNDED", "CANCELLED", "COURT_REFERRED", "DEFAULTED"},
+	"DEFAULTED":      {"PAID", "COMPOUNDED", "COURT_REFERRED"},
+	"DISPUTED":       {"ISSUED", "CANCELLED", "COURT_REFERRED"},
+	"COURT_REFERRED": {"PAID", "COMPOUNDED", "CANCELLED"},
+}
+
+// ErrChallanTransition marks a status change the challan's current status does not allow.
+var ErrChallanTransition = errors.New("status change not allowed")
+
+// ChangeChallanStatus applies one officer action. Payment and compounding need
+// the receipt or order reference; cancelling, referring to court, marking a
+// default and rejecting a dispute need a reason. The action is audited with
+// the officer and the reason.
+func (s *TrafficChallanService) ChangeChallanStatus(ctx context.Context, id uuid.UUID, to string, reference, note *string, actor uuid.UUID) (*models.TrafficChallan, error) {
+	challan, err := s.challanRepo.GetChallanByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if challan == nil {
+		return nil, errors.New("challan not found")
+	}
+	allowed := false
+	for _, next := range challanTransitions[challan.Status] {
+		if next == to {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return nil, fmt.Errorf("%w: a %s challan cannot be marked %s", ErrChallanTransition, challan.Status, to)
+	}
+	blank := func(p *string) bool { return p == nil || strings.TrimSpace(*p) == "" }
+	if (to == "PAID" || to == "COMPOUNDED") && blank(reference) {
+		return nil, fmt.Errorf("%w: record the receipt or compounding order reference", ErrChallanTransition)
+	}
+	if to != "PAID" && to != "COMPOUNDED" && blank(note) {
+		return nil, fmt.Errorf("%w: record the reason for this change", ErrChallanTransition)
+	}
+	ok, err := s.challanRepo.TransitionChallanStatus(ctx, id, challan.Status, to, reference)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: the challan changed while you were working on it; reload and try again", ErrChallanTransition)
+	}
+	desc := fmt.Sprintf("%s: %s → %s", challan.ChallanNumber, challan.Status, to)
+	if !blank(reference) {
+		desc += " (reference " + strings.TrimSpace(*reference) + ")"
+	}
+	if !blank(note) {
+		desc += ": " + strings.TrimSpace(*note)
+	}
+	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
+		Action:       "challan_status_updated",
+		ResourceType: "traffic_challan",
+		ResourceID:   &id,
+		Description:  &desc,
+		Success:      true,
+	})
+	return s.challanRepo.GetChallanByID(ctx, id)
+}
+
+// OfficerIdentity returns the name and badge an issuing officer is recorded under.
+func (s *TrafficChallanService) OfficerIdentity(ctx context.Context, userID uuid.UUID) (string, string) {
+	return s.challanRepo.OfficerIdentity(ctx, userID)
+}
+
 func (s *TrafficChallanService) UpdateChallanStatus(ctx context.Context, id uuid.UUID, status string) (*models.TrafficChallan, error) {
 	err := s.challanRepo.UpdateChallanStatus(ctx, id, status)
 	if err != nil {
@@ -283,7 +356,7 @@ func (s *TrafficChallanService) GetChallansByVehicle(ctx context.Context, vehicl
 }
 
 // FileChallanDispute files a dispute for a challan
-func (s *TrafficChallanService) FileChallanDispute(ctx context.Context, id uuid.UUID, reason string) (*models.TrafficChallan, error) {
+func (s *TrafficChallanService) FileChallanDispute(ctx context.Context, id uuid.UUID, reason string, actor uuid.UUID) (*models.TrafficChallan, error) {
 	challan, err := s.challanRepo.GetChallanByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -291,17 +364,25 @@ func (s *TrafficChallanService) FileChallanDispute(ctx context.Context, id uuid.
 	if challan == nil {
 		return nil, errors.New("challan not found")
 	}
-
-	if challan.Status == string(models.ChallanStatusPaid) {
-		return nil, errors.New("cannot dispute paid challan")
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, fmt.Errorf("%w: record the grounds of the dispute", ErrChallanTransition)
 	}
-
-	err = s.challanRepo.UpdateChallanStatus(ctx, id, string(models.ChallanStatusDisputed))
+	switch challan.Status {
+	case "ISSUED", "PENDING", "DEFAULTED":
+	default:
+		return nil, fmt.Errorf("%w: a %s challan cannot be disputed", ErrChallanTransition, challan.Status)
+	}
+	ok, err := s.challanRepo.RecordDispute(ctx, id, challan.Status, reason)
 	if err != nil {
 		return nil, err
 	}
+	if !ok {
+		return nil, fmt.Errorf("%w: the challan changed while you were working on it; reload and try again", ErrChallanTransition)
+	}
 
 	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
 		Action:       "challan_disputed",
 		ResourceType: "traffic_challan",
 		ResourceID:   &id,

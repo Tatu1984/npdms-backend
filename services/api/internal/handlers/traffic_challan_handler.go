@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"strconv"
 	"time"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/services"
 
@@ -152,11 +156,27 @@ func (h *TrafficChallanHandler) GetByNumber(c *gin.Context) {
 func (h *TrafficChallanHandler) Create(c *gin.Context) {
 	var req models.CreateChallanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("challan request rejected: %v", err)
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:   "invalid_input",
-			Message: err.Error(),
+			Message: "Violation, date, location, vehicle number and vehicle type are required",
 			Code:    400,
 		})
+		return
+	}
+	req.VehicleNumber = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(req.VehicleNumber), " ", ""))
+	switch req.VehicleType {
+	case "TWO_WHEELER", "THREE_WHEELER", "FOUR_WHEELER", "COMMERCIAL", "HEAVY_VEHICLE", "TRANSPORT", "OTHER":
+	default:
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid_input", Message: "Unknown vehicle type", Code: 400})
+		return
+	}
+	if strings.TrimSpace(req.ViolationLocation) == "" || req.VehicleNumber == "" {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid_input", Message: "Location and vehicle number are required", Code: 400})
+		return
+	}
+	if req.ViolationDate.After(time.Now().Add(5 * time.Minute)) {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{Error: "invalid_input", Message: "The violation date cannot be in the future", Code: 400})
 		return
 	}
 
@@ -190,12 +210,18 @@ func (h *TrafficChallanHandler) Create(c *gin.Context) {
 	if badgeNumber != nil {
 		badge, _ = badgeNumber.(string)
 	}
+	// The auth middleware does not carry the officer's name or badge; read
+	// them so the challan names who issued it.
+	if officerName == "" || badge == "" {
+		officerName, badge = h.challanService.OfficerIdentity(c.Request.Context(), officerID)
+	}
 
 	challan, err := h.challanService.CreateChallan(c.Request.Context(), req, officerID, stID, officerName, badge)
 	if err != nil {
+		log.Printf("challan create failed: %v", err)
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
-			Message: "Failed to create challan: " + err.Error(),
+			Message: "Failed to create challan",
 			Code:    500,
 		})
 		return
@@ -217,20 +243,26 @@ func (h *TrafficChallanHandler) UpdateStatus(c *gin.Context) {
 	}
 
 	var req struct {
-		Status string `json:"status" binding:"required"`
+		Status    string  `json:"status"`
+		Reference *string `json:"reference"`
+		Note      *string `json:"note"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Status) == "" {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:   "invalid_input",
-			Message: err.Error(),
+			Message: "Choose the new status for this challan",
 			Code:    400,
 		})
 		return
 	}
 
-	challan, err := h.challanService.UpdateChallanStatus(c.Request.Context(), id, req.Status)
+	challan, err := h.challanService.ChangeChallanStatus(c.Request.Context(), id, req.Status, req.Reference, req.Note, middleware.GetUserID(c))
 	if err != nil {
+		if errors.Is(err, services.ErrChallanTransition) {
+			c.JSON(http.StatusConflict, models.ErrorResponse{Error: "conflict", Message: err.Error(), Code: 409})
+			return
+		}
 		if err.Error() == "challan not found" {
 			c.JSON(http.StatusNotFound, models.ErrorResponse{
 				Error:   "not_found",
@@ -408,25 +440,28 @@ func (h *TrafficChallanHandler) FileDispute(c *gin.Context) {
 	}
 
 	var req struct {
-		Reason string `json:"reason" binding:"required"`
+		Reason string `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:   "invalid_input",
-			Message: err.Error(),
+			Message: "Record the grounds of the dispute",
 			Code:    400,
 		})
 		return
 	}
 
-	challan, err := h.challanService.FileChallanDispute(c.Request.Context(), id, req.Reason)
+	challan, err := h.challanService.FileChallanDispute(c.Request.Context(), id, req.Reason, middleware.GetUserID(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:   "server_error",
-			Message: "Failed to file dispute: " + err.Error(),
-			Code:    500,
-		})
+		switch {
+		case errors.Is(err, services.ErrChallanTransition):
+			c.JSON(http.StatusConflict, models.ErrorResponse{Error: "conflict", Message: err.Error(), Code: 409})
+		case err.Error() == "challan not found":
+			c.JSON(http.StatusNotFound, models.ErrorResponse{Error: "not_found", Message: "Challan not found", Code: 404})
+		default:
+			c.JSON(http.StatusInternalServerError, models.ErrorResponse{Error: "server_error", Message: "Failed to file dispute", Code: 500})
+		}
 		return
 	}
 

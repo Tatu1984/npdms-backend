@@ -156,6 +156,8 @@ func main() {
 	videoHandler := handlers.NewVideoHandler(services.NewVideoService(repository.NewVideoRepository(db), auditRepo, cctvCredentialKey))
 	knowledgeHandler := handlers.NewKnowledgeHandler(services.NewKnowledgeService(repository.NewKnowledgeRepository(db), evidenceStore, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
+	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditQueryRepository(db))
+	searchHandler := handlers.NewRecordSearchHandler(repository.NewSearchRepository(db), auditRepo)
 	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
 	// Phase 06 — traffic incidents and accident reconstruction
 	trafficIncidentHandler := handlers.NewTrafficIncidentHandler(
@@ -420,14 +422,17 @@ func main() {
 				handlers.GetDashboardStats(c)
 			})
 
+			// Global record search and the station reference list (any officer).
+			protected.GET("/search", searchHandler.Search)
+			protected.GET("/stations", searchHandler.Stations)
+
 			// Audit logs (DSP+ only)
 			audit := protected.Group("/audit")
 			audit.Use(middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"))
 			{
-				audit.GET("/logs", func(c *gin.Context) {
-					c.Set("db", db)
-					handlers.GetAuditLogs(c)
-				})
+				audit.GET("/logs", auditLogHandler.List)
+				audit.GET("/stats", auditLogHandler.Stats)
+				audit.GET("/verify", auditLogHandler.Verify)
 			}
 
 			// Phase 05 — Cybercrime & Financial Fraud (functional without AI)
