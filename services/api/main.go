@@ -145,6 +145,13 @@ func main() {
 	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo)
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
 	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
+	// Phase 03: stream credentials are encrypted with their own key where one
+	// is provided; otherwise the JWT secret is the key material.
+	cctvCredentialKey := os.Getenv("CCTV_CREDENTIAL_KEY")
+	if cctvCredentialKey == "" {
+		cctvCredentialKey = cfg.JWTSecret
+	}
+	videoHandler := handlers.NewVideoHandler(services.NewVideoService(repository.NewVideoRepository(db), auditRepo, cctvCredentialKey))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
@@ -548,6 +555,41 @@ func main() {
 				armoury.PATCH("/weapons/:id/state", middleware.RequireRole("SHO"), armouryHandler.SetState)
 				armoury.POST("/weapons/:id/issue", middleware.RequireRole("ASI"), armouryHandler.Issue)
 				armoury.POST("/weapons/:id/return", middleware.RequireRole("ASI"), armouryHandler.Return)
+			}
+
+			// Phase 03 — CCTV & Video Intelligence (functional layer, no AI)
+			//
+			// Role floors:
+			//   view camera register, stats, health history ... any officer
+			//   raise an event from footage .................. any officer
+			//   run a reachability check ..................... ASI
+			//   search or open events (purpose required) ..... ASI
+			//   confirm / dismiss, link to FIR or case ........ SI (never the raiser)
+			//   register or edit cameras, stream credentials .. SHO
+			//   change event retention or masking ............ SHO
+			//   decommission cameras, purge expired events,
+			//   read the purpose log ......................... DSP
+			video := protected.Group("/video")
+			{
+				video.GET("/cameras", videoHandler.ListCameras)
+				video.GET("/cameras/stats", videoHandler.CameraStats)
+				video.GET("/cameras/:id", videoHandler.GetCamera)
+				video.GET("/cameras/:id/health-checks", videoHandler.HealthChecks)
+				video.POST("/cameras", middleware.RequireRole("SHO"), videoHandler.RegisterCamera)
+				video.PUT("/cameras/:id", middleware.RequireRole("SHO"), videoHandler.UpdateCamera)
+				video.POST("/cameras/:id/decommission", middleware.RequireRole("DSP"), videoHandler.Decommission)
+				video.POST("/cameras/:id/health-check", middleware.RequireRole("ASI"), videoHandler.CheckHealth)
+
+				video.POST("/events", videoHandler.RaiseEvent)
+				video.GET("/events/stats", videoHandler.EventStats)
+				video.POST("/events/search", middleware.RequireRole("ASI"), videoHandler.SearchEvents)
+				video.POST("/events/purge-expired", middleware.RequireRole("DSP"), videoHandler.PurgeExpired)
+				video.POST("/events/:id/access", middleware.RequireRole("ASI"), videoHandler.AccessEvent)
+				video.POST("/events/:id/triage", middleware.RequireRole("SI"), videoHandler.Triage)
+				video.POST("/events/:id/link", middleware.RequireRole("SI"), videoHandler.Link)
+				video.POST("/events/:id/retention", middleware.RequireRole("SHO"), videoHandler.SetRetention)
+
+				video.GET("/access-log", middleware.RequireRole("DSP"), videoHandler.AccessLog)
 			}
 
 			// Lookout notices and sightings
