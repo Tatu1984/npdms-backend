@@ -156,7 +156,21 @@ func main() {
 	if cctvCredentialKey == "" {
 		cctvCredentialKey = cfg.JWTSecret
 	}
-	videoHandler := handlers.NewVideoHandler(services.NewVideoService(repository.NewVideoRepository(db), auditRepo, cctvCredentialKey))
+	// Live CCTV streaming through the Edge Agent. Live video has its own store
+	// (MEDIA_BACKEND: r2 in production, fs locally) so evidence stays on its
+	// backend; the database backend is refused for it. A store that cannot be
+	// opened does not stop the API: ingest answers 503 with the reason.
+	videoRepo := repository.NewVideoRepository(db)
+	mediaCfg := storage.MediaConfigFromEnv()
+	mediaStore, mediaErr := storage.OpenMedia(mediaCfg)
+	if mediaErr != nil {
+		log.Printf("Live video storage unavailable: %v", mediaErr)
+	} else {
+		log.Printf("Live video storage: %s", mediaStore.Backend())
+	}
+	liveVideoService := services.NewLiveVideoService(videoRepo, auditRepo, mediaStore, mediaErr, mediaCfg.Backend)
+	liveVideoHandler := handlers.NewLiveVideoHandler(liveVideoService, cfg.JWTSecret)
+	videoHandler := handlers.NewVideoHandler(services.NewVideoService(videoRepo, auditRepo, cctvCredentialKey), liveVideoService)
 	knowledgeHandler := handlers.NewKnowledgeHandler(services.NewKnowledgeService(repository.NewKnowledgeRepository(db), evidenceStore, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditQueryRepository(db))
@@ -274,6 +288,21 @@ func main() {
 	// The API contract, served by the build it describes.
 	openAPIHandler := handlers.NewOpenAPIHandler()
 	router.GET("/openapi.yaml", openAPIHandler.Serve)
+
+	// Live CCTV — Edge Agent ingest and playback. Mounted at exactly
+	// /api/edge/ingest/<ingestKey>/<file>, outside /api/v1, because that is the
+	// path the Edge Agent publishes to; excluded from the global rate limiter.
+	//   PUT, POST, DELETE ... the camera's Edge Agent (Bearer ingest token)
+	//   GET ................. an officer (ASI+, SHO+ for a masking-flagged camera)
+	//                         inside a purpose-logged live viewing session, or the
+	//                         camera's own Edge Agent
+	ingest := router.Group("/api/edge/ingest")
+	{
+		ingest.PUT("/:ingestKey/*file", liveVideoHandler.Ingest)
+		ingest.POST("/:ingestKey/*file", liveVideoHandler.Ingest)
+		ingest.DELETE("/:ingestKey/*file", liveVideoHandler.IngestDelete)
+		ingest.GET("/:ingestKey/*file", liveVideoHandler.Playback)
+	}
 
 	// Health check
 	router.GET("/health", healthHandler.Health)
@@ -710,6 +739,20 @@ func main() {
 				video.POST("/events/:id/retention", middleware.RequireRole("SHO"), videoHandler.SetRetention)
 
 				video.GET("/access-log", middleware.RequireRole("DSP"), videoHandler.AccessLog)
+
+				// Live streaming through the Edge Agent.
+				//   list live cameras and storage status ......... any officer
+				//   enable, rotate the token, turn off ............ SHO
+				//   start live viewing (purpose recorded once) .... ASI
+				//     (a camera flagged for masking: SHO — masking is not applied to live video)
+				//   end one's own viewing session ................. the viewer
+				video.GET("/live/cameras", liveVideoHandler.LiveCameras)
+				video.GET("/live/media-status", liveVideoHandler.MediaStatus)
+				video.POST("/live/sessions", middleware.RequireRole("ASI"), liveVideoHandler.StartViewing)
+				video.POST("/live/sessions/:id/end", liveVideoHandler.EndViewing)
+				video.POST("/cameras/:id/streaming/enable", middleware.RequireRole("SHO"), liveVideoHandler.EnableStreaming)
+				video.POST("/cameras/:id/streaming/rotate-token", middleware.RequireRole("SHO"), liveVideoHandler.RotateToken)
+				video.POST("/cameras/:id/streaming/disable", middleware.RequireRole("SHO"), liveVideoHandler.DisableStreaming)
 			}
 
 			// AI layer A4 — Vehicle detection and ANPR (AI-assisted)

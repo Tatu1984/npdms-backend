@@ -17,10 +17,13 @@ import (
 // operator-raised events and their purpose-logged access.
 type VideoHandler struct {
 	service *services.VideoService
+	// live adds streaming state to camera responses and issues Edge Agent
+	// settings on registration.
+	live *services.LiveVideoService
 }
 
-func NewVideoHandler(service *services.VideoService) *VideoHandler {
-	return &VideoHandler{service: service}
+func NewVideoHandler(service *services.VideoService, live *services.LiveVideoService) *VideoHandler {
+	return &VideoHandler{service: service, live: live}
 }
 
 func videoError(c *gin.Context, op string, err error) {
@@ -72,6 +75,7 @@ func (h *VideoHandler) ListCameras(c *gin.Context) {
 		videoError(c, "list cameras", err)
 		return
 	}
+	h.live.Decorate(c.Request.Context(), cams, publicBaseURL(c))
 	paginated(c, cams, total, page, size)
 }
 
@@ -94,7 +98,9 @@ func (h *VideoHandler) GetCamera(c *gin.Context) {
 		videoError(c, "load camera", err)
 		return
 	}
-	c.JSON(http.StatusOK, cam)
+	one := []models.Camera{*cam}
+	h.live.Decorate(c.Request.Context(), one, publicBaseURL(c))
+	c.JSON(http.StatusOK, one[0])
 }
 
 func (h *VideoHandler) RegisterCamera(c *gin.Context) {
@@ -108,7 +114,25 @@ func (h *VideoHandler) RegisterCamera(c *gin.Context) {
 		videoError(c, "register camera", err)
 		return
 	}
-	c.JSON(http.StatusCreated, cam)
+	out := models.CameraWithEdgeAgent{Camera: cam}
+	if req.EnableStreaming {
+		// The camera is registered either way; if issuing the Edge Agent settings
+		// fails the officer is told and can enable streaming from the camera.
+		base := publicBaseURL(c)
+		cfg, err := h.live.EnableStreaming(c.Request.Context(), cam.ID, actorID(c), base)
+		if err != nil {
+			liveError(c, "enable live streaming for the registered camera", err)
+			return
+		}
+		out.EdgeAgent = cfg
+		if refreshed, err := h.service.GetCamera(c.Request.Context(), cam.ID); err == nil {
+			out.Camera = refreshed
+		}
+		one := []models.Camera{*out.Camera}
+		h.live.Decorate(c.Request.Context(), one, base)
+		out.Camera = &one[0]
+	}
+	c.JSON(http.StatusCreated, out)
 }
 
 func (h *VideoHandler) UpdateCamera(c *gin.Context) {
@@ -144,6 +168,8 @@ func (h *VideoHandler) Decommission(c *gin.Context) {
 		videoError(c, "decommission camera", err)
 		return
 	}
+	// Decommissioning revoked the ingest token; end viewing and purge the feed.
+	h.live.AfterDecommission(c.Request.Context(), cam)
 	c.JSON(http.StatusOK, cam)
 }
 

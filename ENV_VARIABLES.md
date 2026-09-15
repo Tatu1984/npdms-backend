@@ -119,6 +119,16 @@ R2_SECRET_ACCESS_KEY=<your-r2-secret-key>
 R2_BUCKET=npdms-evidence
 R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 
+# Live CCTV video (Edge Agent ingest) — separate from evidence storage.
+# See docs/CONNECT-A-CAMERA.md. fs is refused on Vercel; database is refused for live video.
+MEDIA_BACKEND=r2
+R2_ACCOUNT_ID=<your-account-id>
+R2_ACCESS_KEY_ID=<your-r2-access-key>
+R2_SECRET_ACCESS_KEY=<your-r2-secret-key>
+R2_BUCKET=npdms-live
+R2_PREFIX=hls                          # optional
+PUBLIC_API_URL=https://<api-host>      # shown to operators as the Ingest URL
+
 # Option C: Vercel Blob (Easiest for Vercel)
 BLOB_READ_WRITE_TOKEN=<your-vercel-blob-token>
 ```

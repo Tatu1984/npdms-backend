@@ -55,7 +55,8 @@ const cameraSelect = `
 	       (SELECT COUNT(*) FROM video_events e
 	         WHERE e.camera_id = c.id AND e.status = 'RAISED'
 	           AND (e.retain_until IS NULL OR e.retain_until > NOW())),
-	       c.created_at, c.updated_at
+	       c.created_at, c.updated_at,
+	       c.ingest_enabled, c.ingest_key, c.ingest_enabled_at, c.ingest_token_rotated_at, c.last_segment_at
 	FROM cameras c
 	LEFT JOIN stations s ON s.id = c.station_id
 `
@@ -70,10 +71,14 @@ func scanCamera(row pgx.Row) (*models.Camera, error) {
 		&c.Status, &c.DecommissionNote,
 		&c.Health, &c.LastCheckedAt, &c.LastSeenAt, &c.OpenEvents,
 		&c.CreatedAt, &c.UpdatedAt,
+		&c.StreamingEnabled, &c.IngestKey, &c.StreamingEnabledAt, &c.TokenRotatedAt, &c.LastSegmentAt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	// Liveness is judged by the live video service when it reads the playlist;
+	// until then nothing is claimed.
+	c.LiveStatus = models.LiveOffline
 	return &c, nil
 }
 
@@ -212,7 +217,9 @@ func (r *VideoRepository) UpdateCamera(ctx context.Context, id uuid.UUID, req mo
 
 func (r *VideoRepository) Decommission(ctx context.Context, id uuid.UUID, note string) error {
 	tag, err := r.db.Exec(ctx, `
-		UPDATE cameras SET status = 'DECOMMISSIONED', decommission_note = $2, updated_at = NOW()
+		UPDATE cameras SET status = 'DECOMMISSIONED', decommission_note = $2, updated_at = NOW(),
+		       -- A decommissioned camera stops accepting uploads: its token is revoked.
+		       ingest_enabled = FALSE, ingest_token_hash = NULL
 		WHERE id = $1 AND status = 'ACTIVE'
 	`, id, note)
 	if err != nil {
@@ -298,10 +305,11 @@ func (r *VideoRepository) CameraStats(ctx context.Context) (*models.CameraStats,
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NOT NULL AND NOT last_check_ok),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NULL),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type = 'NONE'),
+			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND ingest_enabled),
 			(SELECT COUNT(*) FROM video_events WHERE status = 'RAISED' AND (retain_until IS NULL OR retain_until > NOW())),
 			(SELECT COUNT(*) FROM video_events WHERE retain_until <= NOW())
 		FROM cameras
-	`).Scan(&s.Total, &s.Active, &s.Decommissioned, &s.Reachable, &s.Unreachable, &s.Unchecked, &s.NoStream,
+	`).Scan(&s.Total, &s.Active, &s.Decommissioned, &s.Reachable, &s.Unreachable, &s.Unchecked, &s.NoStream, &s.Streaming,
 		&s.EventsRaised, &s.EventsExpired)
 	if err != nil {
 		return nil, err
@@ -611,7 +619,7 @@ func (r *VideoRepository) AccessLog(ctx context.Context, f VideoAccessFilter) ([
 	rows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT l.id, l.actor_user_id, COALESCE(u.name, ''), COALESCE(u.badge_number, ''), l.access_type, l.purpose,
 		       l.filters, l.event_id, COALESCE(e.event_number, ''), l.result_count, COALESCE(host(l.ip_address), ''),
-		       l.accessed_at
+		       l.accessed_at, COALESCE(l.camera_ids::text[], '{}')
 		FROM video_access_log l
 		LEFT JOIN users u ON u.id = l.actor_user_id
 		LEFT JOIN video_events e ON e.id = l.event_id
@@ -626,9 +634,16 @@ func (r *VideoRepository) AccessLog(ctx context.Context, f VideoAccessFilter) ([
 	for rows.Next() {
 		var a models.VideoAccessEntry
 		var filters []byte
+		var cameraIDs []string
 		if err := rows.Scan(&a.ID, &a.ActorID, &a.ActorName, &a.ActorBadge, &a.AccessType, &a.Purpose,
-			&filters, &a.EventID, &a.EventNumber, &a.ResultCount, &a.IPAddress, &a.AccessedAt); err != nil {
+			&filters, &a.EventID, &a.EventNumber, &a.ResultCount, &a.IPAddress, &a.AccessedAt, &cameraIDs); err != nil {
 			return nil, 0, err
+		}
+		a.CameraIDs = []uuid.UUID{}
+		for _, v := range cameraIDs {
+			if id, err := uuid.Parse(v); err == nil {
+				a.CameraIDs = append(a.CameraIDs, id)
+			}
 		}
 		a.Filters = map[string]interface{}{}
 		if len(filters) > 0 {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,8 @@ type RateLimiterConfig struct {
 	RedisClient *redis.Client
 	// Key prefix for Redis
 	KeyPrefix string
+	// SkipPathPrefixes exempts requests whose path starts with any of these.
+	SkipPathPrefixes []string
 }
 
 // RateLimiter creates a rate limiting middleware
@@ -30,6 +33,13 @@ func RateLimiter(config RateLimiterConfig) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
+		for _, prefix := range config.SkipPathPrefixes {
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				c.Next()
+				return
+			}
+		}
+
 		// Get client identifier (IP or user ID)
 		clientID := getClientIdentifier(c)
 		key := fmt.Sprintf("%s:%s", config.KeyPrefix, clientID)
@@ -133,13 +143,24 @@ func checkRateLimit(
 	return allowed, remaining, resetTime, nil
 }
 
-// GlobalRateLimiter applies global rate limit (100 req/min per IP)
+// LiveVideoPathPrefix is the Edge Agent ingest and playback plane.
+const LiveVideoPathPrefix = "/api/edge/ingest/"
+
+// GlobalRateLimiter applies global rate limit (100 req/min per IP).
+//
+// Live video is exempt. One camera PUTs a segment and rewrites its playlist
+// about every two seconds (~60 requests a minute), and a browser fetches a
+// segment about every two seconds per open tile (plus a CORS preflight each);
+// a site with a few cameras or an officer watching a wall behind one IP would
+// exhaust the budget and get 429s on the video itself. Those routes are
+// authenticated per camera token and per purpose-logged viewing session.
 func GlobalRateLimiter(redisClient *redis.Client) gin.HandlerFunc {
 	return RateLimiter(RateLimiterConfig{
-		Limit:       100,
-		Window:      time.Minute,
-		RedisClient: redisClient,
-		KeyPrefix:   "global",
+		Limit:            100,
+		Window:           time.Minute,
+		RedisClient:      redisClient,
+		KeyPrefix:        "global",
+		SkipPathPrefixes: []string{LiveVideoPathPrefix},
 	})
 }
 
