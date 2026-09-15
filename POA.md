@@ -300,11 +300,33 @@ Local operational workflow for missing persons, functional without AI. National 
 
 ---
 
-### Phase 05 — Cybercrime & Financial Fraud · `PLANNED`
+### Phase 05 — Cybercrime & Financial Fraud · `DONE`
 
-**Functional without AI.** Complaint intake, manual entity extraction, fraud network graph, transaction trail, victim clustering, freeze requests, loss dashboard.
+Functional without AI: complaint intake, officer-recorded entities, fraud network, money trail, linked-complaint clusters, freeze requests, recoveries and a loss dashboard — on real data through the API, with an audit trail, driven through the UI in a browser.
 
-`cyber_crimes`, `financial_trails`, `graph_nodes`, `graph_edges`, `osint_reports` exist. Automatic entity extraction and mule-account scoring are the AI layer; the graph and the money trail are not.
+**Delivered**
+- Migration `000044`. Complaints stay in `cyber_crimes`, gaining the NCRP acknowledgement number, the 1930 helpline reference, `reported_loss_paise`, station and registering officer. The float `financial_loss` column was carried across as paise and removed — **every amount is integer paise**. Complaint numbers moved off `COUNT+1` onto the atomic counters (`000033`).
+- New tables: `fraud_entities` (a shared register, one row per normalised phone, UPI ID, bank account + IFSC, wallet, URL or email), `complaint_entities` (which complaint names which entity, in which role), `fraud_transactions`, `freeze_requests`, `fraud_recoveries`. 19 routes under `/api/v1/cyber-crime`, replacing the previous handlers.
+- **Entities are recorded by the officer and validated, never extracted.** `internal/fraud` normalises each type — `+91 98300 12345`, `09830012345` and `9830012345` are one phone; UPI IDs and emails are lower-cased; accounts need a valid IFSC — so "two complaints share this UPI ID" is a stored fact. Covered by unit tests.
+- **Links are stored references; nothing is inferred.** A complaint's network is the complaint, the entities it names, other complaints naming those entities, and transfers recorded between them. Clusters follow a rule stated on screen: complaints sharing a recorded entity in any role other than the victim's own, transitively. A victim's own account connects nothing.
+- **Freeze lifecycle** drafted → sent → acknowledged → frozen or rejected. Recording "sent" is an officer's action with the channel named; the platform does not transmit to a bank and the screen says so. Each stage's columns are required exactly when the stage is, by table constraint.
+- **Money rules**, in the service and the schema: a freeze cannot exceed the reported loss; the amount frozen cannot exceed the amount requested; recoveries cannot exceed the loss (the complaint row is locked while checking); the loss cannot be lowered below an open freeze or what has been recovered; transfers only between UPI IDs, accounts and wallets recorded on the complaint; an entity a transfer or freeze depends on cannot be unlinked.
+- Loss dashboard (reported, frozen, recovered, freeze requests by stage, complaints linked to another) computed in SQL.
+- Frontend: `lib/api/cyber-fraud.ts`, `hooks/use-cyber-fraud.ts`, `/cyber-intelligence` and `/cyber-intelligence/[id]`, bilingual (`fraud.*` in both dictionaries). The legacy `/cyber-crime` screens redirect. Removed the mock complaints, the "mule account" table with velocity scores and AI badges, the fabricated extraction panel and a "Send request" button that only navigated away.
+
+**Found and fixed in existing code**
+- `GET /cyber-crime` returned 500 on any row — sqlx scanned `c.*` plus joined columns into a struct that could not hold them. The create succeeded, so complaints could be registered and never listed.
+- The digital-evidence and OSINT endpoints on complaints were an unsigned evidence store beside the Phase 02 custody register and were used by no screen; removed. Complaint evidence belongs in `/custody`.
+- The module description advertised "mule account detection", which is the AI layer and not built.
+
+**Verified** — 72 API checks including every rule and illegal lifecycle step; table constraints exercised directly with illegal writes; a browser run as an officer: invalid phone and IFSC refused with the reason shown, three entities, two transfers, a freeze refused above the loss then taken through every stage to ₹64,000 frozen, a ₹21,000 recovery, a second complaint sharing the UPI ID appearing in the network and cluster (and the victim's own account not linking), Bengali tabs, a constable shown no write controls, every write confirmed in Postgres with an audited actor.
+
+**Open**
+- Backward freeze transitions (e.g. frozen → sent) are prevented by the stage-guarded update, not by a table constraint — stage order is not expressible as a row check.
+- `financial_trails`, `graph_nodes`, `graph_edges` and `osint_reports` remain in the schema, unused by Phase 05; the generic `/graph` routes still carry model-style `risk_score` and `confidence` columns. Retire or repurpose with the AI layer.
+- Legacy free-text columns on `cyber_crimes` (`suspect_*`, `bank_account_involved`, `crypto_wallet_address`, `transaction_ids`) are superseded by the entity register and no longer written.
+- Clustering loads every connecting link into memory; fine at station scale, to be moved into a recursive query before state-wide volumes.
+- Mule-account scoring and automatic extraction from complaint text are the AI layer and deliberately absent.
 
 ---
 
