@@ -143,6 +143,7 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo)
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
+	knowledgeHandler := handlers.NewKnowledgeHandler(services.NewKnowledgeService(repository.NewKnowledgeRepository(db), evidenceStore, auditRepo))
 	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	firHandler := handlers.NewFIRHandler(firService)
@@ -546,6 +547,30 @@ func main() {
 				armoury.PATCH("/weapons/:id/state", middleware.RequireRole("SHO"), armouryHandler.SetState)
 				armoury.POST("/weapons/:id/issue", middleware.RequireRole("ASI"), armouryHandler.Issue)
 				armoury.POST("/weapons/:id/return", middleware.RequireRole("ASI"), armouryHandler.Return)
+			}
+
+			// Phase 11 — Police Knowledge Assistant (functional, no AI)
+			// Reading is open to every officer, bounded by classification in SQL.
+			// Filing and superseding: SI and above. Checklists: SI and above create,
+			// ASI and above follow and tick. Classification and withdrawal: SP and above.
+			knowledge := protected.Group("/knowledge")
+			{
+				knowledge.GET("/capabilities", knowledgeHandler.Capabilities)
+				knowledge.GET("/documents", knowledgeHandler.Search)
+				knowledge.GET("/documents/stats", knowledgeHandler.Stats)
+				knowledge.GET("/documents/:id", knowledgeHandler.Get)
+				knowledge.GET("/documents/:id/file", knowledgeHandler.Download)
+				knowledge.POST("/documents", middleware.RequireRole("SI"), knowledgeHandler.Upload)
+				knowledge.POST("/documents/:id/supersede", middleware.RequireRole("SI"), knowledgeHandler.Supersede)
+				knowledge.POST("/documents/:id/withdraw", middleware.RequireRole("SP"), knowledgeHandler.Withdraw)
+				knowledge.PATCH("/documents/:id/classification", middleware.RequireRole("SP"), knowledgeHandler.SetClassification)
+				knowledge.GET("/checklists", knowledgeHandler.Checklists)
+				knowledge.GET("/checklists/:id", knowledgeHandler.Checklist)
+				knowledge.POST("/checklists", middleware.RequireRole("SI"), knowledgeHandler.CreateChecklist)
+				knowledge.GET("/checklists/:id/runs", knowledgeHandler.Runs)
+				knowledge.POST("/checklists/:id/runs", middleware.RequireRole("ASI"), knowledgeHandler.StartRun)
+				knowledge.GET("/runs/:id", knowledgeHandler.Run)
+				knowledge.POST("/runs/:id/ticks", middleware.RequireRole("ASI"), knowledgeHandler.Tick)
 			}
 
 			// Lookout notices and sightings
