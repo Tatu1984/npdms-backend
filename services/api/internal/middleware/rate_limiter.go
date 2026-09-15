@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,8 @@ type RateLimiterConfig struct {
 	RedisClient *redis.Client
 	// Key prefix for Redis
 	KeyPrefix string
+	// SkipPathPrefixes exempts requests whose path starts with any of these.
+	SkipPathPrefixes []string
 }
 
 // RateLimiter creates a rate limiting middleware
@@ -30,6 +33,13 @@ func RateLimiter(config RateLimiterConfig) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
+		for _, prefix := range config.SkipPathPrefixes {
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				c.Next()
+				return
+			}
+		}
+
 		// Get client identifier (IP or user ID)
 		clientID := getClientIdentifier(c)
 		key := fmt.Sprintf("%s:%s", config.KeyPrefix, clientID)
@@ -165,7 +175,9 @@ func checkRateLimit(
 	return allowed, remaining, resetTime, nil
 }
 
-// GlobalRateLimiter applies global rate limit (100 req/min per IP)
+// LiveVideoPathPrefix is the Edge Agent ingest and playback plane.
+const LiveVideoPathPrefix = "/api/edge/ingest/"
+
 // GlobalRateLimiter guards the door before anybody is known.
 //
 // Per address, and deliberately generous, because at this point in the chain
@@ -174,12 +186,21 @@ func checkRateLimit(
 // below, which runs once the officer is known. Signing in keeps its own tight
 // per-address limit — see AuthRateLimiter — because that is the one route
 // where an address really is the only thing there is to count.
+//
+// Live video is exempt entirely. One camera PUTs a segment and rewrites its
+// playlist about every two seconds (~60 requests a minute), and a browser
+// fetches a segment about every two seconds per open tile (plus a CORS
+// preflight each); a site with a few cameras, or an officer watching a wall
+// behind one address, would exhaust even this budget and get 429s on the video
+// itself. Those routes are authenticated per camera token and per
+// purpose-logged viewing session, so they are counted there instead.
 func GlobalRateLimiter(redisClient *redis.Client) gin.HandlerFunc {
 	return RateLimiter(RateLimiterConfig{
-		Limit:       2000,
-		Window:      time.Minute,
-		RedisClient: redisClient,
-		KeyPrefix:   "global",
+		Limit:            2000,
+		Window:           time.Minute,
+		RedisClient:      redisClient,
+		KeyPrefix:        "global",
+		SkipPathPrefixes: []string{LiveVideoPathPrefix},
 	})
 }
 

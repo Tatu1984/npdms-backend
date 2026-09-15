@@ -101,6 +101,20 @@ type Camera struct {
 	OpenEvents    int        `json:"openEvents"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
+
+	// Live streaming through the Edge Agent (migration 000076). The upload token
+	// is never here: it is shown once, in EdgeAgentConfig, and stored hashed.
+	StreamingEnabled   bool       `json:"streamingEnabled"`
+	IngestKey          *string    `json:"ingestKey"`
+	StreamingEnabledAt *time.Time `json:"streamingEnabledAt"`
+	TokenRotatedAt     *time.Time `json:"tokenRotatedAt"`
+	LastSegmentAt      *time.Time `json:"lastSegmentAt"`
+	// LiveStatus is judged from the stored playlist when the camera is read:
+	// ONLINE, CONNECTING, STOPPED or OFFLINE. Never assumed.
+	LiveStatus    LiveStatus `json:"liveStatus"`
+	LiveAvailable bool       `json:"liveAvailable"`
+	LiveURL       *string    `json:"liveUrl"`
+	LiveCheckedAt *time.Time `json:"liveCheckedAt"`
 }
 
 type CameraHealthCheck struct {
@@ -122,6 +136,7 @@ type CameraStats struct {
 	Unreachable    int64 `json:"unreachable"`
 	Unchecked      int64 `json:"unchecked"`
 	NoStream       int64 `json:"noStream"`
+	Streaming      int64 `json:"streaming"`
 	EventsRaised   int64 `json:"eventsRaised"`
 	EventsExpired  int64 `json:"eventsExpired"`
 }
@@ -142,6 +157,8 @@ type CreateCameraRequest struct {
 	CredentialSecret   *string        `json:"credentialSecret"`
 	RetentionClass     RetentionClass `json:"retentionClass"`
 	MaskingRequired    bool           `json:"maskingRequired"`
+	// EnableStreaming issues Edge Agent settings with the registration.
+	EnableStreaming bool `json:"enableStreaming"`
 }
 
 // UpdateCameraRequest replaces the register details. Credentials change only
@@ -271,6 +288,7 @@ type VideoAccessEntry struct {
 	EventID     *uuid.UUID             `json:"eventId"`
 	EventNumber string                 `json:"eventNumber"`
 	ResultCount *int                   `json:"resultCount"`
+	CameraIDs   []uuid.UUID            `json:"cameraIds"`
 	IPAddress   string                 `json:"ipAddress"`
 	AccessedAt  time.Time              `json:"accessedAt"`
 }

@@ -4,6 +4,7 @@
   "regions": ["bom1"],
   "env": {
     "STORAGE_BACKEND": "database",
+    "MEDIA_BACKEND": "r2",
     "STORAGE_PATH": "/tmp/evidence",
     "MINIO_ENDPOINT": "disabled",
     "MINIO_ACCESS_KEY": "disabled",
