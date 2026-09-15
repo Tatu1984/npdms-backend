@@ -72,6 +72,7 @@ func main() {
 	lookoutRepo := repository.NewLookoutRepository(db)
 	accessLogRepo := repository.NewAccessLogRepository(db)
 	workloadRepo := repository.NewWorkloadRepository(db)
+	riskRepo := repository.NewRiskRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
 	courtRepo := repository.NewCourtRepository(db)
 	alertRepo := repository.NewAlertRepository(db)
@@ -166,6 +167,7 @@ func main() {
 	dispatchCtx, stopDispatch := context.WithCancel(context.Background())
 	defer stopDispatch()
 	go dispatchService.RunEscalations(dispatchCtx, 30*time.Second)
+	riskHandler := handlers.NewRiskHandler(services.NewRiskService(riskRepo, auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -742,6 +744,25 @@ func main() {
 				trafficIncidents.POST("/:id/reports/:reportId/submit", middleware.RequireRole("ASI"), trafficIncidentHandler.SubmitReport)
 				trafficIncidents.POST("/:id/reports/:reportId/approve", middleware.RequireRole("SI"), trafficIncidentHandler.ApproveReport)
 				trafficIncidents.POST("/:id/reports/:reportId/return", middleware.RequireRole("SI"), trafficIncidentHandler.ReturnReport)
+			}
+
+			// Phase 10 — Public Safety Risk & Hotspots. Scores places, never
+			// people. SHO and above; below DSP an officer sees only their own
+			// station (enforced in the service). Weights change at SP and above.
+			risk := protected.Group("/risk", middleware.RequireRole("SHO"))
+			{
+				risk.GET("/factors", riskHandler.Factors)
+				risk.GET("/weights/history", riskHandler.WeightHistory)
+				risk.POST("/weights", middleware.RequireRole("SP"), riskHandler.UpdateWeights)
+				risk.GET("/areas", riskHandler.Areas)
+				risk.GET("/recommendations", riskHandler.Recommendations)
+				risk.POST("/simulate", riskHandler.Simulate)
+				risk.GET("/beats", riskHandler.Beats)
+				risk.POST("/beats", riskHandler.CreateBeat)
+				risk.DELETE("/beats/:id", riskHandler.DeleteBeat)
+				risk.GET("/firs", riskHandler.PlaceableFIRs)
+				risk.POST("/placements", riskHandler.PlaceFIR)
+				risk.DELETE("/placements/:firId", riskHandler.UnplaceFIR)
 			}
 
 			// Access log — sign-in activity from the audit trail
