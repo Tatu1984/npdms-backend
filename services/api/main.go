@@ -192,6 +192,8 @@ func main() {
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
 	custodyHandler := handlers.NewCustodyHandler(custodyService)
+	caseFileHandler := handlers.NewCaseFileHandler(services.NewCaseFileService(
+		repository.NewCaseFileRepository(db), custodyService, evidenceStore, auditRepo))
 	districtHandler := handlers.NewDistrictHandler(districtService)
 	stateHandler := handlers.NewStateHandler(stateService)
 	nationalHandler := handlers.NewNationalHandler(nationalService)
@@ -795,6 +797,38 @@ func main() {
 			{
 				accessLog.GET("", accessLogHandler.List)
 				accessLog.GET("/stats", accessLogHandler.Stats)
+			}
+
+			// Phase 12 — Case File & Court Readiness. Reading needs ASI; building the
+			// file needs SI; approval needs Inspector, and never by the submitter.
+			caseFiles := protected.Group("/case-files", middleware.RequireRole("ASI"))
+			{
+				caseFiles.GET("", caseFileHandler.List)
+				caseFiles.POST("", middleware.RequireRole("SI"), caseFileHandler.Create)
+				caseFiles.GET("/by-workspace/:workspaceId", caseFileHandler.GetByWorkspace)
+				caseFiles.GET("/:id", caseFileHandler.Get)
+				caseFiles.GET("/:id/entries", caseFileHandler.Entries)
+				caseFiles.GET("/:id/sources", caseFileHandler.Sources)
+				caseFiles.POST("/:id/entries", middleware.RequireRole("SI"), caseFileHandler.AddEntry)
+				caseFiles.POST("/:id/entries/upload", middleware.RequireRole("SI"), caseFileHandler.UploadEntry)
+				caseFiles.POST("/:id/entries/:entryId/remove", middleware.RequireRole("SI"), caseFileHandler.RemoveEntry)
+				caseFiles.GET("/:id/entries/:entryId/file", caseFileHandler.DownloadEntry)
+				caseFiles.GET("/:id/evidence-matrix", caseFileHandler.EvidenceMatrix)
+				caseFiles.POST("/:id/charges", middleware.RequireRole("SI"), caseFileHandler.AddCharge)
+				caseFiles.DELETE("/:id/charges/:chargeId", middleware.RequireRole("SI"), caseFileHandler.RemoveCharge)
+				caseFiles.POST("/:id/charges/:chargeId/evidence", middleware.RequireRole("SI"), caseFileHandler.LinkSupport)
+				caseFiles.DELETE("/:id/charges/:chargeId/evidence/:evidenceId", middleware.RequireRole("SI"), caseFileHandler.UnlinkSupport)
+				caseFiles.GET("/:id/witness-matrix", caseFileHandler.WitnessMatrix)
+				caseFiles.POST("/:id/witness-facts", middleware.RequireRole("SI"), caseFileHandler.AddWitnessFact)
+				caseFiles.DELETE("/:id/witness-facts/:factId", middleware.RequireRole("SI"), caseFileHandler.RemoveWitnessFact)
+				caseFiles.GET("/:id/completeness", caseFileHandler.Completeness)
+				caseFiles.GET("/:id/versions", caseFileHandler.Versions)
+				caseFiles.GET("/:id/versions/:version", caseFileHandler.Version)
+				caseFiles.GET("/:id/packs", caseFileHandler.Packs)
+				caseFiles.POST("/:id/packs", middleware.RequireRole("SI"), caseFileHandler.Submit)
+				caseFiles.GET("/:id/packs/:packId", caseFileHandler.Pack)
+				caseFiles.POST("/:id/packs/:packId/approve", middleware.RequireRole("INSPECTOR"), caseFileHandler.Approve)
+				caseFiles.POST("/:id/packs/:packId/return", middleware.RequireRole("INSPECTOR"), caseFileHandler.Return)
 			}
 
 			// Phase 02 — Evidence & Chain of Custody
