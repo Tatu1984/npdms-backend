@@ -11,9 +11,15 @@ evidence, warrants and the rest — is created THROUGH THE API as the officer wh
 would record it, so numbering, workflow rules, signatures and the audit trail
 are all real.
 
+Covers core records and every phase, 01–14: knowledge documents and
+checklists, case files with an approved submission pack, body-worn cameras
+with docked and linked recordings, and malkhana property with movements and a
+court-ordered disposal.
+
 Idempotent: each seeded item is recorded under a stable key in
 `demo_seed_ledger` (created in the target database by this script). Re-running
-skips everything already created.
+skips everything already created, so running it against a database seeded by
+an earlier version adds only the sections that were missing.
 
 Usage:
     DEMO_SEED_CONFIRM=yes \\
@@ -850,6 +856,408 @@ for stn, keys in [("BHW", ["bhw-01", "bhw-05", "bhw-03"]), ("PKS", ["pks-01", "p
         step(f"placement:{k}", lambda k=k, stn=stn: request(
             "POST", "/risk/placements", {"firId": FIR[k], "beatId": BEAT[stn], "note": "Placed by station officer from the incident location"},
             user="admin", ok=(200, 201, 204, 409)))
+
+# ------------------------------------------------ shared upload helpers (11–14) --
+def form(fields, filename, content, ctype):
+    """multipart/form-data with plain fields and one file part."""
+    b = "----npdmsDemoSeedForm"
+    parts = [f"--{b}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode() for k, v in fields.items()]
+    parts.append(f"--{b}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+                 f"Content-Type: {ctype}\r\n\r\n".encode() + content + b"\r\n")
+    parts.append(f"--{b}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={b}"
+
+
+def pdf(title, lines):
+    """A small, valid single-page PDF with a real text layer (ASCII, Helvetica)."""
+    def esc(s):
+        return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    text = ["BT", "/F1 14 Tf", "50 790 Td", f"({esc(title)}) Tj", "/F1 10 Tf"]
+    for line in ["DEMO DOCUMENT - fictional content for the NPDMS demo", ""] + lines:
+        text += ["0 -16 Td", f"({esc(line)}) Tj"]
+    text.append("ET")
+    stream = "\n".join(text).encode("latin-1", "replace")
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+            b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    out, offsets = b"%PDF-1.4\n", []
+    for n, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += f"{n} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref = len(out)
+    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return out
+
+
+def parse_time(value):
+    """Parse an API timestamp (Go RFC 3339, possibly with nanoseconds)."""
+    value = value.replace("Z", "+00:00")
+    if "." in value:
+        head, rest = value.split(".", 1)
+        digits = len(rest) - len(rest.lstrip("0123456789"))
+        frac, tz = rest[:digits], rest[digits:]
+        value = f"{head}.{frac[:6].ljust(6, '0')}{tz}"  # Python 3.9 needs exactly six digits
+    return datetime.fromisoformat(value)
+
+
+def day(dt):
+    return dt.astimezone(IST).strftime("%Y-%m-%d")
+
+
+# ------------------------------------------------ knowledge (Phase 11) --
+print("› Knowledge repository and procedure checklists")
+KNOWLEDGE = [
+    # key, uploader, metadata, filename, content type, lines or text
+    ("arrest-so", "si", {"docType": "STANDING_ORDER", "title": "Standing Order 04/2025: Arrest, custody and production under BNSS",
+                         "titleBn": "স্থায়ী আদেশ ০৪/২০২৫: গ্রেফতার, হেফাজত ও হাজিরা", "referenceNumber": "KP/SO/04/2025",
+                         "issuingAuthority": "Commissioner of Police, Kolkata", "issuedOn": day(NOW - timedelta(days=260)),
+                         "applicableTo": ["All police stations", "Detective Department"], "classification": "PUBLIC",
+                         "description": "Arrest memo, information to a relative, grounds of arrest and production within 24 hours."},
+     "KP-SO-04-2025.pdf", "application/pdf",
+     ["1. Prepare an arrest memo attested by at least one independent witness (BNSS s.36).",
+      "2. Inform the arrested person of the grounds of arrest and of the right to bail (BNSS s.47).",
+      "3. Inform a relative or friend named by the arrested person and record it (BNSS s.48).",
+      "4. Produce the arrested person before the Magistrate within 24 hours (BNSS s.58)."]),
+    ("cfsl-sop", "si", {"docType": "SOP", "title": "SOP: Forwarding of exhibits to CFSL Kolkata and FSL West Bengal",
+                        "referenceNumber": "KP/DD/SOP/11/2026", "issuingAuthority": "Joint Commissioner of Police (Crime), Kolkata",
+                        "issuedOn": day(NOW - timedelta(days=120)), "applicableTo": ["Investigating officers", "Malkhana in-charges"],
+                        "classification": "RESTRICTED",
+                        "description": "Sealing, specimen seal impression, forwarding memo and custody record for laboratory exhibits."},
+     "KP-DD-SOP-11-2026.pdf", "application/pdf",
+     ["Seal every exhibit in the presence of witnesses and keep a specimen seal impression.",
+      "Prepare the forwarding memo in triplicate with the exhibit list and the questions for examination.",
+      "Record the handover in the malkhana register and obtain the laboratory's receipt.",
+      "Track the expected report date and follow up with the laboratory in writing."]),
+    ("cyber-circular", "si", {"docType": "CIRCULAR", "title": "Circular: Immediate action on online financial fraud complaints (NCRP and 1930)",
+                              "referenceNumber": "CID/WB/CYB/CIR/07/2026", "issuingAuthority": "Additional Director General, CID, West Bengal",
+                              "issuedOn": day(NOW - timedelta(days=75)), "applicableTo": ["All police stations", "Cyber police stations"],
+                              "classification": "PUBLIC",
+                              "description": "Register on NCRP, request freezing of beneficiary accounts within the golden hour, and preserve transaction evidence."},
+     "CID-WB-CYB-CIR-07-2026.pdf", "application/pdf",
+     ["Register every online financial fraud complaint on the National Cybercrime Reporting Portal.",
+      "Send freeze requests to the beneficiary bank's nodal officer without waiting for the FIR.",
+      "Preserve UTR numbers, screenshots and call records with a hash of each file.",
+      "Report daily figures of amounts frozen and recovered to the district cyber cell."]),
+    ("puja-bn", "si", {"docType": "CIRCULAR", "title": "Durga Puja crowd and traffic management guidelines",
+                       "titleBn": "দুর্গাপূজা ভিড় ও যান নিয়ন্ত্রণ নির্দেশিকা", "referenceNumber": "KTP/CIR/19/2026",
+                       "issuingAuthority": "Joint Commissioner of Police (Traffic), Kolkata", "issuedOn": day(NOW - timedelta(days=20)),
+                       "applicableTo": ["Traffic guards", "All police stations"], "classification": "PUBLIC",
+                       "description": "প্যান্ডেল এলাকায় ভিড় নিয়ন্ত্রণ, একমুখী রাস্তা ও অ্যাম্বুলেন্স করিডর।"},
+     "KTP-CIR-19-2026.txt", "text/plain",
+     "দুর্গাপূজা ভিড় ও যান নিয়ন্ত্রণ নির্দেশিকা (ডেমো নথি — কাল্পনিক)\n\n"
+     "১. বড় প্যান্ডেলের সামনে ব্যারিকেড দিয়ে প্রবেশ ও প্রস্থানের আলাদা পথ রাখতে হবে।\n"
+     "২. রাত আটটার পর নির্ধারিত রাস্তাগুলি একমুখী থাকবে।\n"
+     "৩. প্রতিটি এলাকায় অ্যাম্বুলেন্স করিডর সবসময় খোলা রাখতে হবে।\n"
+     "৪. হারিয়ে যাওয়া শিশুদের জন্য প্রতিটি থানায় সহায়তা কেন্দ্র থাকবে।\n"),
+    ("malkhana-manual", "si", {"docType": "MANUAL", "title": "Malkhana register and seal handling manual",
+                               "referenceNumber": "KP/MAN/03/2024", "issuingAuthority": "Deputy Commissioner of Police (HQ), Kolkata",
+                               "issuedOn": day(NOW - timedelta(days=400)), "applicableTo": ["Malkhana in-charges"],
+                               "classification": "RESTRICTED",
+                               "description": "Register entries, seal verification, movement out and back, and disposal under court order."},
+     "KP-MAN-03-2024.pdf", "application/pdf",
+     ["Every seized article receives a property number and a seal number at deposit.",
+      "Seals are verified at each movement out and on return; a broken seal is reported to the SHO the same day.",
+      "Articles leave the malkhana only against a written authority: court summons, forwarding memo or transfer order.",
+      "Disposal is carried out only on the order of the competent court."]),
+    ("beat-notification", "sho", {"docType": "NOTIFICATION", "title": "Reorganisation of night patrol beats, South Division",
+                                  "referenceNumber": "KP/SD/NOT/02/2026", "issuingAuthority": "Deputy Commissioner of Police, South Division",
+                                  "issuedOn": day(NOW - timedelta(days=35)), "applicableTo": ["South Division police stations"],
+                                  "classification": "CONFIDENTIAL",
+                                  "description": "Revised beat boundaries and patrol timings for Bhowanipore, Kalighat and Tollygunge."},
+     "KP-SD-NOT-02-2026.pdf", "application/pdf",
+     ["Bhowanipore beats 3 and 4 are merged from 22:00 to 06:00.",
+      "Hazra crossing receives a fixed picket from 20:00 to 23:00 on all days.",
+      "Tollygunge Metro approach is patrolled by a mobile unit every 45 minutes."]),
+    ("bnss-extract", "si", {"docType": "STATUTE", "title": "BNSS, 2023: arrest provisions (summary extract for station use)",
+                            "referenceNumber": "BNSS-2023-CH-V", "issuingAuthority": "Legal cell, Kolkata Police (summary)",
+                            "issuedOn": day(NOW - timedelta(days=300)), "applicableTo": ["All officers"], "classification": "PUBLIC",
+                            "description": "Summary of Chapter V of the Bharatiya Nagarik Suraksha Sanhita on arrest, for quick reference."},
+     "BNSS-2023-CH-V-summary.pdf", "application/pdf",
+     ["Summary only - consult the authoritative text of the Sanhita before acting.",
+      "s.35: when police may arrest without warrant.",
+      "s.36: procedure of arrest and duties of the officer making the arrest.",
+      "s.47: person arrested to be informed of grounds of arrest and of right to bail.",
+      "s.48: obligation to inform a relative or friend of the arrest."]),
+]
+DOC = {}
+for key, uploader, meta, filename, ctype, body in KNOWLEDGE:
+    content = pdf(meta["title"], body) if ctype == "application/pdf" else body.encode()
+    raw, ct = form({"metadata": json.dumps(meta, ensure_ascii=False)}, filename, content, ctype)
+    DOC[key] = once(f"knowledge:{key}", "knowledge_documents", lambda raw=raw, ct=ct, uploader=uploader: request(
+        "POST", "/knowledge/documents", raw=raw, ctype=ct, user=uploader))
+
+# The 2025 standing order is superseded by the 2026 revision; the old version stays readable.
+rev_meta = {"docType": "STANDING_ORDER", "title": "Standing Order 04/2026: Arrest, custody and production under BNSS (revised)",
+            "titleBn": "স্থায়ী আদেশ ০৪/২০২৬: গ্রেফতার, হেফাজত ও হাজিরা (সংশোধিত)", "referenceNumber": "KP/SO/04/2026",
+            "issuingAuthority": "Commissioner of Police, Kolkata", "issuedOn": day(NOW - timedelta(days=40)),
+            "applicableTo": ["All police stations", "Detective Department"], "classification": "PUBLIC",
+            "description": "Revised to add the arrest-intimation register and the photograph of the arrest memo in the case diary."}
+rev_raw, rev_ct = form({"metadata": json.dumps(rev_meta, ensure_ascii=False)}, "KP-SO-04-2026.pdf",
+                       pdf(rev_meta["title"], KNOWLEDGE[0][5] + ["5. Enter the intimation in the arrest-intimation register and photograph the memo."]),
+                       "application/pdf")
+DOC["arrest-so-2026"] = once("knowledge:arrest-so:supersede", "knowledge_documents", lambda: request(
+    "POST", f"/knowledge/documents/{DOC['arrest-so']}/supersede", raw=rev_raw, ctype=rev_ct, user="si"))
+
+CHECKLISTS = [
+    ("arrest", "arrest-so-2026", "BNSS s.35–48, s.58", "Arrest procedure checklist", "গ্রেফতার পদ্ধতি চেকলিস্ট",
+     [("Prepare the arrest memo attested by an independent witness", "স্বাধীন সাক্ষী সহ গ্রেফতারি মেমো তৈরি"),
+      ("Inform the arrested person of the grounds of arrest and the right to bail", "গ্রেফতারের কারণ ও জামিনের অধিকার জানানো"),
+      ("Inform a relative or friend and enter it in the intimation register", "আত্মীয় বা বন্ধুকে জানানো ও রেজিস্টারে লেখা"),
+      ("Arrange medical examination of the arrested person", "গ্রেফতার ব্যক্তির ডাক্তারি পরীক্ষা"),
+      ("Produce before the Magistrate within 24 hours", "২৪ ঘণ্টার মধ্যে ম্যাজিস্ট্রেটের সামনে হাজির করা")]),
+    ("cfsl", "cfsl-sop", "SOP paras 3–6", "Forwarding exhibits to CFSL Kolkata", None,
+     [("Seal each exhibit and keep a specimen seal impression", None),
+      ("Prepare the forwarding memo with the questions for examination", None),
+      ("Record the handover in the malkhana register", None),
+      ("Obtain the laboratory's receipt and note the expected report date", None)]),
+]
+CL = {}
+for key, doc, section, title, title_bn, steps in CHECKLISTS:
+    body = {"documentId": DOC[doc], "sectionRef": section, "title": title,
+            "steps": [{"text": t, **({"textBn": tb} if tb else {})} for t, tb in steps]}
+    if title_bn:
+        body["titleBn"] = title_bn
+    CL[key] = once(f"knowledge:checklist:{key}", "knowledge_checklists", lambda body=body: request(
+        "POST", "/knowledge/checklists", body, user="si"))
+run = once("knowledge:checklist:arrest:run:bhw-05", "knowledge_checklist_runs", lambda: request(
+    "POST", f"/knowledge/checklists/{CL['arrest']}/runs", {"caseId": CASE["bhw-05"]}, user="asi"))
+arrest_steps = request("GET", f"/knowledge/checklists/{CL['arrest']}", user="asi")["steps"]
+for n, note in [(0, "Memo signed by witness Sri Gopal Shaw at Tiljala"), (1, "Grounds read out in Bengali; accused signed acknowledgement")]:
+    step(f"knowledge:run:bhw-05:tick:{n}", lambda n=n, note=note: request(
+        "POST", f"/knowledge/runs/{run}/ticks", {"stepId": arrest_steps[n]["id"], "note": note}, user="asi"))
+
+# ------------------------------------------------ case files (Phase 12) --
+print("› Case files and court submission packs")
+
+
+def person_id(key):
+    value = ledger_get(key)
+    if not value:
+        raise RuntimeError(f"investigation person {key} is missing from the ledger")
+    return value
+
+
+CF = {}
+for ckey, builder in [("bhw-05", "si"), ("ksb-05", "si.ksb")]:
+    CF[ckey] = once(f"casefile:{ckey}", "case_files", lambda ckey=ckey, builder=builder: request(
+        "POST", "/case-files", {"workspaceId": WS[ckey]}, user=builder))
+
+# Bhowanipore Metro courier robbery: a complete file, submitted by the SI and approved by the SHO.
+# Witness facts and evidence links return no body, so they are recorded as ledger steps.
+cf = CF["bhw-05"]
+once("casefile:bhw-05:fir", "case_file_entries", lambda: request(
+    "POST", f"/case-files/{cf}/entries", {"category": "FIR", "title": "First Information Report", "sourceKind": "fir", "firId": FIR["bhw-05"]}, user="si"))
+ARNAB, DEEPAK = person_id("ws:bhw-05:person:1"), person_id("ws:bhw-05:person:2")
+statement_day = day(NOW - timedelta(days=19))
+STATEMENTS = {}
+for pkey, pid, title, lines in [
+        ("arnab", ARNAB, "Statement of Arnab Kar (courier supervisor) under BNSS s.180",
+         ["The courier left the Esplanade office at about 21:55 with a cash bag.", "He called me at 22:40 to report the robbery near Metro gate 2."]),
+        ("deepak", DEEPAK, "Statement of Sri Deepak Singh (victim) under BNSS s.180",
+         ["Two men on a grey scooter stopped me near gate 2 and showed a knife.", "They took the cash bag and my phone and rode towards Tiljala."])]:
+    meta = {"category": "STATEMENT", "title": title, "witnessPersonId": pid, "statementSection": "BNSS s.180", "statementDate": statement_day}
+    raw, ct = form({"meta": json.dumps(meta)}, f"statement-{pkey}.pdf", pdf(title, lines), "application/pdf")
+    STATEMENTS[pkey] = once(f"casefile:bhw-05:statement:{pkey}", "case_file_entries", lambda raw=raw, ct=ct: request(
+        "POST", f"/case-files/{cf}/entries/upload", raw=raw, ctype=ct, user="si"))
+for key, category, title, lines, ago in [
+        ("seizure", "SEIZURE_LIST", "Seizure list: knife and CCTV extract (BHW/SL/2026/118–119)",
+         ["Item 1: folding knife seized from accused Sunny Mallick at Tiljala, sealed BHW/SL/2026/118.",
+          "Item 2: Metro station CCTV extract, gate 2, sealed BHW/SL/2026/119."], 18),
+        ("report", "CHARGESHEET", "Police report under BNSS s.193: Bhowanipore PS case (courier robbery)",
+         ["Accused: Sunny Mallick alias Kalu, arrested at Tiljala.", "Offence: robbery (BNS s.309).",
+          "Witnesses: Arnab Kar; victim Sri Deepak Singh."], 2)]:
+    meta = {"category": category, "title": title, "documentDate": day(NOW - timedelta(days=ago))}
+    raw, ct = form({"meta": json.dumps(meta)}, f"{key}.pdf", pdf(title, lines), "application/pdf")
+    once(f"casefile:bhw-05:{key}", "case_file_entries", lambda raw=raw, ct=ct: request(
+        "POST", f"/case-files/{cf}/entries/upload", raw=raw, ctype=ct, user="si"))
+charge = once("casefile:bhw-05:charge:bns309", "case_file_charges", lambda: request(
+    "POST", f"/case-files/{cf}/charges", {"section": "BNS 309(4)", "description": "Robbery with a weapon near Bhowanipore Metro"}, user="si"))
+for ekey in ["bhw-05:3", "bhw-05:4"]:
+    step(f"casefile:bhw-05:charge:bns309:{ekey}", lambda ekey=ekey: request(
+        "POST", f"/case-files/{cf}/charges/{charge}/evidence", {"evidenceId": EVID[ekey]}, user="si"))
+step("casefile:bhw-05:fact:arnab", lambda: request(
+    "POST", f"/case-files/{cf}/witness-facts",
+    {"personId": ARNAB, "fact": "The courier left with the cash bag at about 21:55 and reported the robbery at 22:40", "statementEntryId": STATEMENTS["arnab"]}, user="si"))
+step("casefile:bhw-05:fact:deepak", lambda: request(
+    "POST", f"/case-files/{cf}/witness-facts",
+    {"personId": DEEPAK, "fact": "Two men on a grey scooter robbed him at knife-point near Metro gate 2", "statementEntryId": STATEMENTS["deepak"]}, user="si"))
+
+
+def submit_and_approve():
+    blocking = [f for f in request("GET", f"/case-files/{cf}/completeness", user="si")["data"] if f["open"] and f["blocking"]]
+    if blocking:
+        raise RuntimeError("case file bhw-05 still has blocking findings: " + "; ".join(f"{f['rule']}: {f['details']}" for f in blocking))
+    return request("POST", f"/case-files/{cf}/packs", user="si")
+
+
+pack = once("casefile:bhw-05:pack", "case_file_packs", submit_and_approve)
+step("casefile:bhw-05:pack:approve", lambda: request("POST", f"/case-files/{cf}/packs/{pack}/approve", user="sho"))
+
+# Kasba investment app fraud: a draft file — the forensic report is pending and the
+# seizure list, charges and police report are not yet filed, so completeness shows it.
+cf2 = CF["ksb-05"]
+once("casefile:ksb-05:fir", "case_file_entries", lambda: request(
+    "POST", f"/case-files/{cf2}/entries", {"category": "FIR", "title": "First Information Report", "sourceKind": "fir", "firId": FIR["ksb-05"]}, user="si.ksb"))
+victim = person_id("ws:ksb-05:person:1")
+meta = {"category": "STATEMENT", "title": "Statement of Smt. Sulagna Das (complainant) under BNSS s.180", "witnessPersonId": victim,
+        "statementSection": "BNSS s.180", "statementDate": day(NOW - timedelta(days=4))}
+raw, ct = form({"meta": json.dumps(meta)}, "statement-sulagna.pdf",
+               pdf(meta["title"], ["I installed the app after a WhatsApp message promising daily returns.",
+                                   "I paid in six UPI instalments to kolkatagrowth.pay@okaxis."]), "application/pdf")
+once("casefile:ksb-05:statement", "case_file_entries", lambda: request(
+    "POST", f"/case-files/{cf2}/entries/upload", raw=raw, ctype=ct, user="si.ksb"))
+
+# ------------------------------------------------ body-worn cameras (Phase 13) --
+print("› Body-worn cameras")
+BWC = [("AXN-KP-BHW-0101", "Axon Body 3", "BHW"), ("AXN-KP-BHW-0102", "Axon Body 3", "BHW"),
+       ("AXN-KP-BHW-0103", "Axon Body 3", "BHW"), ("MTR-KP-PKS-0201", "Motorola V300", "PKS"),
+       ("MTR-KP-PKS-0202", "Motorola V300", "PKS")]
+CAMERA_SHO = {"BHW": "sho", "PKS": "oc.pks"}
+CAMERA_ASI = {"BHW": "asi", "PKS": "asi.pks"}
+BW = {}
+for serial, model, stn in BWC:
+    BW[serial] = once(f"bodycam:{serial}", "bwc_devices", lambda serial=serial, model=model, stn=stn: request(
+        "POST", "/bodycam/devices", {"serialNumber": serial, "model": model, "stationId": STATION[stn]}, user=CAMERA_SHO[stn]))
+for serial, battery, storage in [("AXN-KP-BHW-0101", 88, 21), ("AXN-KP-BHW-0102", 64, 47), ("AXN-KP-BHW-0103", 100, 5),
+                                 ("MTR-KP-PKS-0201", 72, 33), ("MTR-KP-PKS-0202", 15, 81)]:
+    stn = next(b[2] for b in BWC if b[0] == serial)
+    step(f"bodycam:{serial}:reading", lambda serial=serial, battery=battery, storage=storage, stn=stn: request(
+        "POST", f"/bodycam/devices/{BW[serial]}/readings",
+        {"batteryPercent": battery, "storagePercent": storage, "source": "DOCK"}, user=CAMERA_ASI[stn]))
+step("bodycam:MTR-KP-PKS-0202:charging", lambda: request(
+    "PATCH", f"/bodycam/devices/{BW['MTR-KP-PKS-0202']}/status", {"status": "CHARGING", "note": "Battery below 20% at dock"}, user="oc.pks"))
+
+
+def issue_camera(serial, officer, shift):
+    stn = next(b[2] for b in BWC if b[0] == serial)
+    result = request("POST", f"/bodycam/devices/{BW[serial]}/assignments",
+                     {"officerId": USER[officer], "shiftLabel": shift, "expectedReturn": iso(NOW + timedelta(hours=8))},
+                     user=CAMERA_ASI[stn])
+    time.sleep(4)  # footage must fall inside the shift, which starts at the moment of issue
+    return result
+
+
+def dock(serial, assignment, officer, label):
+    issued = request("GET", f"/bodycam/devices/{BW[serial]}/assignments", user="asi" if serial.startswith("AXN") else "asi.pks")
+    rows = issued.get("data", issued) if isinstance(issued, dict) else issued
+    issued_at = parse_time(next(a["issuedAt"] for a in rows if a["id"] == assignment))
+    started = issued_at + timedelta(seconds=1)
+    ended = datetime.now(timezone.utc) - timedelta(seconds=1)
+    video = hashlib.sha256(label.encode()).digest() * 2000  # stand-in bytes; no real footage in the demo
+    raw, ct = form({"startedAt": iso(started), "endedAt": iso(ended)},
+                   f"{label}.mp4", video, "video/mp4")
+    return request("POST", f"/bodycam/devices/{BW[serial]}/assignments/{assignment}/recordings", raw=raw, ctype=ct, user=officer)
+
+
+a1 = once("bodycam:AXN-KP-BHW-0101:issue:constable", "bwc_assignments", lambda: issue_camera("AXN-KP-BHW-0101", "constable", "Day patrol 08:00–16:00, Hazra"))
+r1 = once("bodycam:AXN-KP-BHW-0101:recording:1", "bwc_recordings", lambda: dock("AXN-KP-BHW-0101", a1, "constable", "BWC-HZR-stop-and-check"))
+once("bodycam:AXN-KP-BHW-0101:recording:2", "bwc_recordings", lambda: dock("AXN-KP-BHW-0101", a1, "constable", "BWC-HZR-crowd-briefing"))
+step("bodycam:AXN-KP-BHW-0101:return", lambda: request(
+    "POST", f"/bodycam/devices/{BW['AXN-KP-BHW-0101']}/assignments/{a1}/return", {"note": "Returned at end of shift; docked"}, user="asi"))
+a2 = once("bodycam:AXN-KP-BHW-0102:issue:si", "bwc_assignments", lambda: issue_camera("AXN-KP-BHW-0102", "si", "Evening patrol 16:00–24:00, Bhowanipore"))
+once("bodycam:AXN-KP-BHW-0102:recording:1", "bwc_recordings", lambda: dock("AXN-KP-BHW-0102", a2, "si", "BWC-BHW-bicycle-theft-scene"))
+a3 = once("bodycam:MTR-KP-PKS-0201:issue:asi.pks", "bwc_assignments", lambda: issue_camera("MTR-KP-PKS-0201", "asi.pks", "Night patrol 22:00–06:00, Park Street"))
+once("bodycam:MTR-KP-PKS-0201:recording:1", "bwc_recordings", lambda: dock("MTR-KP-PKS-0201", a3, "asi.pks", "BWC-PKS-restaurant-closing"))
+step("bodycam:recording:1:access", lambda: request(
+    "POST", f"/bodycam/recordings/{r1}/access", {"purpose": "Review of the stop-and-check at Hazra crossing for the case diary"}, user="asi"))
+step("bodycam:recording:1:link", lambda: request(
+    "POST", f"/bodycam/recordings/{r1}/link", {"firId": FIR["bhw-06"], "note": "Footage of the building courtyard where the bicycle was taken"}, user="si"))
+
+# ------------------------------------------------ malkhana (Phase 14) --
+print("› Malkhana: seized property")
+# An NDPS seizure at Kasba, registered through the API like every other FIR.
+FIR["ksb-06"] = once("fir:ksb-06", "firs", lambda: request(
+    "POST", "/firs", {"stationId": STATION["KSB"], "complainantName": "SI (complainant on behalf of the State), Kasba PS",
+                      "complainantPhone": "9830000199", "complainantAddress": "Kasba Police Station, Kolkata 700042",
+                      "incidentDate": iso(days_ago(9).replace(hour=0, minute=0)), "incidentTime": "23:15",
+                      "incidentLocation": "EM Bypass service road near Ruby crossing, Kolkata 700107",
+                      "incidentDescription": "Ganja in six packets recovered from the boot of a car during a naka check.",
+                      "ipcSections": ["NDPS Act 20(b)(ii)(B)"], "priority": "HIGH"}, user="si.ksb"))
+LOCATIONS = [("BHW", "si", "Malkhana Room 1", "Rack A", "Shelf 2"), ("BHW", "si", "Malkhana Room 1", "Rack B", None),
+             ("BHW", "si", "Vehicle yard", "Bay 1", None), ("PKS", "si.pks", "Malkhana", "Rack 1", "Shelf 1"),
+             ("KSB", "si.ksb", "Malkhana", "Narcotics cage", None), ("KSB", "si.ksb", "Vehicle yard", "Bay 3", None)]
+LOC = {}
+for stn, officer, room, rack, shelf in LOCATIONS:
+    body = {"room": room, "rack": rack}
+    if shelf:
+        body["shelf"] = shelf
+    LOC[(stn, room, rack)] = once(f"malkhana:location:{stn}:{room}:{rack}", "storage_locations", lambda body=body, officer=officer: request(
+        "POST", "/malkhana/locations", body, user=officer))
+ITEMS = [
+    # key, station, registering officer, FIR, case, category, description, qty, unit, grams, paise, days ago, memo, location, seal
+    ("bhw-chain", "BHW", "asi", "bhw-01", "bhw-01", "JEWELLERY", "Gold chain, 18 g, broken clasp, recovered from accused", 1, "piece", 18.0, 12500000, 150, "BHW/SL/2026/041", ("BHW", "Malkhana Room 1", "Rack A"), "BHW-MLK-S-0411"),
+    ("bhw-bangles", "BHW", "asi", "bhw-02", "bhw-02", "JEWELLERY", "Pair of gold bangles recovered from a receiver at Bowbazar", 2, "pieces", 32.5, 21000000, 140, "BHW/SL/2026/058", ("BHW", "Malkhana Room 1", "Rack A"), "BHW-MLK-S-0412"),
+    ("bhw-cash", "BHW", "asi", "bhw-05", "bhw-05", "CASH", "Currency notes recovered from accused (₹500 × 97)", 97, "notes", None, 4850000, 18, "BHW/SL/2026/120", ("BHW", "Malkhana Room 1", "Rack B"), "BHW-MLK-S-0413"),
+    ("bhw-phone", "BHW", "asi", "bhw-05", "bhw-05", "ELECTRONICS", "Courier's mobile phone (Samsung Galaxy M34) recovered from accused", 1, "piece", None, 1800000, 18, "BHW/SL/2026/121", ("BHW", "Malkhana Room 1", "Rack B"), "BHW-MLK-S-0414"),
+    ("bhw-watch", "BHW", "asi", "bhw-03", "bhw-03", "OTHER", "Complainant's wristwatch (Titan) seized from the scene of the assault", 1, "piece", None, 650000, 118, "BHW/SL/2026/077", ("BHW", "Malkhana Room 1", "Rack B"), "BHW-MLK-S-0415"),
+    ("bhw-bicycle", "BHW", "asi", "bhw-06", None, "VEHICLE", "Hero Sprint bicycle recovered near Jadu Bhattacharya Lane", 1, "bicycle", None, 850000, 1, "BHW/SL/2026/131", ("BHW", "Vehicle yard", "Bay 1"), "BHW-MLK-S-0416"),
+    ("pks-phone", "PKS", "asi.pks", "pks-02", None, "ELECTRONICS", "Mobile phone (iPhone 13) recovered from a pickpocket at Park Street Metro", 1, "piece", None, 4500000, 100, "PKS/SL/2026/029", ("PKS", "Malkhana", "Rack 1"), "PKS-MLK-S-0201"),
+    ("pks-ledgers", "PKS", "asi.pks", "pks-03", "pks-03", "DOCUMENTS", "Company cheque books and cash ledgers seized from the accountant's desk", 7, "books", None, None, 60, "PKS/SL/2026/035", ("PKS", "Malkhana", "Rack 1"), "PKS-MLK-S-0202"),
+    ("pks-bottle", "PKS", "asi.pks", "pks-01", "pks-01", "OTHER", "Broken glass bottle used in the restaurant brawl", 1, "piece", None, None, 158, "PKS/SL/2026/022", ("PKS", "Malkhana", "Rack 1"), "PKS-MLK-S-0203"),
+    ("ksb-scooter", "KSB", "si.ksb", "ksb-04", None, "VEHICLE", "Honda Activa WB-06-AX-3304, recovered at Ruby crossing service road", 1, "two-wheeler", None, 6500000, 30, "KSB/SL/2026/052", ("KSB", "Vehicle yard", "Bay 3"), "KSB-MLK-S-0301"),
+    ("ksb-ganja", "KSB", "si.ksb", "ksb-06", None, "NARCOTICS", "Ganja in six sealed packets recovered from a car boot", 6, "packets", 4200.0, 8400000, 9, "KSB/SL/2026/071", ("KSB", "Malkhana", "Narcotics cage"), "KSB-MLK-S-0302"),
+    ("ksb-tv", "KSB", "si.ksb", "ksb-01", "ksb-01", "ELECTRONICS", "LED television and laptop recovered from the receiver at Canning", 2, "pieces", None, 7200000, 165, "KSB/SL/2026/011", ("KSB", "Malkhana", "Narcotics cage"), "KSB-MLK-S-0303"),
+]
+ITEM = {}
+for key, stn, officer, fkey, ckey, cat, desc, qty, unit, grams, paise, ago, memo, loc, seal in ITEMS:
+    body = {"firId": FIR[fkey], "category": cat, "description": desc, "quantity": qty, "unit": unit,
+            "seizedAt": iso(days_ago(ago, 15)), "seizedPlace": next((f[6] for f in FIRS if f[0] == fkey), "EM Bypass service road near Ruby crossing"),
+            "seizureMemoRef": memo, "locationId": LOC[loc], "sealNumber": seal}
+    if ckey:
+        body["caseId"] = CASE[ckey]
+    if grams is not None:
+        body["weightGrams"] = grams
+    if paise is not None:
+        body["valuePaise"] = paise
+    ITEM[key] = once(f"malkhana:item:{key}", "property_items", lambda body=body, officer=officer: request(
+        "POST", "/malkhana/items", body, user=officer))
+SEAL_OFFICER = {"BHW": "asi", "PKS": "asi.pks", "KSB": "si.ksb"}
+for key, stn, *_rest in ITEMS:
+    seal = _rest[-1]
+    step(f"malkhana:item:{key}:seal-check", lambda key=key, stn=stn, seal=seal: request(
+        "POST", f"/malkhana/items/{ITEM[key]}/seal-checks", {"sealNumber": seal, "intact": True, "note": "Monthly verification: seal intact"},
+        user=SEAL_OFFICER[stn]))
+
+# Narcotics to CFSL Kolkata for chemical analysis, and back under the same seal.
+ganja_out = once("malkhana:item:ksb-ganja:movement:cfsl", "property_movements", lambda: request(
+    "POST", f"/malkhana/items/{ITEM['ksb-ganja']}/movements",
+    {"movementType": "FORENSIC_EXAMINATION", "destination": "Central Forensic Science Laboratory, 30 Gorachand Road, Kolkata",
+     "purpose": "Chemical analysis of representative samples", "authorityRef": "KSB/FSL/2026/044",
+     "handedTo": "Constable Rahul Mondal (KP-C-4412)", "expectedReturnAt": iso(NOW + timedelta(days=3)), "sealNumber": "KSB-MLK-S-0302"},
+    user="si.ksb"))
+step("malkhana:item:ksb-ganja:movement:cfsl:return", lambda: request(
+    "POST", f"/malkhana/items/{ITEM['ksb-ganja']}/movements/{ganja_out}/return",
+    {"returnedBy": "Constable Rahul Mondal (KP-C-4412)", "sealNumber": "KSB-MLK-S-0302", "sealIntact": True,
+     "note": "Returned with CFSL receipt; samples retained by the laboratory", "locationId": LOC[("KSB", "Malkhana", "Narcotics cage")]},
+    user="si.ksb"))
+
+# Recovered cash produced before the City Sessions Court at today's hearing, and brought back.
+hearing = ledger_get("hearing:bhw-05:2")
+cash_out = once("malkhana:item:bhw-cash:movement:court", "property_movements", lambda: request(
+    "POST", f"/malkhana/items/{ITEM['bhw-cash']}/movements",
+    {"movementType": "COURT_PRODUCTION", "destination": "City Sessions Court, Calcutta", "courtHearingId": hearing,
+     "purpose": "Production as material exhibit at the bail hearing", "authorityRef": "CSC/SUMMONS/2026/318",
+     "handedTo": "SI Debjani Ghosh", "expectedReturnAt": iso(NOW + timedelta(days=1)), "sealNumber": "BHW-MLK-S-0413"},
+    user="asi"))
+step("malkhana:item:bhw-cash:movement:court:return", lambda: request(
+    "POST", f"/malkhana/items/{ITEM['bhw-cash']}/movements/{cash_out}/return",
+    {"returnedBy": "SI Debjani Ghosh", "sealNumber": "BHW-MLK-S-0413", "sealIntact": True,
+     "note": "Exhibit shown to the court and returned under the same seal", "locationId": LOC[("BHW", "Malkhana Room 1", "Rack B")]},
+    user="asi"))
+
+# The complainant's wristwatch is returned to him under the court's order.
+watch_order = once("order:bhw-03:property-release", "court_orders", lambda: request(
+    "POST", "/court/orders", {"caseId": CASE["bhw-03"], "orderDate": iso(days_ago(5)), "orderType": "DIRECTIONS",
+                              "summary": "Seized wristwatch to be released to the complainant on execution of a jimma bond (BNSS s.497).",
+                              "court": "Alipore CJM Court", "judgeName": "Smt. Madhumita Basu"}, user="inspector"))
+step("malkhana:item:bhw-watch:dispose", lambda: request(
+    "POST", f"/malkhana/items/{ITEM['bhw-watch']}/dispose",
+    {"disposalType": "RETURNED_TO_OWNER", "courtOrderId": watch_order,
+     "note": "Released to the complainant on jimma bond; identification and signature recorded"}, user="sho"))
 
 # ------------------------------------------------------------------ report --
 print()
