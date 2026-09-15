@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pq"
 	"github.com/npdms/api/internal/models"
 )
 
@@ -20,167 +19,6 @@ func NewCitizenPortalRepository(db *sqlx.DB) *CitizenPortalRepository {
 	return &CitizenPortalRepository{db: db}
 }
 
-// Complaint Operations
-func (r *CitizenPortalRepository) CreateComplaint(ctx context.Context, complaint *models.CitizenComplaint) error {
-	complaint.ID = uuid.New()
-	complaint.CreatedAt = time.Now()
-	complaint.UpdatedAt = time.Now()
-	complaint.SubmittedAt = time.Now()
-
-	query := `
-		INSERT INTO citizen_complaints (
-			id, tracking_number, category, status,
-			is_anonymous, complainant_name, complainant_phone, complainant_email, complainant_address,
-			subject, description, incident_date, incident_location, latitude, longitude,
-			attachments, station_id, verification_token,
-			submitted_at, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`
-
-	_, err := r.db.ExecContext(ctx, query,
-		complaint.ID, complaint.TrackingNumber, complaint.Category, complaint.Status,
-		complaint.IsAnonymous, complaint.ComplainantName, complaint.ComplainantPhone,
-		complaint.ComplainantEmail, complaint.ComplainantAddress,
-		complaint.Subject, complaint.Description, complaint.IncidentDate,
-		complaint.IncidentLocation, complaint.Latitude, complaint.Longitude,
-		pq.Array(complaint.Attachments), complaint.StationID, complaint.VerificationToken,
-		complaint.SubmittedAt, complaint.CreatedAt, complaint.UpdatedAt,
-	)
-	return err
-}
-
-func (r *CitizenPortalRepository) GetComplaintByTrackingNumber(ctx context.Context, trackingNumber string) (*models.CitizenComplaint, error) {
-	var complaint models.CitizenComplaint
-	query := `
-		SELECT c.*, s.name as station_name, u.name as assigned_to_name, f.fir_number
-		FROM citizen_complaints c
-		LEFT JOIN stations s ON c.station_id = s.id
-		LEFT JOIN users u ON c.assigned_to = u.id
-		LEFT JOIN firs f ON c.fir_id = f.id
-		WHERE c.tracking_number = $1`
-
-	err := r.db.GetContext(ctx, &complaint, query, trackingNumber)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("complaint not found")
-		}
-		return nil, err
-	}
-	return &complaint, nil
-}
-
-func (r *CitizenPortalRepository) GetComplaintByID(ctx context.Context, id uuid.UUID) (*models.CitizenComplaint, error) {
-	var complaint models.CitizenComplaint
-	query := `
-		SELECT c.*, s.name as station_name, u.name as assigned_to_name, f.fir_number
-		FROM citizen_complaints c
-		LEFT JOIN stations s ON c.station_id = s.id
-		LEFT JOIN users u ON c.assigned_to = u.id
-		LEFT JOIN firs f ON c.fir_id = f.id
-		WHERE c.id = $1`
-
-	err := r.db.GetContext(ctx, &complaint, query, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("complaint not found")
-		}
-		return nil, err
-	}
-	return &complaint, nil
-}
-
-func (r *CitizenPortalRepository) ListComplaints(ctx context.Context, filters map[string]interface{}, page, pageSize int) ([]models.CitizenComplaint, int64, error) {
-	var complaints []models.CitizenComplaint
-	var total int64
-
-	baseQuery := `FROM citizen_complaints c LEFT JOIN stations s ON c.station_id = s.id`
-	whereClause := " WHERE 1=1"
-	args := []interface{}{}
-	argIndex := 1
-
-	if status, ok := filters["status"].(string); ok && status != "" {
-		whereClause += fmt.Sprintf(" AND c.status = $%d", argIndex)
-		args = append(args, status)
-		argIndex++
-	}
-
-	if category, ok := filters["category"].(string); ok && category != "" {
-		whereClause += fmt.Sprintf(" AND c.category = $%d", argIndex)
-		args = append(args, category)
-		argIndex++
-	}
-
-	if stationID, ok := filters["station_id"].(uuid.UUID); ok {
-		whereClause += fmt.Sprintf(" AND c.station_id = $%d", argIndex)
-		args = append(args, stationID)
-		argIndex++
-	}
-
-	countQuery := "SELECT COUNT(*) " + baseQuery + whereClause
-	r.db.GetContext(ctx, &total, countQuery, args...)
-
-	offset := (page - 1) * pageSize
-	selectQuery := `SELECT c.*, s.name as station_name ` + baseQuery + whereClause +
-		fmt.Sprintf(" ORDER BY c.submitted_at DESC LIMIT $%d OFFSET $%d", argIndex, argIndex+1)
-	args = append(args, pageSize, offset)
-
-	r.db.SelectContext(ctx, &complaints, selectQuery, args...)
-
-	return complaints, total, nil
-}
-
-func (r *CitizenPortalRepository) UpdateComplaint(ctx context.Context, complaint *models.CitizenComplaint) error {
-	complaint.UpdatedAt = time.Now()
-
-	query := `
-		UPDATE citizen_complaints SET
-			status = $2, assigned_to = $3, station_id = $4, fir_id = $5,
-			response_notes = $6, rejection_reason = $7,
-			acknowledged_at = $8, assigned_at = $9, resolved_at = $10,
-			updated_at = $11
-		WHERE id = $1`
-
-	_, err := r.db.ExecContext(ctx, query,
-		complaint.ID, complaint.Status, complaint.AssignedTo, complaint.StationID, complaint.FIRID,
-		complaint.ResponseNotes, complaint.RejectionReason,
-		complaint.AcknowledgedAt, complaint.AssignedAt, complaint.ResolvedAt,
-		complaint.UpdatedAt,
-	)
-	return err
-}
-
-func (r *CitizenPortalRepository) AddComplaintUpdate(ctx context.Context, update *models.ComplaintUpdate) error {
-	update.ID = uuid.New()
-	update.CreatedAt = time.Now()
-
-	query := `
-		INSERT INTO complaint_updates (id, complaint_id, status, message, updated_by, is_public, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
-
-	_, err := r.db.ExecContext(ctx, query,
-		update.ID, update.ComplaintID, update.Status, update.Message,
-		update.UpdatedBy, update.IsPublic, update.CreatedAt,
-	)
-	return err
-}
-
-func (r *CitizenPortalRepository) GetComplaintUpdates(ctx context.Context, complaintID uuid.UUID, publicOnly bool) ([]models.ComplaintUpdate, error) {
-	var updates []models.ComplaintUpdate
-	query := `
-		SELECT cu.*, u.name as updated_by_name
-		FROM complaint_updates cu
-		LEFT JOIN users u ON cu.updated_by = u.id
-		WHERE cu.complaint_id = $1`
-
-	if publicOnly {
-		query += " AND cu.is_public = true"
-	}
-
-	query += " ORDER BY cu.created_at DESC"
-
-	err := r.db.SelectContext(ctx, &updates, query, complaintID)
-	return updates, err
-}
-
 // Public FIR Status
 func (r *CitizenPortalRepository) GetPublicFIRStatus(ctx context.Context, firNumber string, complainantPhone string) (*models.FIRStatusResponse, error) {
 	var status models.FIRStatusResponse
@@ -189,11 +27,12 @@ func (r *CitizenPortalRepository) GetPublicFIRStatus(ctx context.Context, firNum
 			f.fir_number,
 			s.name as station_name,
 			f.created_at as registration_date,
-			f.status,
+			f.status::text AS status,
 			f.updated_at as last_updated
 		FROM firs f
 		JOIN stations s ON f.station_id = s.id
-		WHERE f.fir_number = $1 AND f.complainant_phone = $2`
+		WHERE f.fir_number = $1
+		  AND right(regexp_replace(COALESCE(f.complainant_phone, ''), '\D', '', 'g'), 10) = $2`
 
 	err := r.db.GetContext(ctx, &status, query, firNumber, complainantPhone)
 	if err != nil {
@@ -378,19 +217,29 @@ func (r *CitizenPortalRepository) GetPortalStats(ctx context.Context) (*models.C
 	return stats, nil
 }
 
-// Generate tracking numbers
-func (r *CitizenPortalRepository) GenerateTrackingNumber(ctx context.Context) (string, error) {
-	var count int64
+// nextNumber allocates from the same atomic counters as formatRecordNumber
+// (migration 000033). COUNT+1 issued duplicates under concurrent submissions
+// and repeated a number after any delete; its errors were also discarded.
+func (r *CitizenPortalRepository) nextNumber(ctx context.Context, scope string) (int, int64, error) {
 	year := time.Now().Year()
-	r.db.GetContext(ctx, &count, "SELECT COUNT(*) FROM citizen_complaints WHERE EXTRACT(YEAR FROM created_at) = $1", year)
-	return fmt.Sprintf("CMP/%d/%06d", year, count+1), nil
+	var n int64
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO record_counters (scope, year, last_value) VALUES ($1, $2, 1)
+		ON CONFLICT (scope, year) DO UPDATE SET last_value = record_counters.last_value + 1
+		RETURNING last_value
+	`, scope, year).Scan(&n)
+	if err != nil {
+		return 0, 0, fmt.Errorf("allocate %s number: %w", scope, err)
+	}
+	return year, n, nil
 }
 
 func (r *CitizenPortalRepository) GenerateGrievanceNumber(ctx context.Context) (string, error) {
-	var count int64
-	year := time.Now().Year()
-	r.db.GetContext(ctx, &count, "SELECT COUNT(*) FROM grievances WHERE EXTRACT(YEAR FROM created_at) = $1", year)
-	return fmt.Sprintf("GRV/%d/%05d", year, count+1), nil
+	year, n, err := r.nextNumber(ctx, "GRV")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("GRV/%d/%05d", year, n), nil
 }
 
 // GenerateMissingReportNumber draws from the shared MIS counter, the same one

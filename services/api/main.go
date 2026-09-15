@@ -181,6 +181,8 @@ func main() {
 	cyberFraudHandler := handlers.NewCyberFraudHandler(services.NewCyberFraudService(repository.NewCyberFraudRepository(db), auditRepo))
 	graphHandler := handlers.NewGraphHandler(graphService)
 	citizenPortalHandler := handlers.NewCitizenPortalHandler(citizenPortalService)
+	// Phase 09 — citizen complaint register
+	complaintHandler := handlers.NewComplaintHandler(services.NewComplaintService(repository.NewComplaintRepository(db), auditRepo))
 	trafficChallanHandler := handlers.NewTrafficChallanHandler(trafficChallanService)
 	reportsHandler := handlers.NewReportsHandler(reportsService)
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
@@ -472,19 +474,26 @@ func main() {
 				graph.GET("/visualization", graphHandler.GetVisualizationData)
 			}
 
-			// Citizen Portal (protected routes for officers)
-			citizenAdmin := protected.Group("/citizen-portal")
+			// Phase 09 — Citizen Complaint & Grievance register.
+			// Any officer may take a complaint at the counter and read the
+			// register; acting on a complaint needs ASI; approving what the
+			// citizen is told needs SI and a second officer (see the service).
+			complaints := protected.Group("/complaints")
 			{
-				citizenAdmin.GET("/complaints", citizenPortalHandler.ListComplaints)
-				citizenAdmin.GET("/complaints/:id", citizenPortalHandler.GetComplaint)
-				citizenAdmin.PUT("/complaints/:id", citizenPortalHandler.UpdateComplaint)
-				citizenAdmin.POST("/complaints/:id/acknowledge", citizenPortalHandler.AcknowledgeComplaint)
-				citizenAdmin.POST("/complaints/:id/assign", middleware.RequireRole("SHO", "DSP", "SP"), citizenPortalHandler.AssignComplaint)
-				citizenAdmin.POST("/complaints/:id/resolve", citizenPortalHandler.ResolveComplaint)
-				citizenAdmin.POST("/complaints/:id/reject", citizenPortalHandler.RejectComplaint)
-				citizenAdmin.POST("/complaints/:id/convert-to-fir", middleware.RequireRole("SI", "INSPECTOR", "SHO"), citizenPortalHandler.ConvertToFIR)
-				citizenAdmin.POST("/complaints/:id/updates", citizenPortalHandler.AddComplaintUpdate)
-				citizenAdmin.GET("/complaints/:id/updates", citizenPortalHandler.GetComplaintUpdates)
+				complaints.GET("", complaintHandler.List)
+				complaints.GET("/stats", complaintHandler.Stats)
+				complaints.GET("/routing-targets", complaintHandler.RoutingTargets)
+				complaints.POST("", complaintHandler.Record)
+				complaints.GET("/:id", complaintHandler.Get)
+				complaints.GET("/:id/duplicate-candidates", complaintHandler.DuplicateCandidates)
+				complaints.POST("/:id/categorise", middleware.RequireRole("ASI"), complaintHandler.Categorise)
+				complaints.POST("/:id/route", middleware.RequireRole("ASI"), complaintHandler.Route)
+				complaints.POST("/:id/status", middleware.RequireRole("ASI"), complaintHandler.SetStatus)
+				complaints.POST("/:id/notes", middleware.RequireRole("ASI"), complaintHandler.AddNote)
+				complaints.POST("/:id/link-duplicate", middleware.RequireRole("ASI"), complaintHandler.LinkDuplicate)
+				complaints.POST("/:id/link-fir", middleware.RequireRole("ASI"), complaintHandler.LinkFIR)
+				complaints.POST("/:id/responses", middleware.RequireRole("ASI"), complaintHandler.DraftResponse)
+				complaints.POST("/:id/responses/:responseId/review", middleware.RequireRole("SI"), complaintHandler.ReviewResponse)
 			}
 
 			// Traffic Challan routes
@@ -983,9 +992,21 @@ func main() {
 		// Public Citizen Portal routes (no auth required)
 		citizen := v1.Group("/public")
 		{
-			citizen.POST("/complaints", citizenPortalHandler.SubmitComplaint)
-			citizen.GET("/complaints/:trackingNumber", citizenPortalHandler.TrackComplaint)
-			citizen.GET("/fir-status", citizenPortalHandler.TrackFIR)
+			// Phase 09. Tracking numbers contain "/", so tracking is a POST
+			// carrying the number with its second factor (phone, or the access
+			// code an anonymous complainant was given) — never the number alone.
+			citizen.POST("/complaints",
+				handlers.LimitBody(handlers.PublicBodyLimit),
+				middleware.RateLimiter(middleware.RateLimiterConfig{Limit: 10, Window: time.Hour, RedisClient: rdbV8, KeyPrefix: "public_complaint_submit"}),
+				complaintHandler.SubmitPublic)
+			citizen.POST("/complaints/track",
+				handlers.LimitBody(4<<10),
+				middleware.RateLimiter(middleware.RateLimiterConfig{Limit: 20, Window: 15 * time.Minute, RedisClient: rdbV8, KeyPrefix: "public_complaint_track"}),
+				complaintHandler.TrackPublic)
+			citizen.POST("/fir-status",
+				handlers.LimitBody(4<<10),
+				middleware.RateLimiter(middleware.RateLimiterConfig{Limit: 20, Window: 15 * time.Minute, RedisClient: rdbV8, KeyPrefix: "public_fir_status"}),
+				citizenPortalHandler.TrackFIR)
 			citizen.POST("/grievances", citizenPortalHandler.SubmitGrievance)
 			citizen.POST("/missing-persons", citizenPortalHandler.SubmitMissingPersonReport)
 			// Catch-all: report numbers are MIS/YYYY/NNNNN, and a :param cannot hold slashes.

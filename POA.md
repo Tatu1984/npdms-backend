@@ -421,13 +421,37 @@ Forecasting remains the AI layer.
 
 ---
 
-### Phase 09 — Citizen Complaint & Grievance · `PLANNED`
+### Phase 09 — Citizen Complaint & Grievance · `DONE`
 
-**Functional without AI.** Multi-channel intake (web, mobile, WhatsApp, email, call centre, counter), Bengali and mixed-script text, officer categorisation and routing, duplicate linking, status tracking visible to the citizen, response drafting.
+Functional without AI, on the existing `citizen_complaints` / `complaint_updates` register rather than a second one.
 
-`citizen_complaints`, `complaint_updates`, `grievances`, `public_fir_requests` exist.
+**Delivered**
+- Migration `000054`: channel with provenance (only the web portal receives directly; counter needs the recording officer; mobile, WhatsApp, email and call centre need the source reference they arrived under — enforced by constraint), text script, priority, categorisation, duplicate links, anonymous access-code hash, generated normalised phone, `simple` full-text `tsvector` with GIN index. New `complaint_routings` (every jurisdiction change with its reason) and `complaint_responses` (drafted by one officer, reviewed by another). Routing and status history are append-only by trigger; a reviewed response cannot be changed.
+- `/api/v1/complaints` (officer register): list with search, status, category, channel, script, unrouted, overdue and open filters; stats; intake; categorise (acknowledges); route to a station with unit, optional officer and reason; status transitions from a fixed table; internal notes; duplicate candidates and linking; FIR link; draft and review responses. ASI to act, SI to reject or approve. Every change and every view of a complainant's record audited with the actor.
+- **Bengali and mixed-script search**: prefix `tsquery` over the `simple` configuration, so বাংলা words match as written (`লরি রাস্` finds `লরি রাস্তা`); tsquery syntax characters stripped from input. Tracking-number and phone-digit search alongside.
+- **Duplicates by stated rule only**: same normalised mobile within 30 days, or same source reference on the same channel. The officer chooses; linking closes the duplicate, refuses self-links, chains and cycles, and locks both rows in id order.
+- **Response approval**: a citizen sees a response only after an SI or above other than the drafter approves it (service check and table constraint). A complaint cannot be resolved without an approved response.
+- **SLA ageing computed on read** against stated service standards — acknowledge within 24 hours, resolve within 30 days — returned by the API and shown on screen as configuration, not statutory limits.
+- Screens: `/grievance` register, detail sheet with every action as a real dialog, and the public `/citizen` portal (file, track, FIR status), all bilingual. Fixture grievances, the fake AI category/jurisdiction suggestions with confidence scores, the fake voice recorder, and the portal's Karnataka branding, invented statistics and mocked tracking removed. The portal's missing-person form, which submitted nothing, now directs to 112 / the station (Phase 04 owns missing-person reporting).
 
-Automatic categorisation, jurisdiction suggestion, duplicate detection and voice-to-text are the AI layer.
+**Security of the public routes**
+- Tracking needs the tracking number **and** the complainant's mobile number, or the one-time access code given to an anonymous complainant (only its SHA-256 is stored). Unknown numbers and wrong second factors give identical responses, so tracking numbers cannot be enumerated. Every attempt is audited with IP and user agent.
+- The public view carries status, public-safe bilingual history, approved responses, station name and rejection reason only — no officer names, internal notes, contact details, ids or the other complaint in a duplicate link.
+- Body limits (64 KB submit, 4 KB track → 413), per-IP limits (10 submissions/hour, 20 tracking or FIR-status lookups/15 min), strict input bounds and phone/email validation; decoder and validator messages are logged, never shown.
+- Tracking moved to `POST` (tracking numbers carry `/`; phone numbers stay out of URL logs). The old `GET /public/complaints/:trackingNumber` never matched and returned the full record including contact details.
+
+**Fixed along the way**
+- `GET /public/fir-status` could never succeed: the response struct lacked `db` tags, so every lookup scanned nothing and answered "not found". Also matched the phone as stored text only. Now `POST`, rate-limited, phone normalised on both sides.
+- Grievance numbers moved to the atomic counters (were `COUNT+1` with errors discarded). Complaint numbers now `CMP-YYYY-NNNNN` from the counters.
+- The old citizen-portal complaint handlers (list, update, assign, resolve, reject, convert-to-FIR) discarded errors, returned `null` lists and exposed `SELECT c.*`; they are replaced by the register above and removed.
+
+**Verified** — API probe 63/63 (public security, Bengali search, every rule and negative path) and a browser run 21/21 with a citizen, an ASI and an Inspector as the second approving officer: file in mixed script → Bengali search → categorise → route → internal note → draft → counter complaint from the same phone linked as duplicate → approve by second officer → resolve → citizen tracks (wrong phone refused; view carries no officer or internal data) → anonymous tracking by access code → public FIR status → Bengali labels on portal and register. Writes and audit confirmed in Postgres.
+
+**Open**
+- Only web and counter receive directly; WhatsApp, email, mobile app, call centre and NCRP remain officer-entered with a reference — no integration.
+- Grievances against officers (`grievances`) and FIR-copy requests are still submission-only: no officer workflow or public tracking yet.
+- The login form rejects usernames shorter than three characters, so the demo `si` and `hc` accounts cannot sign in through the UI.
+- Automatic categorisation, jurisdiction suggestion, similarity-based duplicate detection and voice-to-text are the AI layer.
 
 ---
 
