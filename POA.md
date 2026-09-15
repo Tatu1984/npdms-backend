@@ -272,13 +272,31 @@ An intelligence layer over cameras Kolkata Police already operates, not another 
 
 ---
 
-### Phase 04 — Missing & Vulnerable Persons · `PLANNED`
+### Phase 04 — Missing & Vulnerable Persons · `DONE`
 
-**Functional without AI.** Registration, vulnerability flags, first-24-hours checklist, sighting register with officer verification, movement reconstruction from verified sightings, family communication log.
+Local operational workflow for missing persons, functional without AI. National matching through NCRB/UNIFY and ICJS remains the authoritative channel; the platform is **not integrated** with it and says so on screen — entering details there is a checklist step the officer performs.
 
-`missing_person_reports` and `suspect_identifications` already exist; sightings need a table.
+**Delivered**
+- Migration `000042`. Extends `missing_person_reports` rather than duplicating it, so a report a family files on the citizen portal and one registered at the station are one record: `REPORTED` → `SEARCHING` → `FOUND` (traced, returned) or `CLOSED` (deceased, other), closure note required. Legacy rows normalised without inventing outcomes. ~17 routes under `/api/v1/missing-persons`.
+- **Vulnerability flags** — child, elderly, disability, mental health, trafficking risk. Any flag raises priority; a child or trafficking risk is critical; anyone under 18 is always flagged a child. Held by table constraints as well as the service.
+- **First-24-hours checklist** — created when the search starts, each step due a stated number of hours later, two extra steps for a child (FIR, SJPU/CWC). Completion records officer and time; overdue is computed on read and drives a filter and a stat.
+- **Sighting register** — any officer records; ASI and above verify or reject (rejection needs a reason), never the recording officer (service and constraint). Coordinates paired, no future sightings, none before last seen.
+- **Movement reconstruction** — the last-seen point followed by verified sightings only, in time order, with elapsed minutes.
+- **Family communication log** — officer, direction, channel, family member, summary, time. Allowed after closure.
+- **Lookout linking** — a MISSING notice is issued on the existing lookout register from the report and linked, rather than keeping a second notice list; closing the report resolves it.
+- **Children's records** — identifying details masked in lists for ranks below SI unless the officer registered, took up or is assigned to the report; the record itself returns 403 to them. Every view of a child's record, and every denied attempt, is audited.
+- Frontend: `lib/api/missing-persons.ts`, `hooks/use-missing-persons.ts`, both screens on live data, bilingual labels. Fake appearance-match scores, confidence meters, a camera search that searched nothing and a family update that sent nothing were removed.
 
-Appearance matching is the AI layer. National matching via NCRB/UNIFY and ICJS remains the authoritative channel — the platform's contribution is local operational workflow.
+**Verified** — 92-check API probe (rules and negative paths) and a browser run as ASI, inspector and constable (30 checks: registration, checklist, sightings verified and rejected by a second officer, movement, family contact, edit, lookout, closure, masking, restricted and not-found states, Bengali), with every write confirmed in Postgres.
+
+**Fixed in shared code while building it**
+- Citizen portal MIS numbers counted rows; now the shared counter. Its tracking query used `SELECT *`, which the new columns would break. Its tracking route could never match `MIS/YYYY/NNNNN` (a path parameter cannot hold slashes). Public tracking returned the full record — reporter's phone, a child's description — to anyone guessing a sequential number; it now returns progress only. A citizen report for a minor is flagged as a child.
+- **Every kebab-menu action that opened a dialog froze the page** after the dialog closed (`pointer-events: none` left on `<body>` by stacked Radix modal layers). Fixed in `components/platform/actions.tsx`; affects all modules.
+
+**Open**
+- Appearance matching is the AI layer and is not built.
+- Photographs: `photo_url` exists but there is no storage behind it, so none are taken.
+- `inter-agency` screens still read the old mock missing-person list.
 
 ---
 
