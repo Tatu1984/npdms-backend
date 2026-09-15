@@ -77,8 +77,8 @@ func requireActor(c *gin.Context) (uuid.UUID, bool) {
 	return *a, true
 }
 
-// bindJSON reads a JSON body, answering in plain words rather than validator text.
-func bindJSON(c *gin.Context, dst any) bool {
+// bindCaseFileJSON reads a JSON body, answering in plain words rather than validator text.
+func bindCaseFileJSON(c *gin.Context, dst any) bool {
 	if err := c.ShouldBindJSON(dst); err != nil {
 		badRequest(c, "The request body is not valid JSON for this action")
 		return false
@@ -101,7 +101,7 @@ func (h *CaseFileHandler) Create(c *gin.Context) {
 	var req struct {
 		WorkspaceID uuid.UUID `json:"workspaceId"`
 	}
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	if req.WorkspaceID == uuid.Nil {
@@ -161,7 +161,7 @@ func (h *CaseFileHandler) AddEntry(c *gin.Context) {
 		return
 	}
 	var req models.AddCaseFileEntryRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	entry, err := h.service.AddEntry(c.Request.Context(), id, req, actorID(c))
@@ -217,7 +217,7 @@ func (h *CaseFileHandler) RemoveEntry(c *gin.Context) {
 		return
 	}
 	var req models.RemoveCaseFileEntryRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	if err := h.service.RemoveEntry(c.Request.Context(), id, entryID, req.Reason, actorID(c)); err != nil {
@@ -278,7 +278,7 @@ func (h *CaseFileHandler) AddCharge(c *gin.Context) {
 		return
 	}
 	var req models.AddCaseFileChargeRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	ch, err := h.service.AddCharge(c.Request.Context(), id, req, actorID(c))
@@ -315,7 +315,7 @@ func (h *CaseFileHandler) LinkSupport(c *gin.Context) {
 		return
 	}
 	var req models.SupportEvidenceRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	if err := h.service.LinkSupport(c.Request.Context(), id, chargeID, req, actorID(c)); err != nil {
@@ -364,7 +364,7 @@ func (h *CaseFileHandler) AddWitnessFact(c *gin.Context) {
 		return
 	}
 	var req models.AddWitnessFactRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	if err := h.service.AddWitnessFact(c.Request.Context(), id, req, actorID(c)); err != nil {
@@ -516,7 +516,7 @@ func (h *CaseFileHandler) Return(c *gin.Context) {
 		return
 	}
 	var req models.ReturnPackRequest
-	if !bindJSON(c, &req) {
+	if !bindCaseFileJSON(c, &req) {
 		return
 	}
 	pack, err := h.service.Return(c.Request.Context(), id, packID, actor, req.Reason)
