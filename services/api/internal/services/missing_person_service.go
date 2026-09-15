@@ -16,7 +16,7 @@ import (
 // ErrChildRecordRestricted is returned when an officer below the rank allowed
 // to handle a child's identifying details, and not assigned to the report,
 // asks for it.
-var ErrChildRecordRestricted = errors.New("this report concerns a child; it is restricted to SI and above or the assigned officer")
+var ErrChildRecordRestricted = errors.New("this report concerns a child; it is restricted to SI and above and the officers working it")
 
 // childRecordMinimumRole is the lowest rank that may see a child's identifying
 // details without being assigned to the report.
@@ -118,11 +118,18 @@ func checklistFor(vulnerabilities []string) []repository.ChecklistTemplateItem {
 	return items
 }
 
+// canSeeChild: SI and above, or the officer assigned to the report, who
+// registered it, or who took it up.
 func canSeeChild(p *models.MissingPerson, v Viewer) bool {
 	if models.RoleHierarchy[v.Role] >= models.RoleHierarchy[childRecordMinimumRole] {
 		return true
 	}
-	return p.AssignedTo != nil && *p.AssignedTo == v.ID
+	for _, involved := range []*uuid.UUID{p.AssignedTo, p.RegisteredBy, p.SearchStartedBy} {
+		if involved != nil && *involved == v.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // mask blanks a child's identifying details for a viewer who may not see them.

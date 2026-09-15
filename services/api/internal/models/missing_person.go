@@ -61,7 +61,9 @@ type MissingPerson struct {
 	FIRNumber        string              `json:"firNumber"`
 	LookoutID        *uuid.UUID          `json:"lookoutId"`
 	LookoutNumber    string              `json:"lookoutNumber"`
+	RegisteredBy     *uuid.UUID          `json:"registeredBy"`
 	RegisteredByName string              `json:"registeredByName"`
+	SearchStartedBy  *uuid.UUID          `json:"searchStartedBy"`
 	SearchStartedAt  *time.Time          `json:"searchStartedAt"`
 	ClosureOutcome   *string             `json:"closureOutcome"`
 	ClosedAt         *time.Time          `json:"closedAt"`
@@ -215,9 +217,11 @@ type RecordFamilyContactRequest struct {
 	ContactedAt time.Time `json:"contactedAt" binding:"required"`
 }
 
+// CloseMissingPersonRequest carries no binding tags: the service validates
+// outcome and note so the officer sees a readable message.
 type CloseMissingPersonRequest struct {
-	Outcome        string  `json:"outcome" binding:"required"`
-	Note           string  `json:"note" binding:"required"`
+	Outcome        string  `json:"outcome"`
+	Note           string  `json:"note"`
 	FoundLocation  *string `json:"foundLocation"`
 	FoundCondition *string `json:"foundCondition"`
 }
