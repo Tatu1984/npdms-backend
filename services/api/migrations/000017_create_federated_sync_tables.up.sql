@@ -434,18 +434,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Insert default jurisdictions
+-- Insert default jurisdictions (West Bengal / Kolkata Police)
 INSERT INTO jurisdictions (id, code, name, type, sync_priority) VALUES
     ('00000000-0000-0000-0000-000000000001', 'CENTRAL', 'National Command', 'CENTRAL', 1),
-    ('00000000-0000-0000-0000-000000000002', 'STATE_KA', 'Karnataka State', 'STATE', 2),
-    ('00000000-0000-0000-0000-000000000003', 'DIST_BLR', 'Bangalore District', 'DISTRICT', 3),
-    ('00000000-0000-0000-0000-000000000004', 'STN_KOR', 'Koramangala Station', 'STATION', 4)
-ON CONFLICT (code) DO NOTHING;
+    ('00000000-0000-0000-0000-000000000002', 'STATE_WB', 'West Bengal State', 'STATE', 2),
+    ('00000000-0000-0000-0000-000000000003', 'DIST_KOL', 'Kolkata Police Commissionerate', 'DISTRICT', 3),
+    ('00000000-0000-0000-0000-000000000004', 'STN_LBZ', 'Lalbazar (Kolkata Police HQ)', 'STATION', 4)
+ON CONFLICT DO NOTHING;
 
 -- Set up hierarchy
-UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000001' WHERE code = 'STATE_KA';
-UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000002' WHERE code = 'DIST_BLR';
-UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000003' WHERE code = 'STN_KOR';
+UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000001' WHERE code = 'STATE_WB';
+UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000002' WHERE code = 'DIST_KOL';
+UPDATE jurisdictions SET parent_id = '00000000-0000-0000-0000-000000000003' WHERE code = 'STN_LBZ';
 
 COMMENT ON TABLE sync_outbox IS 'Outbox pattern for reliable sync message delivery';
 COMMENT ON TABLE sync_conflicts IS 'Detected conflicts requiring resolution';

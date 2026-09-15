@@ -54,6 +54,7 @@ Work that is not a phase but that every phase depends on.
 | Repo split — backend and frontend | `DONE` | `Tatu1984/npdms-backend` (Go API, schema, migrations, infra) and `Tatu1984/npdms` (`ui/web`). Backend files were not removed from the frontend repo. |
 | UI/UX reconstruction | `DONE` | Design tokens (light govt-standard default, dark for ops), shadcn primitives on Radix, reactbits motion, bilingual shell, module registry, WB/Kolkata reference data, BNS/BNSS/BSA replacing IPC. All 14 module screens navigable. |
 | Local Postgres + reproducible bootstrap | `DONE` | `scripts/bootstrap-db.sh` — idempotent, offline, two-pass migration apply. 101 tables clean from scratch. |
+| Kolkata demo dataset, no records in migrations | `DONE` | Migrations and the base schema now create schema and reference data only; the Koramangala station, `@karpolice.gov.in` accounts, KOR/2024 FIRs and Karnataka/Maharashtra hierarchy seeds are gone, and migration `000064` converts databases built before the change while keeping the demo logins. `services/db/init/002_demo_kolkata.sql` loads 17 real Kolkata Police stations and 23 FICTIONAL demo officers (password `Demo@123`). `scripts/seed-kolkata-demo.py` loads the demo records through the API — see "Demo dataset" below. `scripts/cleanup-test-data.sql` removes probe-tagged rows for review before use. |
 | Migration chain repaired | `DONE` | Five real bugs fixed (partitioned PK, non-immutable index predicates, six wrong column names, undeclared ordering). Drift captured in migration `000027`. |
 | Edge deployment | `DONE` | `deploy/edge/` — compose with only Postgres, Redis, MinIO, API. Datastores bind to loopback. Offline install path. `IP_INTEL_ENABLED=false` for air-gapped boxes. |
 | Free demo/staging deployment — Oracle | `ABANDONED` | `deploy/oracle-free/` remains in the repo and is still correct, but the Oracle Always Free shape was dropped. See the note below. |
@@ -68,6 +69,29 @@ Work that is not a phase but that every phase depends on.
 | Offline / sync layer | `PLANNED` | Deferred by decision. The previous IndexedDB layer was removed: it masked failures with demo data, returned locally queued writes as successes, and the service worker cached every API response for 24 hours. When this is built, a queued write must be visibly pending, never shown as saved. |
 | CCTNS / ICJS integration | `PLANNED` | The platform consumes authorised data from systems Kolkata Police already operates. Needs their interface specifications. |
 | TLS / reverse proxy | `PLANNED` | Still required for the MDC box. The Vercel staging tier terminates TLS itself, so this is outstanding only for the edge deployment. |
+
+### Demo dataset
+
+Fictional people, real places. Loaded through the API as the officer who would record each item, so numbering, workflow rules, custody signatures and the audit trail are genuine. Idempotent through a `demo_seed_ledger` table in the target database.
+
+| Module | Records |
+|---|---|
+| Stations, officers | 17 Kolkata Police stations across 8 divisions; 23 demo accounts; 20 personnel records; 8 fleet vehicles |
+| FIRs and cases | 36 FIRs over six months at 8 stations (BNS / IT Act sections), 16 cases, 13 accused, 10 witnesses |
+| Evidence | 16 register items with attached files, verified digests and 28 signed custody legs; 6 forensic requests to CFSL Kolkata, FSL West Bengal and the State Finger Print Bureau |
+| Court | 6 warrants, 5 bail applications, 10 hearings and 5 orders at City Sessions, Bankshall, Alipore, Special POCSO, Special Court (Cyber) and Calcutta High Court |
+| Phase modules | 4 investigation workspaces, 5 alerts, 4 lookouts with sightings, 10 weapons with 5 issuances, 3 missing-person reports (one child), 4 cyber fraud complaints with a money trail, freeze and recovery, 2 traffic incidents with an approved report, 4 dispatch incidents, 4 citizen complaints (English and Bengali), 8 CCTV cameras with 2 events, 4 risk beats |
+
+Loading it:
+
+```
+# empty database: schema, reference data, stations and demo accounts
+DATABASE_URL=… ./scripts/bootstrap-db.sh --with-demo-data
+# an API running against that database, then
+DEMO_SEED_CONFIRM=yes DATABASE_URL=… API_URL=https://…/api/v1 python3 scripts/seed-kolkata-demo.py
+```
+
+The seed needs `psql` and Python 3 only. It backs off on rate limiting (a fresh run against a rate-limited API takes about five minutes) and a second run creates nothing. Not included yet: knowledge documents (Phase 11), case files (Phase 12) and body-worn camera records (Phase 13).
 
 ### Deployed environments
 

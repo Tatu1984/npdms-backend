@@ -218,44 +218,35 @@ CREATE TRIGGER trg_update_district_station_count
 AFTER INSERT OR UPDATE OR DELETE ON police_stations
 FOR EACH ROW EXECUTE FUNCTION update_district_station_count();
 
--- Insert sample data for Indian police hierarchy
+-- Reference hierarchy for West Bengal. Kolkata Police is a commissionerate
+-- reporting to the state; its eight divisions are recorded as districts so the
+-- state and district dashboards have a real structure to roll up.
 INSERT INTO states (name, code, dgp_name) VALUES
-    ('Maharashtra', 'MH', 'DGP Maharashtra'),
-    ('Delhi', 'DL', 'Commissioner of Police'),
-    ('Karnataka', 'KA', 'DGP Karnataka'),
-    ('Tamil Nadu', 'TN', 'DGP Tamil Nadu'),
-    ('Uttar Pradesh', 'UP', 'DGP Uttar Pradesh')
+    ('West Bengal', 'WB', 'DGP & IGP, West Bengal')
 ON CONFLICT (code) DO NOTHING;
 
--- Insert zones for Maharashtra
 INSERT INTO zones (state_id, name, code, headquarters)
-SELECT s.id, 'Mumbai Zone', 'MH-Z1', 'Mumbai'
-FROM states s WHERE s.code = 'MH'
+SELECT s.id, 'Kolkata Police Commissionerate', 'WB-KP', 'Lalbazar, Kolkata'
+FROM states s WHERE s.code = 'WB'
 ON CONFLICT (state_id, code) DO NOTHING;
 
-INSERT INTO zones (state_id, name, code, headquarters)
-SELECT s.id, 'Pune Zone', 'MH-Z2', 'Pune'
-FROM states s WHERE s.code = 'MH'
-ON CONFLICT (state_id, code) DO NOTHING;
-
--- Insert ranges
 INSERT INTO ranges (zone_id, name, code, headquarters)
-SELECT z.id, 'Mumbai City Range', 'MH-Z1-R1', 'Mumbai'
-FROM zones z WHERE z.code = 'MH-Z1'
+SELECT z.id, 'Kolkata Police Divisions', 'WB-KP-DIV', 'Lalbazar, Kolkata'
+FROM zones z WHERE z.code = 'WB-KP'
 ON CONFLICT (zone_id, code) DO NOTHING;
 
-INSERT INTO ranges (zone_id, name, code, headquarters)
-SELECT z.id, 'Thane Range', 'MH-Z1-R2', 'Thane'
-FROM zones z WHERE z.code = 'MH-Z1'
-ON CONFLICT (zone_id, code) DO NOTHING;
-
--- Insert districts
 INSERT INTO districts (range_id, name, code, headquarters, control_room_num)
-SELECT r.id, 'Mumbai City', 'MH-MUM', 'Mumbai', '100'
-FROM ranges r WHERE r.code = 'MH-Z1-R1'
-ON CONFLICT (range_id, code) DO NOTHING;
-
-INSERT INTO districts (range_id, name, code, headquarters, control_room_num)
-SELECT r.id, 'Thane', 'MH-THN', 'Thane', '100'
-FROM ranges r WHERE r.code = 'MH-Z1-R2'
+SELECT r.id, d.name, d.code, d.hq, '100'
+FROM ranges r
+CROSS JOIN (VALUES
+    ('Central Division',          'KP-CEN', 'Lalbazar'),
+    ('North Division',            'KP-NTH', 'Shyampukur'),
+    ('South Division',            'KP-STH', 'Bhowanipore'),
+    ('South East Division',       'KP-SE',  'Park Street'),
+    ('South West Division',       'KP-SW',  'Behala'),
+    ('East Division',             'KP-EST', 'Entally'),
+    ('Port Division',             'KP-PRT', 'Garden Reach'),
+    ('Eastern Suburban Division', 'KP-ESD', 'Jadavpur')
+) AS d(name, code, hq)
+WHERE r.code = 'WB-KP-DIV'
 ON CONFLICT (range_id, code) DO NOTHING;

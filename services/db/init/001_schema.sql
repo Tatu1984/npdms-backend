@@ -57,7 +57,7 @@ CREATE TABLE stations (
     code VARCHAR(20) UNIQUE NOT NULL,
     address TEXT,
     district VARCHAR(100),
-    state VARCHAR(100) DEFAULT 'Karnataka',
+    state VARCHAR(100) DEFAULT 'West Bengal',
     phone VARCHAR(20),
     email VARCHAR(255),
     latitude DECIMAL(10, 8),
@@ -382,61 +382,12 @@ CREATE TRIGGER update_forensic_updated_at BEFORE UPDATE ON forensic_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- =====================================================
--- SEED DATA
+-- NO SEED DATA
 -- =====================================================
-
--- Insert default station
-INSERT INTO stations (id, name, code, address, district, phone, latitude, longitude) VALUES
-    ('550e8400-e29b-41d4-a716-446655440001', 'Koramangala Police Station', 'KOR',
-     '80 Feet Road, Koramangala, Bangalore', 'Bangalore Urban', '080-25520100',
-     12.9352, 77.6245);
-
--- Insert demo users (password: Demo@123)
--- Password hash for 'Demo@123' using bcrypt
-INSERT INTO users (id, username, email, password_hash, name, role, badge_number, station_id, is_active) VALUES
-    ('550e8400-e29b-41d4-a716-446655440009', 'admin', 'admin@npdms.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'System Administrator', 'DGP', 'ADMIN-001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440010', 'constable', 'constable@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Ramesh Kumar', 'CONSTABLE', 'KAR-PC-1001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440011', 'hc', 'hc@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Suresh Patil', 'HEAD_CONSTABLE', 'KAR-HC-2001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440012', 'asi', 'asi@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Venkatesh Reddy', 'ASI', 'KAR-ASI-3001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440013', 'si', 'si@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Priya Sharma', 'SI', 'KAR-SI-4001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440014', 'inspector', 'inspector@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Rajendra Singh', 'INSPECTOR', 'KAR-INS-5001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440015', 'sho', 'sho@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Vikram Desai', 'SHO', 'KAR-SHO-6001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440016', 'dsp', 'dsp@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Anjali Menon', 'DSP', 'KAR-DSP-7001', '550e8400-e29b-41d4-a716-446655440001', true),
-    ('550e8400-e29b-41d4-a716-446655440017', 'sp', 'sp@karpolice.gov.in',
-     '$2b$10$yG1J9RcteL35i6x41ZCQUexMQx5eAEXjryaczK/cAc/fipIeEL0Ci',
-     'Arun Kumar IPS', 'SP', 'KAR-SP-8001', '550e8400-e29b-41d4-a716-446655440001', true);
-
--- Insert sample FIRs
-INSERT INTO firs (id, fir_number, station_id, complainant_name, complainant_phone, complainant_address,
-    incident_date, incident_time, incident_location, incident_description, ipc_sections,
-    status, priority, registered_by, investigating_officer) VALUES
-    ('660e8400-e29b-41d4-a716-446655440001', 'KOR/2024/00001', '550e8400-e29b-41d4-a716-446655440001',
-     'Anil Kumar', '9876543210', '123, MG Road, Bangalore',
-     '2024-01-15', '10:30:00', 'SBI Main Branch, Koramangala',
-     'Armed robbery at bank. Three masked individuals entered and stole approximately Rs. 18.5 lakhs.',
-     ARRAY['IPC 392', 'IPC 397', 'Arms Act 25'], 'UNDER_INVESTIGATION', 'HIGH',
-     '550e8400-e29b-41d4-a716-446655440015', '550e8400-e29b-41d4-a716-446655440013'),
-    ('660e8400-e29b-41d4-a716-446655440002', 'KOR/2024/00002', '550e8400-e29b-41d4-a716-446655440001',
-     'Priya Nair', '9876543211', '456, Indiranagar, Bangalore',
-     '2024-01-16', '22:15:00', 'Near Forum Mall, Koramangala',
-     'Chain snatching incident. Gold chain worth Rs. 2 lakhs snatched by two individuals on motorcycle.',
-     ARRAY['IPC 379', 'IPC 356'], 'REGISTERED', 'MEDIUM',
-     '550e8400-e29b-41d4-a716-446655440013', '550e8400-e29b-41d4-a716-446655440012');
-
-COMMIT;
+-- The schema carries no records. Earlier versions inserted a Bangalore
+-- station, Karnataka officer accounts and two sample FIRs here, so every
+-- database built from this file started with fabricated data.
+--
+-- Kolkata Police reference data (stations) and the demo sign-in accounts are
+-- loaded by services/db/init/002_demo_kolkata.sql; operational demo records
+-- by scripts/seed-kolkata-demo.py. Neither is applied to a production build.

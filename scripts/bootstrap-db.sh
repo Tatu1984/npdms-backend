@@ -8,7 +8,10 @@
 #
 #   ./scripts/bootstrap-db.sh                      # uses DATABASE_URL, or local defaults
 #   DB_NAME=npdms ./scripts/bootstrap-db.sh
-#   ./scripts/bootstrap-db.sh --with-demo-data     # also loads demo officers and cases
+#   ./scripts/bootstrap-db.sh --with-demo-data     # also loads Kolkata stations and demo accounts
+#
+# Migrations create schema and reference data only — no records. Operational
+# demo records are loaded through the API by scripts/seed-kolkata-demo.py.
 #
 set -euo pipefail
 
@@ -132,9 +135,9 @@ ok "Schema ready — $FINAL tables"
 
 # -------------------------------------------------------------- demo data ---
 if [[ "$WITH_DEMO" == "1" ]]; then
-  info "Loading demo data"
+  info "Loading Kolkata stations and demo accounts"
   "${PSQL[@]}" -q -f "$ROOT/services/db/init/002_demo_kolkata.sql"
-  ok "Demo data loaded"
+  ok "Demo data loaded — run scripts/seed-kolkata-demo.py against the API for demo records"
 fi
 
 echo
