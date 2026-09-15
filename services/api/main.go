@@ -74,7 +74,6 @@ func main() {
 	vehicleRepo := repository.NewVehicleRepository(db)
 	courtRepo := repository.NewCourtRepository(db)
 	alertRepo := repository.NewAlertRepository(db)
-	cyberCrimeRepo := repository.NewCyberCrimeRepository(sqlxDB)
 	graphRepo := repository.NewGraphRepository(sqlxDB)
 	citizenPortalRepo := repository.NewCitizenPortalRepository(sqlxDB)
 	trafficChallanRepo := repository.NewTrafficChallanRepository(db)
@@ -100,7 +99,6 @@ func main() {
 	courtService := services.NewCourtService(courtRepo, auditRepo)
 	alertService := services.NewAlertService(alertRepo, auditRepo)
 	mlService := services.NewMLService(firRepo, auditRepo)
-	cyberCrimeService := services.NewCyberCrimeService(cyberCrimeRepo, auditRepo)
 	graphService := services.NewGraphService(graphRepo, auditRepo)
 	citizenPortalService := services.NewCitizenPortalService(citizenPortalRepo, firRepo, auditRepo)
 	trafficChallanService := services.NewTrafficChallanService(trafficChallanRepo, auditRepo)
@@ -157,7 +155,7 @@ func main() {
 	alertHandler := handlers.NewAlertHandler(alertService)
 	mlHandler := handlers.NewMLHandler(mlService)
 	healthHandler := handlers.NewHealthHandler(db, rdb)
-	cyberCrimeHandler := handlers.NewCyberCrimeHandler(cyberCrimeService)
+	cyberFraudHandler := handlers.NewCyberFraudHandler(services.NewCyberFraudService(repository.NewCyberFraudRepository(db), auditRepo))
 	graphHandler := handlers.NewGraphHandler(graphService)
 	citizenPortalHandler := handlers.NewCitizenPortalHandler(citizenPortalService)
 	trafficChallanHandler := handlers.NewTrafficChallanHandler(trafficChallanService)
@@ -397,21 +395,32 @@ func main() {
 				})
 			}
 
-			// Cyber Crime routes
-			cyberCrime := protected.Group("/cyber-crime")
+			// Phase 05 — Cybercrime & Financial Fraud (functional without AI)
+			cyber := protected.Group("/cyber-crime")
 			{
-				cyberCrime.GET("", cyberCrimeHandler.List)
-				cyberCrime.GET("/:id", cyberCrimeHandler.Get)
-				cyberCrime.POST("", middleware.RequireRole("SI", "INSPECTOR", "SHO"), cyberCrimeHandler.Create)
-				cyberCrime.PUT("/:id", middleware.RequireRole("SI", "INSPECTOR", "SHO"), cyberCrimeHandler.Update)
-				cyberCrime.PATCH("/:id/status", middleware.RequireRole("SI", "INSPECTOR", "SHO"), cyberCrimeHandler.UpdateStatus)
-				cyberCrime.GET("/stats", cyberCrimeHandler.GetStats)
-				cyberCrime.POST("/:id/evidence", cyberCrimeHandler.AddDigitalEvidence)
-				cyberCrime.GET("/:id/evidence", cyberCrimeHandler.GetDigitalEvidence)
-				cyberCrime.POST("/:id/financial-trail", cyberCrimeHandler.AddFinancialTrail)
-				cyberCrime.GET("/:id/financial-trails", cyberCrimeHandler.GetFinancialTrails)
-				cyberCrime.POST("/:id/osint", cyberCrimeHandler.AddOSINTReport)
-				cyberCrime.GET("/:id/osint", cyberCrimeHandler.GetOSINTReports)
+				cyber.GET("", cyberFraudHandler.List)
+				cyber.GET("/dashboard", cyberFraudHandler.Dashboard)
+				cyber.GET("/clusters", cyberFraudHandler.Clusters)
+				cyber.GET("/entities", cyberFraudHandler.SearchEntities)
+				cyber.GET("/:id", cyberFraudHandler.Get)
+				cyber.POST("", middleware.RequireRole("SI"), cyberFraudHandler.Register)
+				cyber.PUT("/:id", middleware.RequireRole("SI"), cyberFraudHandler.Update)
+				cyber.PATCH("/:id/status", middleware.RequireRole("SI"), cyberFraudHandler.SetStatus)
+				cyber.GET("/:id/network", cyberFraudHandler.Network)
+
+				cyber.GET("/:id/entities", cyberFraudHandler.Entities)
+				cyber.POST("/:id/entities", middleware.RequireRole("ASI"), cyberFraudHandler.RecordEntity)
+				cyber.DELETE("/:id/entities/:linkId", middleware.RequireRole("SI"), cyberFraudHandler.RemoveEntity)
+
+				cyber.GET("/:id/transactions", cyberFraudHandler.Transactions)
+				cyber.POST("/:id/transactions", middleware.RequireRole("ASI"), cyberFraudHandler.RecordTransaction)
+
+				cyber.GET("/:id/freeze-requests", cyberFraudHandler.FreezeRequests)
+				cyber.POST("/:id/freeze-requests", middleware.RequireRole("SI"), cyberFraudHandler.DraftFreeze)
+				cyber.POST("/:id/freeze-requests/:freezeId/transition", middleware.RequireRole("SI"), cyberFraudHandler.TransitionFreeze)
+
+				cyber.GET("/:id/recoveries", cyberFraudHandler.Recoveries)
+				cyber.POST("/:id/recoveries", middleware.RequireRole("SI"), cyberFraudHandler.RecordRecovery)
 			}
 
 			// Graph Intelligence routes
