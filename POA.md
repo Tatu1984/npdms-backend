@@ -222,14 +222,34 @@ Tamper-evident digital evidence: registration, hashing, custody transfers, acces
 
 **Open** — the custody signature is an HMAC proving the platform recorded it and that it has not been altered. It is not a personal digital signature bound to an officer's own key pair, which would need a PKI the deployment does not have.
 
-### Phase 03 — CCTV & Video Intelligence · `PLANNED`
+### Phase 03 — CCTV & Video Intelligence · `DONE` (functional layer)
 
-An intelligence layer over cameras Kolkata Police already operates, not another CCTV installation.
+An intelligence layer over cameras Kolkata Police already operates, not another CCTV installation. Functional without AI; detection, natural-language search and multi-camera tracking remain the AI layer and are not built or imitated.
 
-**Functional without AI.** Camera register, RTSP/ONVIF/NVR integration, operator-raised events, event triage and confirmation, incident association, purpose-logged search. Detection and natural-language search are the AI layer.
+**Delivered**
+- Migration `000040`: `cameras`, `camera_health_checks`, `video_events`, `video_access_log`. `/api/v1/video/*` (routes and role floors documented in the Phase 03 block of `main.go`).
+- **Camera register** — code, location, coordinates, station, operating agency (KP/KMC/Traffic/Private/Other), stream type RTSP/ONVIF/NVR or none, host/port/path. Stream credentials are encrypted at rest (AES-256-GCM, key from `CCTV_CREDENTIAL_KEY`, falling back to the JWT secret) and never returned — responses carry only `hasCredentials`. Edits keep credentials unless replaced or cleared; changing the stream target discards earlier health results. Decommissioning requires a reason.
+- **Health is only ever measured.** A reachability check opens a TCP connection to the configured host and port with a 3 s timeout and stores every result. The register shows `REACHABLE`, `UNREACHABLE`, `UNCHECKED` or `NO_STREAM` — never "online" without a successful check, and the screen states that reachable means the port answered, not that video flows.
+- **No simulated video.** Live playback needs a media gateway that is not deployed; the feed panel says so and names the configured stream target.
+- **Operator-raised events** — type, severity, time on the footage, description; `origin = officer`. Triage is confirm or dismiss by an officer **other than the raiser** (service check and table constraint); dismissal needs a note. Only a confirmed event links to a FIR or case, picked from the registers; linking a case carries its FIR.
+- **Privacy governance from the first release** — retention class per camera (SHORT 7 d, STANDARD 30 d, EXTENDED 90 d) inherited by events, with `retain_until` computed from the footage time; an event whose footage is already past retention is refused. Linked events move to `EVIDENTIAL` with no expiry and cannot be downgraded. Masking flag on cameras and events. Expired events are excluded from search, return 410 on open or triage, and are deleted by an audited purge that never touches evidential events.
+- **Purpose-logged access** — searching or opening event records requires a stated purpose (≥ 10 characters). The purpose, filters, result count, officer and address are written to an append-only `video_access_log` (update/delete refused by trigger) and to the audit trail *before* results are released. Searches never refetch on their own, so every logged search is one an officer ran.
+- **Role floors** — view register and raise events: any officer; reachability check, search and open events: ASI; triage and linking: SI; register/edit cameras and change retention or masking: SHO; decommission, purge and read the purpose log: DSP. The UI shows controls by the same floors and explains a refusal rather than hiding the tab.
+- Every change audited with its actor: `camera_registered`, `camera_updated`, `camera_health_checked`, `camera_decommissioned`, `video_event_raised|viewed|confirmed|dismissed|linked|retention_updated`, `video_events_searched|purged`.
+- Frontend: `lib/api/video.ts`, `hooks/use-video.ts`, `components/video/*`, rewritten `app/video-intelligence/page.tsx`; bilingual (`video.*` in both dictionaries). Mock cameras and events removed from `lib/platform/mock.ts`; the dashboard tile reads events awaiting triage from the API.
 
-**Backend** — new tables for cameras and events; feed integration; event lifecycle; purpose-based search logging.
-**Note** — privacy governance (role-based access, retention, masking, purpose logging) is required from the first release, not with the AI layer.
+**Verified** — an API probe of 102 checks covering rules and refusals (duplicate code, malformed stream host, half coordinates, credentials never in responses and not stored in plaintext, real reachable and unreachable checks, stream change invalidating health, retention inheritance and past-retention refusal, purpose required and recorded, self-triage refused in the service and by the table, link before confirmation refused, evidential downgrade refused, expiry hiding and 410, purge keeping evidential events, append-only log, role floors, decommissioned-camera refusals, audit coverage with actors). A browser run of 39 checks drove every form as SHO, constable and DSP — register with credentials, check reachability, details and edit, unreachable camera, API validation shown, constable rank limits, raise events, purpose refusal and review, open, confirm, link to a case, dismiss with and without note, own-event triage blocked, purpose log, decommission, purge — with each write confirmed in Postgres and the Bengali screen checked.
+
+**Fixed in shared code while verifying** (frontend)
+- `CountUp` animated only once per mount, so every stat tile whose value arrives from the API after mount stayed at its first number — usually 0 — on every screen that uses `StatTile`.
+- `ActionMenu` prevented the dropdown from closing when an action ran. The modal menu stayed mounted under the dialog the action opened, and its `pointer-events: none` on `<body>` outlived the dialog, so the whole page stopped responding after any kebab action that opened a dialog.
+
+**Open**
+- Playback and snapshot export need a media gateway on the MDC box (RTSP → HLS/WebRTC), with masking applied at export. Masking is recorded, not yet enforced on media because no media passes through the platform.
+- Reachability is on demand; a scheduled sweep of all active cameras is not yet running.
+- ONVIF device discovery and NVR channel enumeration are not implemented — connection details are entered by hand.
+- Purge is manual (DSP); an automatic retention job is a later step.
+- `go vet ./...` still fails on the pre-existing `testutil/fixtures.go`.
 
 ---
 
