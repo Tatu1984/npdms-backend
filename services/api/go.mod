@@ -24,6 +24,7 @@ require (
 )
 
 require (
+	github.com/boombuler/barcode v1.0.0 // indirect
 	github.com/bytedance/sonic v1.9.1 // indirect
 	github.com/cenkalti/backoff/v3 v3.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect

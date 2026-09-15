@@ -169,6 +169,7 @@ func main() {
 	defer stopDispatch()
 	go dispatchService.RunEscalations(dispatchCtx, 30*time.Second)
 	riskHandler := handlers.NewRiskHandler(services.NewRiskService(riskRepo, auditRepo))
+	malkhanaHandler := handlers.NewMalkhanaHandler(services.NewMalkhanaService(repository.NewMalkhanaRepository(db), alertRepo, auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -774,6 +775,38 @@ func main() {
 				trafficIncidents.POST("/:id/reports/:reportId/submit", middleware.RequireRole("ASI"), trafficIncidentHandler.SubmitReport)
 				trafficIncidents.POST("/:id/reports/:reportId/approve", middleware.RequireRole("SI"), trafficIncidentHandler.ApproveReport)
 				trafficIncidents.POST("/:id/reports/:reportId/return", middleware.RequireRole("SI"), trafficIncidentHandler.ReturnReport)
+			}
+
+			// Phase 14 — Malkhana / Seized Property (functional layer, no blockchain)
+			//
+			// Role floors (officers below DSP work only with their own station):
+			//   view register, item, label, history, dashboard .... any officer
+			//   register property, verify seals, move out / return  ASI
+			//   add storage locations, move within the malkhana .... SI
+			//   reseal after a broken seal (records the reason) ..... SHO
+			//   disposal against a court order ...................... SHO
+			//   (narcotics destruction also needs a DSP-rank witness)
+			malkhana := protected.Group("/malkhana")
+			{
+				malkhana.GET("/dashboard", malkhanaHandler.Dashboard)
+				malkhana.GET("/stations", malkhanaHandler.Stations)
+				malkhana.GET("/locations", malkhanaHandler.Locations)
+				malkhana.POST("/locations", middleware.RequireRole("SI"), malkhanaHandler.CreateLocation)
+				malkhana.GET("/items", malkhanaHandler.List)
+				malkhana.POST("/items", middleware.RequireRole("ASI"), malkhanaHandler.Register)
+				malkhana.GET("/items/by-number/:number", malkhanaHandler.GetByNumber)
+				malkhana.GET("/items/:id", malkhanaHandler.Get)
+				malkhana.GET("/items/:id/label", malkhanaHandler.Label)
+				malkhana.GET("/items/:id/seal-checks", malkhanaHandler.SealChecks)
+				malkhana.GET("/items/:id/movements", malkhanaHandler.Movements)
+				malkhana.GET("/items/:id/events", malkhanaHandler.Events)
+				malkhana.POST("/items/:id/seal-checks", middleware.RequireRole("ASI"), malkhanaHandler.VerifySeal)
+				malkhana.POST("/items/:id/reseal", middleware.RequireRole("SHO"), malkhanaHandler.Reseal)
+				malkhana.POST("/items/:id/relocate", middleware.RequireRole("SI"), malkhanaHandler.Relocate)
+				malkhana.POST("/items/:id/movements", middleware.RequireRole("ASI"), malkhanaHandler.MoveOut)
+				malkhana.POST("/items/:id/movements/:movementId/return", middleware.RequireRole("ASI"), malkhanaHandler.Return)
+				malkhana.GET("/items/:id/movements/:movementId/forwarding-letter", malkhanaHandler.ForwardingLetter)
+				malkhana.POST("/items/:id/dispose", middleware.RequireRole("SHO"), malkhanaHandler.Dispose)
 			}
 
 			// Phase 10 — Public Safety Risk & Hotspots. Scores places, never

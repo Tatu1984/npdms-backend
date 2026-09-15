@@ -576,11 +576,26 @@ Body-worn cameras on the Phase 02 evidence register — not a second evidence st
 
 ---
 
-### Phase 14 — Malkhana / Seized Property · `PLANNED`
+### Phase 14 — Malkhana / Seized Property · `DONE` (functional, no blockchain)
 
-**Functional without blockchain.** Property registration, QR identifiers, storage location, seal recording and verification, movement tracking, forensic transfer documents, court production, disposal against a court order, overdue alerts, audit dashboard.
+Seized property against an FIR or case: where it is kept, the seal it is kept under, every movement out and back, and disposal under a court order recorded in the system. The custody ledger is the hash-chained audit trail plus an append-only per-item history; anchoring remains the later layer and nothing claims it.
 
-The custody ledger is the existing hash-chained audit trail. Anchoring is the later layer.
+**Delivered**
+- Migration `000066`: `malkhana_locations`, `property_items`, `property_seal_checks`, `property_movements`, `property_events`. 20 routes under `/api/v1/malkhana`. Numbers `MLK-YYYY-NNNNN` from the shared counter. Money in paise.
+- Rules held by the database as well as the service: one open movement per item (unique partial index), nothing leaves while the seal is recorded broken, disposal only against a court order for the same case, narcotics destruction only with a DSP-rank witness, seal checks and history append-only, returned movements and disposed items immutable — all enforced by triggers and constraints, so a write that bypasses the service is still refused.
+- Seal verification: a seal read under a different number than recorded is not intact whatever was ticked. A break marks the item, raises a station alert, and blocks movement until an SHO records a reason (≥15 characters) and reseals.
+- Movements: forensic (CFSL/FSL), court production against a hearing in the court diary, inter-station, interim custody on court order. Handover requires the current seal number. Overdue and review-due (180 days, a stated operational setting) are computed on read.
+- Printable label whose QR encodes only the property number and a verify URL (no personal data), generated server-side. Printable forwarding letter assembled from the register for every item sent under the same memo to the same laboratory that day.
+- Officers below DSP work only with their own station; other stations' items read as not found.
+- Screens: register with server-side search/filters/pagination and dashboard, item page with every action as a real dialog surfacing the API's message, label and letter pages, verify redirect. Bengali throughout via `malkhana.bn.ts`.
+
+**Verified** — API probe 102/102 including negatives, the concurrent-movement race (exactly one 201 of six) and direct-SQL rule bypasses refused; browser run 27/27 as SHO and constable with every write confirmed in Postgres.
+
+**Open**
+- Court production links a hearing but the court diary does not yet show the exhibit list.
+- The movement ledger is not HMAC-signed like Phase 02 custody legs; it relies on immutability triggers and the audit chain.
+- No link yet from a Phase 02 evidence item to its property record from the custody screen (the reverse link exists).
+- Seed the Kolkata demo dataset with malkhana locations and items.
 
 ---
 
