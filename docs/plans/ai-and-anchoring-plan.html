@@ -1,0 +1,573 @@
+<title>NPDMS AI and Anchoring Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+Bengali:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F6F7F9;
+    --surface: #FFFFFF;
+    --ink: #101828;
+    --ink-muted: #5A6478;
+    --ink-subtle: #8A94A6;
+    --rule: #DFE3EA;
+    --rule-strong: #C6CDD9;
+    --accent: #1B4C7A;
+    --accent-subtle: #E7EEF5;
+    --ok: #0F7B3F;
+    --ok-subtle: #E6F4EC;
+    --warn: #A86400;
+    --warn-subtle: #FDF2E2;
+    --stop: #B42318;
+    --stop-subtle: #FDECEA;
+    --bar: #1B4C7A;
+    --bar-soft: #9DB6CF;
+    --focus: #2E6FBA;
+    --sans: "Inter", "Noto Sans Bengali", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+    --bengali: "Noto Sans Bengali", "Inter", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0B0F16;
+      --surface: #121925;
+      --ink: #E7EDF5;
+      --ink-muted: #9AA7B8;
+      --ink-subtle: #6B788B;
+      --rule: #26303E;
+      --rule-strong: #38465A;
+      --accent: #5FA2DE;
+      --accent-subtle: #142433;
+      --ok: #3DBB74;
+      --ok-subtle: #10251A;
+      --warn: #E0A106;
+      --warn-subtle: #2A2009;
+      --stop: #F0776B;
+      --stop-subtle: #2C1412;
+      --bar: #5FA2DE;
+      --bar-soft: #2E4A66;
+      --focus: #5B9BF8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0B0F16;
+    --surface: #121925;
+    --ink: #E7EDF5;
+    --ink-muted: #9AA7B8;
+    --ink-subtle: #6B788B;
+    --rule: #26303E;
+    --rule-strong: #38465A;
+    --accent: #5FA2DE;
+    --accent-subtle: #142433;
+    --ok: #3DBB74;
+    --ok-subtle: #10251A;
+    --warn: #E0A106;
+    --warn-subtle: #2A2009;
+    --stop: #F0776B;
+    --stop-subtle: #2C1412;
+    --bar: #5FA2DE;
+    --bar-soft: #2E4A66;
+    --focus: #5B9BF8;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    padding-inline: 20px;
+    padding-block: 0 64px;
+  }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+
+  .page { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 56px; }
+  @media (max-width: 900px) { .page { grid-template-columns: minmax(0, 1fr); gap: 0; } .toc { display: none; } }
+
+  .toc { position: sticky; top: 0; align-self: start; padding-top: 48px; font-size: 13px; }
+  .toc p { margin: 0 0 10px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-subtle); font-weight: 600; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a { display: block; padding: 5px 10px; border-left: 2px solid var(--rule); color: var(--ink-muted); text-decoration: none; }
+  .toc a:hover { color: var(--ink); border-left-color: var(--accent); }
+
+  main { max-width: 760px; min-width: 0; }
+
+  header.masthead { padding-top: 48px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-subtle); font-weight: 600; margin: 0 0 14px; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+  .eyebrow span + span::before { content: "·"; margin-right: 14px; color: var(--rule-strong); }
+  h1 { font-size: clamp(30px, 4.4vw, 40px); line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 16px; font-weight: 700; text-wrap: balance; }
+  .lede { font-size: 18px; color: var(--ink-muted); margin: 0; max-width: 64ch; }
+
+  section { padding-top: 48px; }
+  h2 { font-size: 24px; line-height: 1.25; letter-spacing: -0.01em; margin: 0 0 8px; font-weight: 700; text-wrap: balance; }
+  h3 { font-size: 17px; line-height: 1.35; margin: 0; font-weight: 600; text-wrap: balance; }
+  .section-lede { color: var(--ink-muted); margin: 0 0 24px; max-width: 64ch; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  .mono { font-family: var(--mono); font-size: 0.88em; }
+  .bn { font-family: var(--bengali); }
+
+  /* The answer box: what the owner has to provide */
+  .answer { margin-top: 28px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 24px; }
+  .answer h2 { font-size: 20px; margin-bottom: 4px; }
+  .answer > p { color: var(--ink-muted); }
+  .asks { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 0; counter-reset: ask; }
+  .asks li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; padding: 14px 0; border-top: 1px solid var(--rule); counter-increment: ask; }
+  .asks li::before { content: counter(ask); font-family: var(--mono); font-size: 13px; color: var(--accent); background: var(--accent-subtle); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+  .asks strong { display: block; font-weight: 600; }
+  .asks span { color: var(--ink-muted); font-size: 15px; }
+
+  /* Principles */
+  .rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  @media (max-width: 640px) { .rules { grid-template-columns: minmax(0, 1fr); } }
+  .rules div { background: var(--surface); padding: 16px 18px; }
+  .rules h3 { font-size: 15px; margin-bottom: 4px; }
+  .rules p { margin: 0; color: var(--ink-muted); font-size: 14.5px; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-subtle); font-weight: 600; background: var(--ground); }
+  tr:last-child td { border-bottom: 0; }
+  td .mono { color: var(--ink); }
+  td.why { color: var(--ink-muted); }
+
+  .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+  .chip.keep { color: var(--ok); background: var(--ok-subtle); }
+  .chip.rebuild { color: var(--warn); background: var(--warn-subtle); }
+  .chip.retire { color: var(--stop); background: var(--stop-subtle); }
+
+  /* Workstreams */
+  .stream { border-top: 1px solid var(--rule); padding: 22px 0 6px; display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 16px; }
+  .stream:first-of-type { border-top: 0; }
+  .code { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--accent); padding-top: 1px; }
+  .stream .meta { margin: 4px 0 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-subtle); }
+  .stream .meta b { color: var(--ink-muted); font-weight: 600; }
+  .stream ul { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; }
+  .stream ul li { max-width: 64ch; }
+  .gate { font-size: 14px; color: var(--ink-muted); border-left: 2px solid var(--rule-strong); padding: 2px 0 2px 12px; margin: 0 0 14px; }
+  .gate b { color: var(--ink); font-weight: 600; }
+
+  .callout { border: 1px solid var(--warn); background: var(--warn-subtle); border-radius: 10px; padding: 16px 18px; margin: 20px 0 0; }
+  .callout h3 { color: var(--warn); font-size: 15px; margin-bottom: 4px; }
+  .callout p { margin: 0; color: var(--ink); font-size: 15px; }
+
+  /* Anchoring flow */
+  .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 8px 0 24px; counter-reset: step; }
+  @media (max-width: 720px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+  .flow div { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px; font-size: 13.5px; counter-increment: step; }
+  .flow div::before { content: counter(step); display: block; font-family: var(--mono); font-size: 12px; color: var(--accent); margin-bottom: 4px; }
+  .flow b { display: block; font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+  .flow span { color: var(--ink-muted); }
+
+  .options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 720px) { .options { grid-template-columns: minmax(0, 1fr); } }
+  .option { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+  .option.recommended { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .option .tag { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; font-weight: 600; color: var(--ink-subtle); }
+  .option.recommended .tag { color: var(--accent); }
+  .option p { margin: 0; font-size: 14.5px; color: var(--ink-muted); }
+  .option dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 13.5px; }
+  .option dt { color: var(--ink-subtle); }
+  .option dd { margin: 0; }
+
+  /* Requirements checklist */
+  .req-group { margin-bottom: 26px; }
+  .req-group h3 { font-size: 13px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-subtle); margin-bottom: 8px; }
+  .req { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+  .req li { padding: 12px 16px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: start; }
+  .req li:first-child { border-top: 0; }
+  .req li strong { font-weight: 600; }
+  .req li p { grid-column: 1 / -1; margin: 0; font-size: 14.5px; color: var(--ink-muted); }
+  .req .for { font-family: var(--mono); font-size: 12px; color: var(--ink-subtle); white-space: nowrap; }
+
+  /* Sequence chart */
+  .gantt { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 18px 14px; overflow-x: auto; }
+  .gantt-inner { min-width: 640px; }
+  .g-row { display: grid; grid-template-columns: 190px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 30px; }
+  .g-label { font-size: 13.5px; }
+  .g-label .mono { color: var(--accent); margin-right: 6px; }
+  .g-track { position: relative; height: 30px; background-image: repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 12.5%); }
+  .g-bar { position: absolute; top: 8px; height: 14px; border-radius: 4px; background: var(--bar); }
+  .g-bar.soft { background: var(--bar-soft); }
+  .g-axis { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 12px; margin-top: 6px; }
+  .g-ticks { position: relative; height: 18px; font-family: var(--mono); font-size: 11px; color: var(--ink-subtle); font-variant-numeric: tabular-nums; }
+  .g-ticks span { position: absolute; transform: translateX(-50%); }
+  .g-ticks span:first-child { transform: none; }
+  .g-ticks span:last-child { transform: translateX(-100%); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-muted); margin-top: 12px; }
+  .legend i { display: inline-block; width: 18px; height: 10px; border-radius: 3px; background: var(--bar); vertical-align: middle; margin-right: 6px; }
+  .legend i.soft { background: var(--bar-soft); }
+
+  .never { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .never li { padding-left: 26px; position: relative; max-width: 66ch; }
+  .never li::before { content: ""; position: absolute; left: 2px; top: 0.62em; width: 12px; height: 2px; background: var(--stop); }
+
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-subtle); }
+  footer p { max-width: none; }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#need">What we need from you</a></li>
+      <li><a href="#rules">Ground rules</a></li>
+      <li><a href="#today">What exists today</a></li>
+      <li><a href="#ai">AI workstreams</a></li>
+      <li><a href="#anchor">Blockchain anchoring</a></li>
+      <li><a href="#requirements">Full requirements</a></li>
+      <li><a href="#sequence">Sequence</a></li>
+      <li><a href="#never">What we will not build</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <p class="eyebrow"><span>Kolkata Police Digital Intelligence Platform</span><span>Plan of action · later layers</span><span>September 2026</span></p>
+      <h1>AI and blockchain anchoring: plan of action</h1>
+      <p class="lede">All fourteen phases now work without AI or blockchain. This plan adds both as layers on top — AI that proposes and never decides, and anchoring that proves when a record existed — and sets out exactly what has to come from Kolkata Police before each step can start.</p>
+    </header>
+
+    <section id="need" aria-labelledby="need-h">
+      <div class="answer">
+        <h2 id="need-h">What we need from you</h2>
+        <p>The engineering is the smaller part. These eight items decide the pace; the full list with detail is further down.</p>
+        <ol class="asks">
+          <li><div><strong>Written authorisation for each AI use</strong><span>From Kolkata Police / the West Bengal Home Department, per use case. Face recognition and voice analysis need a separate legal opinion before any work starts.</span></div></li>
+          <li><div><strong>A data-protection impact assessment under the DPDP Act, 2023</strong><span>With a named data protection officer. It governs what data models may see and whether any of it may be used for tuning.</span></div></li>
+          <li><div><strong>GPU hardware at the MDC edge site</strong><span>All inference runs on premises. No case data goes to an external AI service. Starting size is given under Full requirements.</span></div></li>
+          <li><div><strong>Labelled examples from real work</strong><span>FIRs with correct BNS sections, audio with verified Bengali transcripts, annotated junction footage. Models are measured against these before an officer ever sees a suggestion.</span></div></li>
+          <li><div><strong>Officers' time for labelling and review</strong><span>A nodal officer who owns the programme, plus a small panel from investigation, cyber cell, traffic, control room and malkhana.</span></div></li>
+          <li><div><strong>A choice of anchoring target</strong><span>Legal timestamping only, a government ledger through NIC, a consortium with partner agencies, or a public chain. The recommendation is below.</span></div></li>
+          <li><div><strong>Digital signature certificates for officers</strong><span>Class 3 DSC tokens or eSign, so custody transfers and approvals carry a personal signature, not only the platform's.</span></div></li>
+          <li><div><strong>Access agreements with outside systems</strong><span>I4C / NCRP and the 1930 helpline, banks for fraud data, the CCTV management system, the body-worn camera vendor, CCTNS / ICJS.</span></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="rules" aria-labelledby="rules-h">
+      <h2 id="rules-h">Ground rules</h2>
+      <p class="section-lede">These are already written into the platform plan and into the data model. Every workstream below is held to them.</p>
+      <div class="rules">
+        <div><h3>A lead, never a conclusion</h3><p>Nothing AI-generated becomes FIR content, an accusation, an arrest decision, a charge-sheet fact or an evidentiary finding without an officer's approval.</p></div>
+        <div><h3>Confidence, sources, version</h3><p>Every suggestion shows how sure the model is, the exact record text it relied on, and which model version produced it.</p></div>
+        <div><h3>Recorded as AI</h3><p>Accepted suggestions are stored with <span class="mono">origin: ai</span> and the approving officer — the column already exists on the relevant tables.</p></div>
+        <div><h3>Refuse without a source</h3><p>The knowledge assistant answers only from an authoritative document it can cite, and says so when none covers the question.</p></div>
+        <div><h3>Places, never people</h3><p>No person is scored, ranked or placed on a watchlist by a model. Risk work stays at the level of areas and time.</p></div>
+        <div><h3>Data stays in jurisdiction</h3><p>Models run on premises. No audio, footage, statement or personal data is sent to an outside AI provider.</p></div>
+        <div><h3>Hashes on chain, never records</h3><p>Anchoring publishes cryptographic fingerprints only. No personal data or case content ever leaves the platform.</p></div>
+        <div><h3>Measured before enabled</h3><p>A model is switched on for a module only after it meets a stated accuracy threshold on held-out examples, and each module has its own off switch.</p></div>
+      </div>
+    </section>
+
+    <section id="today" aria-labelledby="today-h">
+      <h2 id="today-h">What exists today</h2>
+      <p class="section-lede">The backend repository has nine Python services under <span class="mono">services/ml</span>, none of them deployed. They are early prototypes, and several conflict with the ground rules.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Service</th><th scope="col">Verdict</th><th scope="col">Why</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">transcription</span></td><td><span class="chip retire">Retire</span></td><td class="why">Sends audio to Google's speech API. Replace with on-premises speech recognition.</td></tr>
+            <tr><td><span class="mono">crime_prediction</span></td><td><span class="chip retire">Retire</span></td><td class="why">Predicts crime risk scores, which Phase 10 deliberately rules out.</td></tr>
+            <tr><td><span class="mono">patrol_optimization</span></td><td><span class="chip retire">Retire</span></td><td class="why">Places patrol centres by random sampling. Phase 10 scoring and road routing cover the need.</td></tr>
+            <tr><td><span class="mono">fir_classifier</span></td><td><span class="chip rebuild">Rebuild</span></td><td class="why">An untuned general-purpose English model plus keyword lists, built around IPC rather than BNS.</td></tr>
+            <tr><td><span class="mono">video_analysis</span></td><td><span class="chip rebuild">Rebuild</span></td><td class="why">Falls back to mock detections without saying so, and depends on a detector library whose AGPL licence needs review.</td></tr>
+            <tr><td><span class="mono">semantic_search</span></td><td><span class="chip rebuild">Rebuild</span></td><td class="why">A sound starting point, but it must respect document classification in the database and handle Bengali.</td></tr>
+            <tr><td><span class="mono">ocr</span>, <span class="mono">ocr_service</span></td><td><span class="chip rebuild">Merge</span></td><td class="why">Two overlapping services. Merge into one with Bengali support behind the Phase 11 upload step.</td></tr>
+            <tr><td><span class="mono">nlp_extractor</span></td><td><span class="chip keep">Keep as baseline</span></td><td class="why">Rule-based extraction. Useful as the comparison a model has to beat for Phase 05 entities.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="ai" aria-labelledby="ai-h">
+      <h2 id="ai-h">AI workstreams</h2>
+      <p class="section-lede">Ordered by risk and by what each unlocks. Codes are referenced in the sequence chart. Durations are indicative, for a small team of two ML engineers and one backend engineer, and assume data and approvals arrive on time.</p>
+
+      <article class="stream">
+        <div class="code">A0</div>
+        <div>
+          <h3>Foundations</h3>
+          <p class="meta"><span><b>Serves</b> every module</span><span><b>Indicative</b> 4 weeks</span></p>
+          <ul>
+            <li>An AI gateway inside the Go API as the only route to any model. It attaches the model version and the input's source records, and writes every suggestion to a review table with confidence, sources, status and reviewer.</li>
+            <li>A model registry and evaluation harness: held-out example sets per task, a stated threshold per module, and a switch that keeps a model off until it passes.</li>
+            <li>Monitoring of acceptance and override rates per station and per language, so a model that officers keep rejecting is visible and can be switched off.</li>
+            <li>Retire the three non-compliant prototypes above.</li>
+          </ul>
+          <p class="gate"><b>Prerequisites:</b> the edge server with GPUs, permanent evidence storage, the role and permissions model, and a working automated test suite. None of these is optional for AI.</p>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">A1</div>
+        <div>
+          <h3>Documents and language</h3>
+          <p class="meta"><span><b>Phases</b> 11, 09, 05, core FIR</span><span><b>Indicative</b> 6–8 weeks</span></p>
+          <ul>
+            <li>OCR for scanned Bengali and English documents, so scanned circulars become searchable by their text.</li>
+            <li>Semantic search and cited answers in the knowledge assistant, across English and Bengali (<span class="bn">গ্রেপ্তারের পদ্ধতি</span> finds the arrest SOP), refusing when no document covers the question.</li>
+            <li>Suggested BNS sections when an FIR is registered, each with the sentence that prompted it.</li>
+            <li>Complaint category, routing station and similar-complaint candidates for Phase 09.</li>
+            <li>Suggested phone numbers, UPI IDs and bank accounts pulled from cyber-fraud complaint text for Phase 05.</li>
+          </ul>
+          <p class="gate"><b>Why first:</b> lowest risk — every suggestion is checked against text the officer is already reading — and useful every day.</p>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">A2</div>
+        <div>
+          <h3>Investigation copilot</h3>
+          <p class="meta"><span><b>Phases</b> 01, 12</span><span><b>Indicative</b> 6–8 weeks</span></p>
+          <ul>
+            <li>A proposed chronology built from recorded statements, each event linked to the statement sentence it came from.</li>
+            <li>Possible contradictions between witnesses, shown side by side for the officer to accept or dismiss — the review workflow already exists.</li>
+            <li>Consistency checks across a case file before a submission pack is frozen, alongside the existing deterministic rules.</li>
+            <li>A draft case brief the IO edits and signs off.</li>
+          </ul>
+          <p class="gate"><b>Boundary:</b> the model reads only the records of the case in front of the officer, and cites them. It never searches across other people's cases.</p>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">A3</div>
+        <div>
+          <h3>Speech</h3>
+          <p class="meta"><span><b>Phases</b> 13, 09</span><span><b>Indicative</b> 4–6 weeks</span></p>
+          <ul>
+            <li>On-premises transcription of body-worn camera recordings and recorded complaints in Bengali, Hindi and English.</li>
+            <li>Speaker separation, so a transcript shows who spoke when.</li>
+            <li>Each transcript stored as a document derived from the signed recording, tied to its SHA-256, and never replacing it.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">A4</div>
+        <div>
+          <h3>Video</h3>
+          <p class="meta"><span><b>Phases</b> 03, 06, 04</span><span><b>Indicative</b> 8–12 weeks</span></p>
+          <ul>
+            <li>Vehicle and object detection on a first set of priority junction cameras, raised as events for operator triage — the triage workflow already exists.</li>
+            <li>Number-plate reading tuned for WB-series plates, feeding the traffic reconstruction plate-read register.</li>
+            <li>Natural-language search over detection records, purpose-logged like every footage search.</li>
+            <li>Speed estimates from calibrated cameras, always stored and shown as estimated, never as measured.</li>
+            <li>Appearance matching for missing persons by clothing and visible attributes.</li>
+          </ul>
+          <div class="callout">
+            <h3>Face recognition is not in this plan by default</h3>
+            <p>It needs explicit legal authorisation, a proportionality assessment in line with the Supreme Court's privacy judgement, and a published policy on use and retention. Nothing here should be read as a commitment to build it.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">A5</div>
+        <div>
+          <h3>Operations analytics</h3>
+          <p class="meta"><span><b>Phases</b> 05, 07, 08, 10</span><span><b>Indicative</b> 8 weeks or more</span></p>
+          <ul>
+            <li>Workload forecasts for stations, so SHOs see pressure coming. This measures load, never individual performance.</li>
+            <li>Place-level incident trends shown with the factors behind them, extending the transparent Phase 10 scoring.</li>
+            <li>Suggested dispatch severity, with the operator deciding, and travel times by road routing instead of straight-line distance.</li>
+            <li>Mule-account indicators for fraud cases. These depend entirely on data from banks and I4C.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section id="anchor" aria-labelledby="anchor-h">
+      <h2 id="anchor-h">Blockchain anchoring</h2>
+      <p class="section-lede">The platform is already tamper-evident: audit entries form a hash chain, custody transfers are signed, and evidence files are re-hashed on verification. Anchoring adds proof from outside the platform of when each state existed, so the police cannot be accused of rewriting their own history.</p>
+
+      <h3 style="margin-bottom:10px">How a batch is anchored</h3>
+      <div class="flow">
+        <div><b>Collect</b><span>New audit, custody, recording, malkhana and case-file hashes since the last batch.</span></div>
+        <div><b>Combine</b><span>Build a Merkle tree; one root stands for the whole batch.</span></div>
+        <div><b>Anchor</b><span>Submit only the root to the timestamping authority and the chosen ledger.</span></div>
+        <div><b>Record</b><span>Store the receipt against every row, filling the anchor columns that already exist.</span></div>
+        <div><b>Prove</b><span>Give any record a proof a court or auditor can check without trusting the platform.</span></div>
+      </div>
+
+      <article class="stream">
+        <div class="code">B0</div>
+        <div>
+          <h3>Anchoring service and proofs</h3>
+          <p class="meta"><span><b>Covers</b> audit trail, Phases 02, 06, 12, 13, 14</span><span><b>Indicative</b> 3 weeks</span></p>
+          <ul>
+            <li>Batching on a schedule, a record of each batch, and <span class="mono">anchor_batch_id</span>, <span class="mono">blockchain_anchor_tx</span> and <span class="mono">blockchain_anchor_time</span> filled on each anchored row.</li>
+            <li>A proof endpoint and an offline verifier that checks a record against its anchor using only public information.</li>
+            <li>The anchor proof added to the court verification view in the evidence register.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">B1</div>
+        <div>
+          <h3>Legal timestamps</h3>
+          <p class="meta"><span><b>Needs</b> a licensed timestamping authority</span><span><b>Indicative</b> 1–2 weeks</span></p>
+          <ul>
+            <li>RFC 3161 timestamps on each batch root from a timestamping authority licensed by India's Controller of Certifying Authorities.</li>
+            <li>This gives legally recognised proof of time under the IT Act, with no partner agencies and no blockchain.</li>
+          </ul>
+        </div>
+      </article>
+
+      <article class="stream">
+        <div class="code">B2</div>
+        <div>
+          <h3>Ledger anchoring</h3>
+          <p class="meta"><span><b>Needs</b> your choice of target</span><span><b>Indicative</b> 4–8 weeks after onboarding</span></p>
+          <p>The same batch root also goes to a ledger. Three realistic targets:</p>
+        </div>
+      </article>
+      <div class="options">
+        <div class="option recommended">
+          <span class="tag">Recommended to explore first</span>
+          <h3>Government ledger via NIC</h3>
+          <p>A national blockchain framework run for government use. Confirm it is available to a state police force and what onboarding involves.</p>
+          <dl><dt>Partners</dt><dd>NIC only</dd><dt>Cost</dt><dd>Low</dd><dt>Standing</dt><dd>Government-operated</dd></dl>
+        </div>
+        <div class="option">
+          <span class="tag">If partners join</span>
+          <h3>Consortium ledger</h3>
+          <p>A permissioned ledger shared with agencies that already handle the evidence, such as the State FSL, the judiciary through eCourts, and WB Police.</p>
+          <dl><dt>Partners</dt><dd>Several agencies</dd><dt>Cost</dt><dd>Node hosting</dd><dt>Standing</dt><dd>Strongest if courts join</dd></dl>
+        </div>
+        <div class="option">
+          <span class="tag">No partners needed</span>
+          <h3>Public chain</h3>
+          <p>Publish batch roots through an open timestamping protocol onto a public chain. Nearly free and independent, but a policy question for a government body.</p>
+          <dl><dt>Partners</dt><dd>None</dd><dt>Cost</dt><dd>Negligible</dd><dt>Standing</dt><dd>Public and independent</dd></dl>
+        </div>
+      </div>
+
+      <article class="stream" style="margin-top:14px">
+        <div class="code">B3</div>
+        <div>
+          <h3>Personal digital signatures</h3>
+          <p class="meta"><span><b>Needs</b> DSC tokens or eSign for officers</span><span><b>Indicative</b> 3–4 weeks</span></p>
+          <ul>
+            <li>Officers sign custody transfers, submission-pack approvals and property disposals with their own certificate. This closes the Phase 02 gap where signatures prove only that the platform recorded an action.</li>
+            <li>Platform signing keys moved into a hardware security module.</li>
+            <li>A generated certificate for electronic records produced in court, in the form Section 63 of the Bharatiya Sakshya Adhiniyam requires, with the anchor proof attached.</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+
+    <section id="requirements" aria-labelledby="req-h">
+      <h2 id="req-h">Full requirements</h2>
+      <p class="section-lede">Everything that has to come from Kolkata Police or be arranged by it. The code on the right shows which workstream waits for each item.</p>
+
+      <div class="req-group">
+        <h3>Decisions</h3>
+        <ul class="req">
+          <li><strong>Which AI uses are allowed</strong><span class="for">A1–A5</span><p>Recommended start: A1 to A3. Defer face recognition, and decide on voice analysis separately from transcription.</p></li>
+          <li><strong>Where AI runs</strong><span class="for">A0</span><p>On-premises at the MDC edge site is recommended. The alternative is a government cloud GPU, not a commercial AI API.</p></li>
+          <li><strong>Anchoring target</strong><span class="for">B2</span><p>NIC ledger, consortium or public chain. Timestamping (B1) can start without this decision.</p></li>
+          <li><strong>Decisions already open in the platform plan</strong><span class="for">A0</span><p>Request limits for stations behind one address, the role and permissions model, evidence storage, and whether the backend repository stays public once models and prompts live there.</p></li>
+        </ul>
+      </div>
+
+      <div class="req-group">
+        <h3>Legal and policy</h3>
+        <ul class="req">
+          <li><strong>Written authorisation per AI use case</strong><span class="for">A1–A5</span><p>From Kolkata Police leadership or the West Bengal Home Department.</p></li>
+          <li><strong>DPDP Act impact assessment and a data protection officer</strong><span class="for">A0</span><p>Defines what data each model may read, how long derived data is kept, and whether real records may be used for tuning.</p></li>
+          <li><strong>SOP stating that AI output is a lead</strong><span class="for">A1</span><p>Issued to officers before the first suggestion appears on screen.</p></li>
+          <li><strong>Legal opinion on biometric uses</strong><span class="for">A4</span><p>Face recognition and voice identification, if either is ever considered.</p></li>
+          <li><strong>Security audit by a CERT-In empanelled auditor</strong><span class="for">A0, B0</span><p>Before AI or anchoring goes into live use.</p></li>
+        </ul>
+      </div>
+
+      <div class="req-group">
+        <h3>Data, provided under authorisation and anonymised where possible</h3>
+        <ul class="req">
+          <li><strong>About 1,000 FIRs and complaints with correct BNS sections and categories</strong><span class="for">A1</span><p>A mix of Bengali, English and mixed-script text, checked by an experienced IO.</p></li>
+          <li><strong>SOPs, circulars, standing orders and the BNS, BNSS and BSA texts</strong><span class="for">A1</span><p>The authoritative sources the knowledge assistant is allowed to cite.</p></li>
+          <li><strong>About 100 statement sets with known chronology and contradictions marked</strong><span class="for">A2</span><p>From closed cases, marked by supervising officers.</p></li>
+          <li><strong>50–100 hours of audio with verified transcripts</strong><span class="for">A3</span><p>Body-worn camera and complaint recordings in Bengali, Hindi and English, including street noise.</p></li>
+          <li><strong>Annotated footage from 10–20 priority junctions</strong><span class="for">A4</span><p>Day, night and rain, with vehicles and events marked, plus several thousand labelled WB number-plate images.</p></li>
+          <li><strong>Mule-account labels</strong><span class="for">A5</span><p>Through I4C and partner banks, under a data-sharing agreement.</p></li>
+        </ul>
+      </div>
+
+      <div class="req-group">
+        <h3>Infrastructure and budget</h3>
+        <ul class="req">
+          <li><strong>Pilot AI server at the MDC edge site</strong><span class="for">A0–A3</span><p>A starting point to confirm with a load test: two 48 GB data-centre GPUs, 64 CPU cores, 512 GB memory and 4 TB NVMe. That runs a mid-sized local language model, speech recognition, embeddings and OCR for one division.</p></li>
+          <li><strong>Video analytics capacity</strong><span class="for">A4</span><p>Grows with camera count. Size after the pilot junctions show real throughput, rather than guessing for the whole city.</p></li>
+          <li><strong>Evidence and video storage on premises</strong><span class="for">A0, A3, A4</span><p>S3-compatible storage with room for footage, recordings and derived transcripts.</p></li>
+          <li><strong>Network access from the edge site to the camera management system</strong><span class="for">A4</span><p>Plus stream credentials for the pilot cameras.</p></li>
+          <li><strong>Hardware security module, timestamping subscription and DSC tokens</strong><span class="for">B1, B3</span><p>Plus ledger node hosting if a consortium is chosen.</p></li>
+        </ul>
+      </div>
+
+      <div class="req-group">
+        <h3>People</h3>
+        <ul class="req">
+          <li><strong>A nodal officer who owns the programme</strong><span class="for">All</span><p>Signs off thresholds, decides when a module is switched on, and owns officer feedback.</p></li>
+          <li><strong>A review panel of four to six officers</strong><span class="for">A1–A5</span><p>Investigation, cyber cell, traffic, control room and malkhana. A few hours a week for labelling and reviewing model output.</p></li>
+          <li><strong>Engineering team or vendor</strong><span class="for">All</span><p>Two ML engineers, one MLOps or infrastructure engineer, and continued backend work on the platform.</p></li>
+          <li><strong>Legal adviser</strong><span class="for">A0, A4, B3</span><p>For DPDP compliance, biometric questions and the Section 63 certificate process.</p></li>
+        </ul>
+      </div>
+
+      <div class="req-group">
+        <h3>Access to outside systems</h3>
+        <ul class="req">
+          <li><strong>I4C / NCRP and the 1930 helpline</strong><span class="for">A1, A5</span><p>Complaint references and fraud data for Phase 05.</p></li>
+          <li><strong>Banks and NPCI</strong><span class="for">A5</span><p>Freeze responses and account-level fraud indicators.</p></li>
+          <li><strong>CCTV management system and body-worn camera vendor</strong><span class="for">A3, A4</span><p>Stream access, and the docking station interface or SDK.</p></li>
+          <li><strong>CCTNS / ICJS interface specifications</strong><span class="for">A1</span><p>So suggestions can use authorised national data where policy allows.</p></li>
+          <li><strong>NIC</strong><span class="for">B2, B3</span><p>Ledger onboarding and eSign, if those routes are chosen.</p></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="sequence" aria-labelledby="seq-h">
+      <h2 id="seq-h">Sequence</h2>
+      <p class="section-lede">Indicative weeks from the start of prerequisite work, assuming approvals and data arrive on time. Lighter bars depend on an outside party.</p>
+      <div class="gantt" role="img" aria-label="Indicative sequence over 40 weeks: prerequisites weeks 0 to 6; A0 foundations 4 to 8; B0 and B1 anchoring and timestamps 4 to 9; A1 documents and language 8 to 16; A2 investigation copilot 16 to 24; A3 speech 16 to 22; A4 video 22 to 34; A5 operations analytics 28 to 40; B2 ledger anchoring 12 to 20 after partner onboarding; B3 personal signatures 20 to 24 once certificates are issued.">
+        <div class="gantt-inner">
+          <div class="g-row"><div class="g-label">Prerequisites</div><div class="g-track"><div class="g-bar" style="left:0%;width:15%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A0</span>Foundations</div><div class="g-track"><div class="g-bar" style="left:10%;width:10%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">B0·B1</span>Anchoring, timestamps</div><div class="g-track"><div class="g-bar" style="left:10%;width:12.5%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A1</span>Documents, language</div><div class="g-track"><div class="g-bar" style="left:20%;width:20%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">B2</span>Ledger anchoring</div><div class="g-track"><div class="g-bar soft" style="left:30%;width:20%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A2</span>Investigation copilot</div><div class="g-track"><div class="g-bar" style="left:40%;width:20%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A3</span>Speech</div><div class="g-track"><div class="g-bar" style="left:40%;width:15%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">B3</span>Personal signatures</div><div class="g-track"><div class="g-bar soft" style="left:50%;width:10%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A4</span>Video</div><div class="g-track"><div class="g-bar" style="left:55%;width:30%"></div></div></div>
+          <div class="g-row"><div class="g-label"><span class="mono">A5</span>Operations analytics</div><div class="g-track"><div class="g-bar soft" style="left:70%;width:30%"></div></div></div>
+          <div class="g-axis"><div></div><div class="g-ticks"><span style="left:0%">0</span><span style="left:25%">10</span><span style="left:50%">20</span><span style="left:75%">30</span><span style="left:100%">40 weeks</span></div></div>
+        </div>
+      </div>
+      <div class="legend"><span><i></i>Platform team can deliver</span><span><i class="soft"></i>Also depends on an outside party</span></div>
+    </section>
+
+    <section id="never" aria-labelledby="never-h">
+      <h2 id="never-h">What we will not build</h2>
+      <p class="section-lede">Stated plainly, so nobody has to infer it.</p>
+      <ul class="never">
+        <li>Risk scores, rankings or watchlists of people, whether suspects, accused, complainants or officers.</li>
+        <li>Anything that takes an action by itself: registers an FIR, adds a charge, issues a warrant or closes a case.</li>
+        <li>Performance scores for individual officers built from workload or AI acceptance data.</li>
+        <li>Calls to external AI services with case data, audio, footage or personal information.</li>
+        <li>Personal data or case content written to any ledger. Only fingerprints are anchored.</li>
+        <li>Face recognition without explicit legal authorisation and a published policy.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>Companion to the platform plan of action in <span class="mono">npdms-backend/POA.md</span>. Durations and hardware sizes are starting estimates, to be revised after the pilot. No legal position here replaces advice from Kolkata Police's own counsel.</p>
+    </footer>
+  </main>
+</div>

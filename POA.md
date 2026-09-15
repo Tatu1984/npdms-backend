@@ -601,6 +601,8 @@ Seized property against an FIR or case: where it is kept, the seal it is kept un
 
 ## Later layers
 
+The detailed plan of action for both layers — workstreams, ground rules, the verdict on each prototype in `services/ml`, anchoring options and everything Kolkata Police must provide — is in [`docs/plans/ai-and-anchoring-plan.html`](docs/plans/ai-and-anchoring-plan.html).
+
 Added over phases that already work without them.
 
 ### AI enablement · `PLANNED`
