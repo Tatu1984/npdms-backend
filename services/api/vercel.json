@@ -3,7 +3,7 @@
   "buildCommand": "go build -ldflags='-s -w' -o $VERCEL_OUTPUT_FILE .",
   "regions": ["bom1"],
   "env": {
-    "STORAGE_BACKEND": "filesystem",
+    "STORAGE_BACKEND": "database",
     "STORAGE_PATH": "/tmp/evidence",
     "MINIO_ENDPOINT": "disabled",
     "MINIO_ACCESS_KEY": "disabled",
