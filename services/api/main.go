@@ -145,6 +145,14 @@ func main() {
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
 	lookoutHandler := handlers.NewLookoutHandler(services.NewLookoutService(lookoutRepo, auditRepo))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
+
+	// Phase 07 — Dispatch. The escalation rules are applied on a timer as well
+	// as on every read, so an unacknowledged unit escalates unattended.
+	dispatchService := services.NewDispatchService(repository.NewDispatchRepository(db), auditRepo)
+	dispatchHandler := handlers.NewDispatchHandler(dispatchService)
+	dispatchCtx, stopDispatch := context.WithCancel(context.Background())
+	defer stopDispatch()
+	go dispatchService.RunEscalations(dispatchCtx, 30*time.Second)
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -532,6 +540,30 @@ func main() {
 			intel := protected.Group("/intel")
 			{
 				intel.GET("/ip/:ip", ipIntelHandler.Lookup)
+			}
+
+			// Phase 07 — Dispatch & Resource Optimisation
+			dispatch := protected.Group("/dispatch")
+			{
+				dispatch.GET("/policy", dispatchHandler.Policy)
+				dispatch.GET("/stats", dispatchHandler.Stats)
+				dispatch.GET("/units", dispatchHandler.Units)
+				dispatch.GET("/incidents", dispatchHandler.List)
+				dispatch.GET("/incidents/:id", dispatchHandler.Get)
+				dispatch.GET("/incidents/:id/events", dispatchHandler.Events)
+				// Any officer may log an incident (control room, walk-in, officer in the field).
+				dispatch.POST("/incidents", dispatchHandler.Intake)
+				// The operator's decisions need rank.
+				dispatch.POST("/incidents/:id/classify", middleware.RequireRole("ASI"), dispatchHandler.Classify)
+				dispatch.POST("/incidents/:id/assign", middleware.RequireRole("ASI"), dispatchHandler.Assign)
+				dispatch.POST("/incidents/:id/escalate", middleware.RequireRole("ASI"), dispatchHandler.Escalate)
+				dispatch.POST("/incidents/:id/close", middleware.RequireRole("ASI"), dispatchHandler.Close)
+				dispatch.POST("/assignments/:assignmentId/cancel", middleware.RequireRole("ASI"), dispatchHandler.CancelAssignment)
+				// The unit's own steps: the assigned officer, or ASI and above on their behalf.
+				dispatch.POST("/assignments/:assignmentId/acknowledge", dispatchHandler.Acknowledge())
+				dispatch.POST("/assignments/:assignmentId/on-scene", dispatchHandler.OnScene())
+				dispatch.POST("/assignments/:assignmentId/clear", dispatchHandler.Clear())
+				dispatch.GET("/analytics", middleware.RequireRole("SI"), dispatchHandler.Analytics)
 			}
 
 			// Armoury — weapon register and issue/return ledger

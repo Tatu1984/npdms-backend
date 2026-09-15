@@ -274,11 +274,30 @@ Measured and estimated values must remain visually distinct — a speed derived 
 
 ---
 
-### Phase 07 — Dispatch & Resource Optimisation · `PLANNED`
+### Phase 07 — Dispatch & Resource Optimisation · `DONE`
 
-**Functional without AI.** Incident intake from control room, phone, app, officer; operator classification; unit register with availability; assignment; acknowledgement and escalation timers; response analytics.
+**Functional without AI.** Incident intake, operator classification, distance-ranked dispatch of units from the existing registers, the unit's own progress, stated escalation rules, closure and response analytics.
 
-Severity scoring and ETA prediction are the AI layer. Distance-based recommendation and the escalation ladder are ordinary logic.
+**Delivered**
+- Migration `000052`: `dispatch_incidents`, `dispatch_assignments`, append-only `dispatch_events` (trigger-enforced). Routes under `/api/v1/dispatch`.
+- **Intake** from 112, 100, control room, citizen app, walk-in or an officer in the field — any officer may log one. Caller phone validated and normalised; coordinates optional but paired; the call time cannot be in the future. Numbers `INC-YYYY-NNNNN` from the atomic counter.
+- **Classification** by an ASI or above: incident type and a severity chosen from a stated four-level scale, each level with its meaning and arrival threshold. Nothing computes a severity. An incident cannot be dispatched until classified (service and table constraint).
+- **Units are not a new register.** A dispatchable unit is a fleet vehicle with its allocated driver, or an on-duty officer from personnel. Availability is derived and explained in words: maintenance, reserved, no crew, off duty, on leave, crewing a vehicle, or committed to a named incident.
+- **Recommendation** ranks available units by haversine distance from the incident to the vehicle's GPS fix, or its station when there is none, and says which. It is labelled a straight line, never a route or ETA. Units without a position are listed after, unranked. The operator chooses.
+- **Assignment is concurrency-safe.** The incident and unit rows are locked, the officer (as unit or driver) is serialised with an advisory lock, and partial unique indexes allow one active commitment per vehicle and per officer. A unit that became unavailable is refused with a 409 naming the reason — never silently double-booked.
+- **The unit's own steps** — acknowledge, on scene, clear — are recorded by the assigned officer, or by an ASI or above on their behalf (a radio report). Only the next step is accepted; the table constrains status against timestamps and requires times to run forwards. A unit en route can be stood down with a reason; a unit on scene must be cleared. Incident status is derived from its assignments. Closure requires every unit cleared or stood down, an outcome, and a note or the linked FIR.
+- **Escalation rules** are configuration served at `GET /dispatch/policy` and shown on screen: unacknowledged after 2, 5 and 8 minutes escalates to levels 1–3; acknowledged but not on scene within the severity's threshold (10/15/20/30 min) alerts the supervisor. Applied every 30 seconds and before every read, idempotently, each recorded as an event attributed to the rule and audited. Operators can also escalate manually with a reason.
+- **Response analytics** (SI and above) computed in Postgres with `percentile_cont`: call→dispatch, dispatch→acknowledge and acknowledge→scene, median and 90th percentile with sample counts, per station and overall, for a chosen period.
+- Frontend: `lib/api/dispatch.ts`, `hooks/use-dispatch.ts`, `app/dispatch` rewritten on live data with bilingual strings (`dispatch.en.ts`, `dispatch.bn.ts`). Removed the mock queue and units, the fake ETAs, the "eta-engine" and "incident-classifier" badges with invented confidence, "suggested" severity, and the escalate dialog that recorded nothing. Mutations refetch only the open incident and mark board lists stale, so normal use stays inside the API rate limit.
+
+**Verified** — API probe 76/76 against local Postgres with the rate limiter on: intake validation, classification gates, ranking by distance and position source, illegal transitions, stand-down and closure rules, role floors, and a concurrent race assigning one vehicle to two incidents (exactly one 201 and one 409, one active row). Escalations checked by moving timestamps back: three ladder events once each, one arrival alert, append-only log refuses updates. Analytics matched hand-written SQL for incident count, samples, median and 90th percentile. Browser run 25/25 as admin and constable: intake → classify → ranked recommendation → dispatch → acknowledge → on scene → clear → close with the API's validation message surfaced, full timeline in order, unacknowledged unit escalated to level 3 by rule, stand-down, analytics count against SQL, Bengali labels, and the constable seeing no operator controls. Writes confirmed in psql throughout.
+
+**Open**
+- **No notification channel.** Escalations are recorded and shown on the board; they are not sent by SMS, radio or push, and the screen says so.
+- **Vehicle positions are whatever the fleet register holds.** There is no live AVL feed; without a GPS fix the station location is used and labelled as such.
+- **Unit acknowledgement from the field** needs a mobile client; today the officer uses the web screen or a supervisor records it on their behalf.
+- **Station-scoped visibility** (an SHO seeing only their own station's board) belongs with the RBAC model; all authenticated officers see every incident.
+- Severity scoring and ETA prediction are the AI layer.
 
 ---
 
