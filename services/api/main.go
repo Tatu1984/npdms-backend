@@ -155,6 +155,9 @@ func main() {
 	videoHandler := handlers.NewVideoHandler(services.NewVideoService(repository.NewVideoRepository(db), auditRepo, cctvCredentialKey))
 	accessLogHandler := handlers.NewAccessLogHandler(accessLogRepo)
 	workloadHandler := handlers.NewWorkloadHandler(services.NewWorkloadService(workloadRepo, auditRepo))
+	// Phase 06 — traffic incidents and accident reconstruction
+	trafficIncidentHandler := handlers.NewTrafficIncidentHandler(
+		services.NewTrafficIncidentService(repository.NewTrafficIncidentRepository(db), auditRepo))
 	firHandler := handlers.NewFIRHandler(firService)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
@@ -654,6 +657,50 @@ func main() {
 				workload.GET("/trends", workloadHandler.Trends)
 				workload.GET("/officers", workloadHandler.Officers)
 				workload.GET("/stations", middleware.RequireRole("DSP"), workloadHandler.Stations)
+			}
+
+			// Phase 06 — Traffic Incident & Accident Reconstruction
+			// Reading is open to any officer; recording needs ASI and above;
+			// approving or returning a report needs SI and above and an officer
+			// other than the drafter (enforced in the service and the table).
+			trafficIncidents := protected.Group("/traffic-incidents")
+			{
+				trafficIncidents.GET("", trafficIncidentHandler.List)
+				trafficIncidents.GET("/stats", trafficIncidentHandler.Stats)
+				trafficIncidents.GET("/:id", trafficIncidentHandler.Get)
+				trafficIncidents.GET("/:id/workspace", trafficIncidentHandler.Workspace)
+				trafficIncidents.POST("", middleware.RequireRole("ASI"), trafficIncidentHandler.Register)
+				trafficIncidents.PUT("/:id", middleware.RequireRole("ASI"), trafficIncidentHandler.Update)
+
+				trafficIncidents.GET("/:id/vehicles", trafficIncidentHandler.Vehicles)
+				trafficIncidents.POST("/:id/vehicles", middleware.RequireRole("ASI"), trafficIncidentHandler.AddVehicle)
+				trafficIncidents.DELETE("/:id/vehicles/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("vehicles"))
+				trafficIncidents.GET("/:id/persons", trafficIncidentHandler.Persons)
+				trafficIncidents.POST("/:id/persons", middleware.RequireRole("ASI"), trafficIncidentHandler.AddPerson)
+				trafficIncidents.DELETE("/:id/persons/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("persons"))
+				trafficIncidents.GET("/:id/cameras", trafficIncidentHandler.Cameras)
+				trafficIncidents.POST("/:id/cameras", middleware.RequireRole("ASI"), trafficIncidentHandler.AddCamera)
+				trafficIncidents.DELETE("/:id/cameras/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("cameras"))
+				trafficIncidents.GET("/:id/plate-reads", trafficIncidentHandler.PlateReads)
+				trafficIncidents.POST("/:id/plate-reads", middleware.RequireRole("ASI"), trafficIncidentHandler.AddPlateRead)
+				trafficIncidents.DELETE("/:id/plate-reads/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("plate-reads"))
+				trafficIncidents.GET("/:id/signal-phases", trafficIncidentHandler.SignalPhases)
+				trafficIncidents.POST("/:id/signal-phases", middleware.RequireRole("ASI"), trafficIncidentHandler.AddSignalPhase)
+				trafficIncidents.DELETE("/:id/signal-phases/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("signal-phases"))
+				trafficIncidents.GET("/:id/facts", trafficIncidentHandler.Facts)
+				trafficIncidents.POST("/:id/facts", middleware.RequireRole("ASI"), trafficIncidentHandler.AddFact)
+				trafficIncidents.DELETE("/:id/facts/:recordId", middleware.RequireRole("ASI"), trafficIncidentHandler.RemoveChild("facts"))
+				trafficIncidents.GET("/:id/timeline", trafficIncidentHandler.Timeline)
+				trafficIncidents.GET("/:id/prior-challans", trafficIncidentHandler.PriorChallans)
+
+				trafficIncidents.GET("/:id/report-draft", trafficIncidentHandler.Draft)
+				trafficIncidents.GET("/:id/reports", trafficIncidentHandler.Reports)
+				trafficIncidents.GET("/:id/reports/:reportId", trafficIncidentHandler.Report)
+				trafficIncidents.POST("/:id/reports", middleware.RequireRole("ASI"), trafficIncidentHandler.CreateReport)
+				trafficIncidents.PUT("/:id/reports/:reportId", middleware.RequireRole("ASI"), trafficIncidentHandler.UpdateReport)
+				trafficIncidents.POST("/:id/reports/:reportId/submit", middleware.RequireRole("ASI"), trafficIncidentHandler.SubmitReport)
+				trafficIncidents.POST("/:id/reports/:reportId/approve", middleware.RequireRole("SI"), trafficIncidentHandler.ApproveReport)
+				trafficIncidents.POST("/:id/reports/:reportId/return", middleware.RequireRole("SI"), trafficIncidentHandler.ReturnReport)
 			}
 
 			// Access log — sign-in activity from the audit trail

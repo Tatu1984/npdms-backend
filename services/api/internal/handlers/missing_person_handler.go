@@ -123,14 +123,6 @@ func (h *MissingPersonHandler) withReport(c *gin.Context, op string, fn func(id 
 	c.JSON(status, body)
 }
 
-// bind decodes a JSON body, answering 400 on failure.
-func bind(c *gin.Context, dst interface{}) bool {
-	if err := c.ShouldBindJSON(dst); err != nil {
-		badRequest(c, err.Error())
-		return false
-	}
-	return true
-}
 
 func (h *MissingPersonHandler) Update(c *gin.Context) {
 	var req models.UpdateMissingPersonRequest
