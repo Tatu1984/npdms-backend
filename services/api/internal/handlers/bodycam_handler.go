@@ -26,7 +26,7 @@ func NewBodycamHandler(service *services.BodycamService) *BodycamHandler {
 }
 
 func bodycamError(c *gin.Context, op string, err error) {
-	if storageLimitError(c, err) {
+	if storageLimitError(c, err) || storageMissingError(c, err) {
 		return
 	}
 	conflict := func() {

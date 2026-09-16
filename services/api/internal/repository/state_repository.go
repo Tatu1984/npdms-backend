@@ -18,12 +18,44 @@ func NewStateRepository(db *pgxpool.Pool) *StateRepository {
 	return &StateRepository{db: db}
 }
 
+// The hierarchy tables leave the officer's name, telephone and address blank
+// until a posting is recorded, and leave population and area blank until the
+// figures are published. models.State, models.Zone and models.Range hold all
+// of those as plain strings and numbers, so a NULL breaks the scan and the
+// endpoint answers 500 rather than a state with an unfilled SP's chair.
+const (
+	stateColumns = `
+	id, name, code,
+	COALESCE(dgp_name, '') AS dgp_name,
+	COALESCE(dgp_phone, '') AS dgp_phone,
+	COALESCE(dgp_email, '') AS dgp_email,
+	COALESCE(population, 0) AS population,
+	COALESCE(area, 0) AS area,
+	COALESCE(total_officers, 0) AS total_officers,
+	COALESCE(is_active, false) AS is_active, created_at, updated_at`
+
+	zoneColumns = `
+	id, state_id, name, code,
+	COALESCE(ig_name, '') AS ig_name,
+	COALESCE(ig_phone, '') AS ig_phone,
+	COALESCE(ig_email, '') AS ig_email,
+	COALESCE(headquarters, '') AS headquarters,
+	COALESCE(is_active, false) AS is_active, created_at, updated_at`
+
+	rangeColumns = `
+	id, zone_id, name, code,
+	COALESCE(dig_name, '') AS dig_name,
+	COALESCE(dig_phone, '') AS dig_phone,
+	COALESCE(dig_email, '') AS dig_email,
+	COALESCE(headquarters, '') AS headquarters,
+	COALESCE(is_active, false) AS is_active, created_at, updated_at`
+)
+
 // State Operations
 func (r *StateRepository) GetState(ctx context.Context, id uuid.UUID) (*models.State, error) {
 	var state models.State
 	query := `
-		SELECT id, name, code, dgp_name, dgp_phone, dgp_email, population, area,
-		       total_officers, is_active, created_at, updated_at
+		SELECT ` + stateColumns + `
 		FROM states WHERE id = $1`
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&state.ID, &state.Name, &state.Code, &state.DGPName, &state.DGPPhone,
@@ -36,8 +68,7 @@ func (r *StateRepository) GetState(ctx context.Context, id uuid.UUID) (*models.S
 func (r *StateRepository) GetStateByCode(ctx context.Context, code string) (*models.State, error) {
 	var state models.State
 	query := `
-		SELECT id, name, code, dgp_name, dgp_phone, dgp_email, population, area,
-		       total_officers, is_active, created_at, updated_at
+		SELECT ` + stateColumns + `
 		FROM states WHERE code = $1`
 	err := r.db.QueryRow(ctx, query, code).Scan(
 		&state.ID, &state.Name, &state.Code, &state.DGPName, &state.DGPPhone,
@@ -49,8 +80,7 @@ func (r *StateRepository) GetStateByCode(ctx context.Context, code string) (*mod
 
 func (r *StateRepository) ListStates(ctx context.Context) ([]models.State, error) {
 	query := `
-		SELECT id, name, code, dgp_name, dgp_phone, dgp_email, population, area,
-		       total_officers, is_active, created_at, updated_at
+		SELECT ` + stateColumns + `
 		FROM states WHERE is_active = true ORDER BY name`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
@@ -102,8 +132,7 @@ func (r *StateRepository) UpdateState(ctx context.Context, state *models.State) 
 func (r *StateRepository) GetZone(ctx context.Context, id uuid.UUID) (*models.Zone, error) {
 	var zone models.Zone
 	query := `
-		SELECT id, state_id, name, code, ig_name, ig_phone, ig_email, headquarters,
-		       is_active, created_at, updated_at
+		SELECT ` + zoneColumns + `
 		FROM zones WHERE id = $1`
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&zone.ID, &zone.StateID, &zone.Name, &zone.Code, &zone.IGName,
@@ -115,8 +144,7 @@ func (r *StateRepository) GetZone(ctx context.Context, id uuid.UUID) (*models.Zo
 
 func (r *StateRepository) ListZones(ctx context.Context, stateID uuid.UUID) ([]models.Zone, error) {
 	query := `
-		SELECT id, state_id, name, code, ig_name, ig_phone, ig_email, headquarters,
-		       is_active, created_at, updated_at
+		SELECT ` + zoneColumns + `
 		FROM zones WHERE state_id = $1 AND is_active = true ORDER BY name`
 	rows, err := r.db.Query(ctx, query, stateID)
 	if err != nil {
@@ -167,8 +195,7 @@ func (r *StateRepository) UpdateZone(ctx context.Context, zone *models.Zone) err
 func (r *StateRepository) GetRange(ctx context.Context, id uuid.UUID) (*models.Range, error) {
 	var rangeObj models.Range
 	query := `
-		SELECT id, zone_id, name, code, dig_name, dig_phone, dig_email, headquarters,
-		       is_active, created_at, updated_at
+		SELECT ` + rangeColumns + `
 		FROM ranges WHERE id = $1`
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&rangeObj.ID, &rangeObj.ZoneID, &rangeObj.Name, &rangeObj.Code,
@@ -180,8 +207,7 @@ func (r *StateRepository) GetRange(ctx context.Context, id uuid.UUID) (*models.R
 
 func (r *StateRepository) ListRanges(ctx context.Context, zoneID uuid.UUID) ([]models.Range, error) {
 	query := `
-		SELECT id, zone_id, name, code, dig_name, dig_phone, dig_email, headquarters,
-		       is_active, created_at, updated_at
+		SELECT ` + rangeColumns + `
 		FROM ranges WHERE zone_id = $1 AND is_active = true ORDER BY name`
 	rows, err := r.db.Query(ctx, query, zoneID)
 	if err != nil {
@@ -254,10 +280,10 @@ func (r *StateRepository) GetStateFIRStatistics(ctx context.Context, stateID uui
 		SELECT
 			COUNT(*) as total,
 			COUNT(*) FILTER (WHERE f.status IN ('REGISTERED', 'UNDER_INVESTIGATION')) as pending,
-			COUNT(*) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEETED')) as resolved,
+			COUNT(*) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEET_FILED')) as resolved,
 			COUNT(*) FILTER (WHERE f.priority = 'CRITICAL') as critical
 		FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
+		JOIN stations ps ON f.station_id = ps.id
 		JOIN districts d ON ps.district_id = d.id
 		JOIN ranges r ON d.range_id = r.id
 		JOIN zones z ON r.zone_id = z.id
@@ -283,12 +309,13 @@ func (r *StateRepository) GetStateCaseStatistics(ctx context.Context, stateID uu
 	query := `
 		SELECT
 			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE c.status = 'INVESTIGATING') as investigating,
-			COUNT(*) FILTER (WHERE c.status = 'CHARGESHEETED') as chargesheeted,
-			COUNT(*) FILTER (WHERE c.status = 'CONVICTED') as convicted,
-			COUNT(*) FILTER (WHERE c.status = 'ACQUITTED') as acquitted
+			COUNT(*) FILTER (WHERE c.status = 'UNDER_INVESTIGATION') as investigating,
+			COUNT(*) FILTER (WHERE c.status = 'CHARGESHEET_FILED') as chargesheeted,
+			COUNT(*) FILTER (WHERE c.status = 'CONVICTION') as convicted,
+			COUNT(*) FILTER (WHERE c.status = 'ACQUITTAL') as acquitted
 		FROM cases c
-		JOIN police_stations ps ON c.station_id = ps.id
+		JOIN firs f ON f.id = c.fir_id
+		JOIN stations ps ON f.station_id = ps.id
 		JOIN districts d ON ps.district_id = d.id
 		JOIN ranges r ON d.range_id = r.id
 		JOIN zones z ON r.zone_id = z.id
@@ -321,11 +348,11 @@ func (r *StateRepository) GetHierarchyStats(ctx context.Context, stateID uuid.UU
 			 JOIN ranges r ON d.range_id = r.id
 			 JOIN zones z ON r.zone_id = z.id
 			 WHERE z.state_id = $1 AND d.is_active = true) as districts,
-			(SELECT COUNT(*) FROM police_stations ps
+			(SELECT COUNT(*) FROM stations ps
 			 JOIN districts d ON ps.district_id = d.id
 			 JOIN ranges r ON d.range_id = r.id
 			 JOIN zones z ON r.zone_id = z.id
-			 WHERE z.state_id = $1 AND ps.is_active = true) as stations,
+			 WHERE z.state_id = $1) as stations,
 			(SELECT COALESCE(SUM(d.total_officers), 0) FROM districts d
 			 JOIN ranges r ON d.range_id = r.id
 			 JOIN zones z ON r.zone_id = z.id
@@ -353,25 +380,25 @@ func (r *StateRepository) GetZoneWiseStats(ctx context.Context, stateID uuid.UUI
 			(SELECT COUNT(*) FROM districts d
 			 JOIN ranges r ON d.range_id = r.id
 			 WHERE r.zone_id = z.id AND d.is_active = true) as total_districts,
-			(SELECT COUNT(*) FROM police_stations ps
+			(SELECT COUNT(*) FROM stations ps
 			 JOIN districts d ON ps.district_id = d.id
 			 JOIN ranges r ON d.range_id = r.id
-			 WHERE r.zone_id = z.id AND ps.is_active = true) as total_stations,
+			 WHERE r.zone_id = z.id) as total_stations,
 			(SELECT COUNT(*) FROM firs f
-			 JOIN police_stations ps ON f.station_id = ps.id
+			 JOIN stations ps ON f.station_id = ps.id
 			 JOIN districts d ON ps.district_id = d.id
 			 JOIN ranges r ON d.range_id = r.id
 			 WHERE r.zone_id = z.id AND f.created_at >= $2) as total_firs,
 			(SELECT COUNT(*) FROM firs f
-			 JOIN police_stations ps ON f.station_id = ps.id
+			 JOIN stations ps ON f.station_id = ps.id
 			 JOIN districts d ON ps.district_id = d.id
 			 JOIN ranges r ON d.range_id = r.id
 			 WHERE r.zone_id = z.id AND f.status IN ('REGISTERED', 'UNDER_INVESTIGATION') AND f.created_at >= $2) as pending_firs,
 			(SELECT COUNT(*) FROM firs f
-			 JOIN police_stations ps ON f.station_id = ps.id
+			 JOIN stations ps ON f.station_id = ps.id
 			 JOIN districts d ON ps.district_id = d.id
 			 JOIN ranges r ON d.range_id = r.id
-			 WHERE r.zone_id = z.id AND f.status IN ('CLOSED', 'CHARGESHEETED') AND f.created_at >= $2) as resolved_firs
+			 WHERE r.zone_id = z.id AND f.status IN ('CLOSED', 'CHARGESHEET_FILED') AND f.created_at >= $2) as resolved_firs
 		FROM zones z
 		WHERE z.state_id = $1 AND z.is_active = true
 		ORDER BY z.name`
@@ -407,13 +434,13 @@ func (r *StateRepository) GetDistrictRankings(ctx context.Context, stateID uuid.
 			SELECT
 				d.id, d.name, d.code,
 				COUNT(f.id) as total_firs,
-				COUNT(f.id) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEETED')) as resolved_firs,
+				COUNT(f.id) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEET_FILED')) as resolved_firs,
 				AVG(EXTRACT(EPOCH FROM (f.updated_at - f.created_at))/86400)
-					FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEETED')) as avg_resolution_days
+					FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEET_FILED')) as avg_resolution_days
 			FROM districts d
 			JOIN ranges r ON d.range_id = r.id
 			JOIN zones z ON r.zone_id = z.id
-			LEFT JOIN police_stations ps ON ps.district_id = d.id
+			LEFT JOIN stations ps ON ps.district_id = d.id
 			LEFT JOIN firs f ON f.station_id = ps.id AND f.created_at >= $2
 			WHERE z.state_id = $1 AND d.is_active = true
 			GROUP BY d.id, d.name, d.code
@@ -456,15 +483,19 @@ func (r *StateRepository) GetStateCrimesByCategory(ctx context.Context, stateID 
 	dateFilter := r.getDateFilter(period)
 	stats := make(map[string]int64)
 
+	// There is no crime_type column on an FIR. What it was registered under
+	// is the statute sections it cites, so the category is the Act the first
+	// of those belongs to.
 	query := `
-		SELECT f.crime_type, COUNT(*) as count
+		SELECT COALESCE(NULLIF(btrim(regexp_replace(COALESCE(f.ipc_sections[1], ''), '[0-9]+[A-Za-z()]*$', '')), ''), 'Unclassified') AS act,
+		       COUNT(*) as count
 		FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
+		JOIN stations ps ON f.station_id = ps.id
 		JOIN districts d ON ps.district_id = d.id
 		JOIN ranges r ON d.range_id = r.id
 		JOIN zones z ON r.zone_id = z.id
 		WHERE z.state_id = $1 AND f.created_at >= $2
-		GROUP BY f.crime_type
+		GROUP BY act
 		ORDER BY count DESC`
 
 	rows, err := r.db.Query(ctx, query, stateID, dateFilter)
@@ -677,7 +708,7 @@ func (r *StateRepository) GetPerformanceMetrics(ctx context.Context, stateID uui
 		WITH state_firs AS (
 			SELECT f.*, d.population as district_population
 			FROM firs f
-			JOIN police_stations ps ON f.station_id = ps.id
+			JOIN stations ps ON f.station_id = ps.id
 			JOIN districts d ON ps.district_id = d.id
 			JOIN ranges r ON d.range_id = r.id
 			JOIN zones z ON r.zone_id = z.id
@@ -686,7 +717,8 @@ func (r *StateRepository) GetPerformanceMetrics(ctx context.Context, stateID uui
 		state_cases AS (
 			SELECT c.*
 			FROM cases c
-			JOIN police_stations ps ON c.station_id = ps.id
+			JOIN firs f ON f.id = c.fir_id
+		JOIN stations ps ON f.station_id = ps.id
 			JOIN districts d ON ps.district_id = d.id
 			JOIN ranges r ON d.range_id = r.id
 			JOIN zones z ON r.zone_id = z.id
@@ -694,10 +726,10 @@ func (r *StateRepository) GetPerformanceMetrics(ctx context.Context, stateID uui
 		)
 		SELECT
 			CASE WHEN COUNT(*) > 0 THEN
-				COUNT(*) FILTER (WHERE status IN ('CLOSED', 'CHARGESHEETED'))::float / COUNT(*) * 100
+				COUNT(*) FILTER (WHERE status IN ('CLOSED', 'CHARGESHEET_FILED'))::float / COUNT(*) * 100
 			ELSE 0 END as resolution_rate,
 			COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/86400)
-				FILTER (WHERE status IN ('CLOSED', 'CHARGESHEETED')), 0) as avg_resolution_time
+				FILTER (WHERE status IN ('CLOSED', 'CHARGESHEET_FILED')), 0) as avg_resolution_time
 		FROM state_firs`
 
 	err := r.db.QueryRow(ctx, query, stateID, dateFilter).Scan(
@@ -715,10 +747,10 @@ func (r *StateRepository) GetStateCrimeHotspots(ctx context.Context, stateID uui
 	query := `
 		SELECT
 			d.id as district_id, d.name as district_name,
-			d.headquarters, COUNT(f.id) as crime_count,
+			COALESCE(d.headquarters, '') AS headquarters, COUNT(f.id) as crime_count,
 			AVG(ps.latitude) as latitude, AVG(ps.longitude) as longitude
 		FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
+		JOIN stations ps ON f.station_id = ps.id
 		JOIN districts d ON ps.district_id = d.id
 		JOIN ranges r ON d.range_id = r.id
 		JOIN zones z ON r.zone_id = z.id
@@ -726,7 +758,8 @@ func (r *StateRepository) GetStateCrimeHotspots(ctx context.Context, stateID uui
 	args := []interface{}{stateID}
 
 	if crimeType != "" {
-		query += " AND f.crime_type = $2"
+		// A crime type is a statute section: there is no crime_type column.
+		query += " AND $2 = ANY(f.ipc_sections)"
 		args = append(args, crimeType)
 	}
 	query += `
@@ -774,7 +807,7 @@ func (r *StateRepository) GetResourceOverview(ctx context.Context, stateID uuid.
 		SELECT
 			COALESCE(SUM(total_officers), 0) as total_officers,
 			COALESCE(SUM(sanctioned), 0) as sanctioned
-		FROM police_stations ps
+		FROM stations ps
 		JOIN districts d ON ps.district_id = d.id
 		JOIN ranges r ON d.range_id = r.id
 		JOIN zones z ON r.zone_id = z.id

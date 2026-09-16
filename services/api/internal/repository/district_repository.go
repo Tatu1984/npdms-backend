@@ -18,12 +18,28 @@ func NewDistrictRepository(db *pgxpool.Pool) *DistrictRepository {
 	return &DistrictRepository{db: db}
 }
 
+// districtColumns lists the district fields every read shares. A district
+// that has no SP posted, no population recorded and no area surveyed is an
+// ordinary district, but models.District holds those as plain strings and
+// numbers, so the NULLs have to be squared off here or the scan fails and
+// the whole list comes back as a 500.
+const districtColumns = `
+	id, range_id, name, code,
+	COALESCE(sp_name, '') AS sp_name,
+	COALESCE(sp_phone, '') AS sp_phone,
+	COALESCE(sp_email, '') AS sp_email,
+	COALESCE(headquarters, '') AS headquarters,
+	COALESCE(population, 0) AS population,
+	COALESCE(area, 0) AS area,
+	COALESCE(total_stations, 0) AS total_stations,
+	COALESCE(total_officers, 0) AS total_officers,
+	COALESCE(control_room_num, '') AS control_room_num,
+	COALESCE(is_active, false) AS is_active, created_at, updated_at`
+
 // District Operations
 func (r *DistrictRepository) GetDistrict(ctx context.Context, id uuid.UUID) (*models.District, error) {
 	query := `
-		SELECT id, range_id, name, code, sp_name, sp_phone, sp_email, headquarters,
-		       population, area, total_stations, total_officers, control_room_num,
-		       is_active, created_at, updated_at
+		SELECT ` + districtColumns + `
 		FROM districts WHERE id = $1
 	`
 	var d models.District
@@ -40,9 +56,7 @@ func (r *DistrictRepository) GetDistrict(ctx context.Context, id uuid.UUID) (*mo
 
 func (r *DistrictRepository) ListDistricts(ctx context.Context, rangeID *uuid.UUID) ([]models.District, error) {
 	query := `
-		SELECT id, range_id, name, code, sp_name, sp_phone, sp_email, headquarters,
-		       population, area, total_stations, total_officers, control_room_num,
-		       is_active, created_at, updated_at
+		SELECT ` + districtColumns + `
 		FROM districts WHERE is_active = true
 	`
 	args := []interface{}{}
@@ -108,16 +122,32 @@ func (r *DistrictRepository) UpdateDistrict(ctx context.Context, d *models.Distr
 }
 
 // Station Operations
-func (r *DistrictRepository) GetStation(ctx context.Context, id uuid.UUID) (*models.PoliceStation, error) {
-	query := `
-		SELECT id, division_id, district_id, name, code, type, sho_name, sho_id,
-		       phone, emergency_phone, email, address, latitude, longitude,
-		       jurisdiction_area, population, total_officers, sanctioned,
-		       is_active, created_at, updated_at
-		FROM police_stations WHERE id = $1
-	`
+//
+// These read stations, the table the register writes to. police_stations is
+// an older, wider copy that nothing has ever inserted a row into, so reading
+// it returned an empty district however many stations the district had.
+//
+// stations is the narrower table: it records no division, no station type,
+// no SHO, no emergency line, no jurisdiction area, no population and no
+// sanctioned strength. Those fields come back empty rather than invented.
+// Strength is the count of officers on the station's books.
+const stationColumns = `
+	ps.id, NULL::uuid AS division_id, ps.district_id, ps.name, ps.code,
+	'' AS type, '' AS sho_name, NULL::uuid AS sho_id,
+	COALESCE(ps.phone, '') AS phone, '' AS emergency_phone,
+	COALESCE(ps.email, '') AS email,
+	COALESCE(ps.address, '') AS address,
+	COALESCE(ps.latitude, 0)::float8 AS latitude,
+	COALESCE(ps.longitude, 0)::float8 AS longitude,
+	0::float8 AS jurisdiction_area, 0::bigint AS population,
+	(SELECT COUNT(*) FROM users u WHERE u.station_id = ps.id)::int AS total_officers,
+	0 AS sanctioned, true AS is_active, ps.created_at, ps.updated_at`
+
+func scanStation(row interface {
+	Scan(dest ...any) error
+}) (*models.PoliceStation, error) {
 	var s models.PoliceStation
-	err := r.db.QueryRow(ctx, query, id).Scan(
+	err := row.Scan(
 		&s.ID, &s.DivisionID, &s.DistrictID, &s.Name, &s.Code, &s.Type, &s.SHOName, &s.SHOID,
 		&s.Phone, &s.EmergencyPhone, &s.Email, &s.Address, &s.Latitude, &s.Longitude,
 		&s.JurisdictionArea, &s.Population, &s.TotalOfficers, &s.Sanctioned,
@@ -129,17 +159,15 @@ func (r *DistrictRepository) GetStation(ctx context.Context, id uuid.UUID) (*mod
 	return &s, nil
 }
 
+func (r *DistrictRepository) GetStation(ctx context.Context, id uuid.UUID) (*models.PoliceStation, error) {
+	return scanStation(r.db.QueryRow(ctx,
+		`SELECT `+stationColumns+` FROM stations ps WHERE ps.id = $1`, id))
+}
+
 func (r *DistrictRepository) ListStations(ctx context.Context, districtID uuid.UUID) ([]models.PoliceStation, error) {
-	query := `
-		SELECT id, division_id, district_id, name, code, type, sho_name, sho_id,
-		       phone, emergency_phone, email, address, latitude, longitude,
-		       jurisdiction_area, population, total_officers, sanctioned,
-		       is_active, created_at, updated_at
-		FROM police_stations
-		WHERE district_id = $1 AND is_active = true
-		ORDER BY name
-	`
-	rows, err := r.db.Query(ctx, query, districtID)
+	rows, err := r.db.Query(ctx,
+		`SELECT `+stationColumns+` FROM stations ps WHERE ps.district_id = $1 ORDER BY ps.name`,
+		districtID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,19 +175,13 @@ func (r *DistrictRepository) ListStations(ctx context.Context, districtID uuid.U
 
 	var stations []models.PoliceStation
 	for rows.Next() {
-		var s models.PoliceStation
-		err := rows.Scan(
-			&s.ID, &s.DivisionID, &s.DistrictID, &s.Name, &s.Code, &s.Type, &s.SHOName, &s.SHOID,
-			&s.Phone, &s.EmergencyPhone, &s.Email, &s.Address, &s.Latitude, &s.Longitude,
-			&s.JurisdictionArea, &s.Population, &s.TotalOfficers, &s.Sanctioned,
-			&s.IsActive, &s.CreatedAt, &s.UpdatedAt,
-		)
+		s, err := scanStation(rows)
 		if err != nil {
 			return nil, err
 		}
-		stations = append(stations, s)
+		stations = append(stations, *s)
 	}
-	return stations, nil
+	return stations, rows.Err()
 }
 
 func (r *DistrictRepository) CreateStation(ctx context.Context, s *models.PoliceStation) error {
@@ -198,55 +220,45 @@ func (r *DistrictRepository) UpdateStation(ctx context.Context, s *models.Police
 }
 
 // Statistics
+// The district analytics were written against a schema the platform never
+// had: police_stations, an empty copy of stations that nothing writes to;
+// cases.station_id and cases.verdict, columns that do not exist; a
+// crime_types table that does not exist; and the status labels
+// 'CHARGE_SHEET_FILED', 'CONVICTED' and 'ACQUITTED', which neither enum
+// holds. Every one of those queries failed, and the dashboard swallowed the
+// errors, so the district screen has reported zeroes since it was written.
+const (
+	// A station belongs to a district. The register writes to stations.
+	stationInDistrict = `JOIN stations ps ON f.station_id = ps.id`
+	// A case reaches a district through the FIR it was opened from.
+	caseInDistrict = `JOIN firs f ON f.id = c.fir_id ` + stationInDistrict
+	// The strength posted to a station is the count of officers on its books.
+	stationOfficers = `(SELECT COUNT(*) FROM users u WHERE u.station_id = ps.id)`
+)
+
 func (r *DistrictRepository) GetFIRStatistics(ctx context.Context, districtID uuid.UUID, period string) (map[string]int64, error) {
 	dateFilter := getDateFilter(period)
-
 	stats := make(map[string]int64)
 
-	// Total FIRs
-	var total int64
-	err := r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		WHERE ps.district_id = $1 `+dateFilter,
-		districtID).Scan(&total)
-	if err == nil {
-		stats["total"] = total
+	query := `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE f.status IN ('REGISTERED', 'UNDER_INVESTIGATION')) AS pending,
+			COUNT(*) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEET_FILED')) AS resolved,
+			COUNT(*) FILTER (WHERE f.priority = 'CRITICAL') AS critical
+		FROM firs f
+		` + stationInDistrict + `
+		WHERE ps.district_id = $1 ` + dateFilter
+
+	var total, pending, resolved, critical int64
+	if err := r.db.QueryRow(ctx, query, districtID).Scan(&total, &pending, &resolved, &critical); err != nil {
+		return stats, err
 	}
 
-	// Pending FIRs
-	var pending int64
-	err = r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		WHERE ps.district_id = $1 AND f.status = 'UNDER_INVESTIGATION' `+dateFilter,
-		districtID).Scan(&pending)
-	if err == nil {
-		stats["pending"] = pending
-	}
-
-	// Resolved FIRs
-	var resolved int64
-	err = r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		WHERE ps.district_id = $1 AND f.status IN ('CLOSED', 'CHARGE_SHEET_FILED') `+dateFilter,
-		districtID).Scan(&resolved)
-	if err == nil {
-		stats["resolved"] = resolved
-	}
-
-	// Critical FIRs
-	var critical int64
-	err = r.db.QueryRow(ctx, `
-		SELECT COUNT(*) FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		WHERE ps.district_id = $1 AND f.priority = 'CRITICAL' `+dateFilter,
-		districtID).Scan(&critical)
-	if err == nil {
-		stats["critical"] = critical
-	}
-
+	stats["total"] = total
+	stats["pending"] = pending
+	stats["resolved"] = resolved
+	stats["critical"] = critical
 	return stats, nil
 }
 
@@ -254,63 +266,67 @@ func (r *DistrictRepository) GetCaseStatistics(ctx context.Context, districtID u
 	dateFilter := getDateFilter(period)
 	stats := make(map[string]int64)
 
-	queries := map[string]string{
-		"total":         `SELECT COUNT(*) FROM cases c JOIN police_stations ps ON c.station_id = ps.id WHERE ps.district_id = $1` + dateFilter,
-		"investigating": `SELECT COUNT(*) FROM cases c JOIN police_stations ps ON c.station_id = ps.id WHERE ps.district_id = $1 AND c.status = 'UNDER_INVESTIGATION'` + dateFilter,
-		"chargesheeted": `SELECT COUNT(*) FROM cases c JOIN police_stations ps ON c.station_id = ps.id WHERE ps.district_id = $1 AND c.status = 'CHARGE_SHEET_FILED'` + dateFilter,
-		"convicted":     `SELECT COUNT(*) FROM cases c JOIN police_stations ps ON c.station_id = ps.id WHERE ps.district_id = $1 AND c.verdict = 'CONVICTED'` + dateFilter,
-		"acquitted":     `SELECT COUNT(*) FROM cases c JOIN police_stations ps ON c.station_id = ps.id WHERE ps.district_id = $1 AND c.verdict = 'ACQUITTED'` + dateFilter,
+	query := `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE c.status = 'UNDER_INVESTIGATION') AS investigating,
+			COUNT(*) FILTER (WHERE c.status = 'CHARGESHEET_FILED') AS chargesheeted,
+			COUNT(*) FILTER (WHERE c.status = 'CONVICTION') AS convicted,
+			COUNT(*) FILTER (WHERE c.status = 'ACQUITTAL') AS acquitted
+		FROM cases c
+		` + caseInDistrict + `
+		WHERE ps.district_id = $1 ` + dateFilter
+
+	var total, investigating, chargesheeted, convicted, acquitted int64
+	err := r.db.QueryRow(ctx, query, districtID).
+		Scan(&total, &investigating, &chargesheeted, &convicted, &acquitted)
+	if err != nil {
+		return stats, err
 	}
 
-	for key, query := range queries {
-		var count int64
-		if err := r.db.QueryRow(ctx, query, districtID).Scan(&count); err == nil {
-			stats[key] = count
-		}
-	}
-
+	stats["total"] = total
+	stats["investigating"] = investigating
+	stats["chargesheeted"] = chargesheeted
+	stats["convicted"] = convicted
+	stats["acquitted"] = acquitted
 	return stats, nil
 }
 
+// GetPersonnelStatistics counts the officers posted to the district's
+// stations. It reports no sanctioned strength: nothing in the schema records
+// one, so the vacancy figure it used to publish was arithmetic on two
+// numbers that were never there.
 func (r *DistrictRepository) GetPersonnelStatistics(ctx context.Context, districtID uuid.UUID) (map[string]int64, error) {
 	stats := make(map[string]int64)
 
-	// Total officers
 	var total int64
 	err := r.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(total_officers), 0) FROM police_stations WHERE district_id = $1`,
+		SELECT COUNT(*)
+		FROM users u
+		JOIN stations ps ON u.station_id = ps.id
+		WHERE ps.district_id = $1 AND u.is_active = true`,
 		districtID).Scan(&total)
-	if err == nil {
-		stats["total"] = total
+	if err != nil {
+		return stats, err
 	}
 
-	// Sanctioned strength
-	var sanctioned int64
-	err = r.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(sanctioned), 0) FROM police_stations WHERE district_id = $1`,
-		districtID).Scan(&sanctioned)
-	if err == nil {
-		stats["sanctioned"] = sanctioned
-		stats["vacant"] = sanctioned - total
-	}
-
-	// On duty (simplified - would need attendance tracking in real system)
-	stats["on_duty"] = int64(float64(total) * 0.85)
-	stats["on_leave"] = total - stats["on_duty"]
-
+	stats["total"] = total
 	return stats, nil
 }
 
 func (r *DistrictRepository) GetCrimesByCategory(ctx context.Context, districtID uuid.UUID, period string) (map[string]int64, error) {
 	dateFilter := getDateFilter(period)
 
+	// There is no crime_types table and no crime_type_id on an FIR. What an
+	// FIR was registered under is the statute sections it cites, so the
+	// category is the Act the first of those belongs to.
 	query := `
-		SELECT c.type, COUNT(*)
+		SELECT COALESCE(NULLIF(btrim(regexp_replace(COALESCE(f.ipc_sections[1], ''), '[0-9]+[A-Za-z()]*$', '')), ''), 'Unclassified') AS act,
+		       COUNT(*)
 		FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		JOIN crime_types c ON f.crime_type_id = c.id
+		` + stationInDistrict + `
 		WHERE ps.district_id = $1 ` + dateFilter + `
-		GROUP BY c.type
+		GROUP BY act
 	`
 
 	rows, err := r.db.Query(ctx, query, districtID)
@@ -323,27 +339,30 @@ func (r *DistrictRepository) GetCrimesByCategory(ctx context.Context, districtID
 	for rows.Next() {
 		var category string
 		var count int64
-		if err := rows.Scan(&category, &count); err == nil {
-			categories[category] = count
+		if err := rows.Scan(&category, &count); err != nil {
+			return nil, err
 		}
+		categories[category] = count
 	}
 
-	return categories, nil
+	return categories, rows.Err()
 }
 
+// GetStationWiseStats reports no average resolution time. An FIR carries no
+// closure timestamp — created_at and updated_at are all the register keeps —
+// so there is nothing to measure a resolution against.
 func (r *DistrictRepository) GetStationWiseStats(ctx context.Context, districtID uuid.UUID, period string) ([]models.StationStats, error) {
 	dateFilter := getDateFilter(period)
 
 	query := `
-		SELECT ps.id, ps.name, ps.code, ps.total_officers,
+		SELECT ps.id, ps.name, ps.code, ` + stationOfficers + `,
 		       COUNT(f.id) as total_firs,
-		       COUNT(CASE WHEN f.status = 'UNDER_INVESTIGATION' THEN 1 END) as pending,
-		       COUNT(CASE WHEN f.status IN ('CLOSED', 'CHARGE_SHEET_FILED') THEN 1 END) as resolved,
-		       COALESCE(AVG(EXTRACT(DAY FROM (f.closed_at - f.created_at))), 0) as avg_days
-		FROM police_stations ps
+		       COUNT(f.id) FILTER (WHERE f.status IN ('REGISTERED', 'UNDER_INVESTIGATION')) as pending,
+		       COUNT(f.id) FILTER (WHERE f.status IN ('CLOSED', 'CHARGESHEET_FILED')) as resolved
+		FROM stations ps
 		LEFT JOIN firs f ON ps.id = f.station_id ` + dateFilter + `
-		WHERE ps.district_id = $1 AND ps.is_active = true
-		GROUP BY ps.id, ps.name, ps.code, ps.total_officers
+		WHERE ps.district_id = $1
+		GROUP BY ps.id, ps.name, ps.code
 		ORDER BY total_firs DESC
 	`
 
@@ -358,14 +377,15 @@ func (r *DistrictRepository) GetStationWiseStats(ctx context.Context, districtID
 		var s models.StationStats
 		err := rows.Scan(
 			&s.StationID, &s.StationName, &s.StationCode, &s.Officers,
-			&s.TotalFIRs, &s.PendingFIRs, &s.ResolvedFIRs, &s.AvgResolutionDays,
+			&s.TotalFIRs, &s.PendingFIRs, &s.ResolvedFIRs,
 		)
-		if err == nil {
-			stats = append(stats, s)
+		if err != nil {
+			return nil, err
 		}
+		stats = append(stats, s)
 	}
 
-	return stats, nil
+	return stats, rows.Err()
 }
 
 func (r *DistrictRepository) GetTrendData(ctx context.Context, districtID uuid.UUID, period string) ([]models.TrendPoint, error) {
@@ -397,7 +417,7 @@ func (r *DistrictRepository) GetTrendData(ctx context.Context, districtID uuid.U
 		SELECT d.date, COUNT(f.id)
 		FROM dates d
 		LEFT JOIN firs f ON DATE(f.created_at) = d.date
-			AND f.station_id IN (SELECT id FROM police_stations WHERE district_id = $1)
+			AND f.station_id IN (SELECT id FROM stations WHERE district_id = $1)
 		GROUP BY d.date
 		ORDER BY d.date
 	`
@@ -427,7 +447,7 @@ func (r *DistrictRepository) GetAlertStatistics(ctx context.Context, districtID 
 	var pending int64
 	err := r.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM alerts a
-		JOIN police_stations ps ON a.station_id = ps.id
+		JOIN stations ps ON a.station_id = ps.id
 		WHERE ps.district_id = $1 AND a.status = 'ACTIVE'`,
 		districtID).Scan(&pending)
 	if err == nil {
@@ -437,7 +457,7 @@ func (r *DistrictRepository) GetAlertStatistics(ctx context.Context, districtID 
 	var critical int64
 	err = r.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM alerts a
-		JOIN police_stations ps ON a.station_id = ps.id
+		JOIN stations ps ON a.station_id = ps.id
 		WHERE ps.district_id = $1 AND a.severity = 'CRITICAL' AND a.status = 'ACTIVE'`,
 		districtID).Scan(&critical)
 	if err == nil {
@@ -490,7 +510,7 @@ func (r *DistrictRepository) ListCrossStationRequests(ctx context.Context, distr
 		       csr.requested_by, csr.approved_by, csr.approved_at, csr.completed_at, csr.notes,
 		       csr.created_at, csr.updated_at
 		FROM cross_station_requests csr
-		JOIN police_stations ps ON csr.requesting_station = ps.id OR csr.target_station = ps.id
+		JOIN stations ps ON csr.requesting_station = ps.id OR csr.target_station = ps.id
 		WHERE ps.district_id = $1
 	`
 	args := []interface{}{districtID}
@@ -695,14 +715,15 @@ func (r *DistrictRepository) GetStationRankings(ctx context.Context, districtID 
 func (r *DistrictRepository) GetCrimeHotspots(ctx context.Context, districtID uuid.UUID, crimeType string) ([]map[string]interface{}, error) {
 	query := `
 		SELECT ps.latitude, ps.longitude, ps.name, COUNT(f.id) as incidents
-		FROM police_stations ps
+		FROM stations ps
 		LEFT JOIN firs f ON ps.id = f.station_id
 		WHERE ps.district_id = $1 AND ps.latitude IS NOT NULL
 	`
 	args := []interface{}{districtID}
 
 	if crimeType != "" {
-		query += ` AND f.crime_type = $2`
+		// A crime type is a statute section: there is no crime_type column.
+		query += ` AND $2 = ANY(f.ipc_sections)`
 		args = append(args, crimeType)
 	}
 
@@ -738,7 +759,7 @@ func (r *DistrictRepository) GetPendingTasks(ctx context.Context, districtID uui
 	var pendingRequests int64
 	r.db.QueryRow(ctx, `
 		SELECT COUNT(*) FROM cross_station_requests csr
-		JOIN police_stations ps ON csr.target_station = ps.id
+		JOIN stations ps ON csr.target_station = ps.id
 		WHERE ps.district_id = $1 AND csr.status = 'PENDING'`,
 		districtID).Scan(&pendingRequests)
 	if pendingRequests > 0 {

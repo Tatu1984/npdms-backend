@@ -30,7 +30,7 @@ func NewANPRHandler(service *services.ANPRService) *ANPRHandler {
 }
 
 func anprError(c *gin.Context, op string, err error) {
-	if storageLimitError(c, err) {
+	if storageLimitError(c, err) || storageMissingError(c, err) {
 		return
 	}
 	switch {

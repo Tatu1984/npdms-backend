@@ -29,7 +29,7 @@ func NewCaseFileHandler(service *services.CaseFileService) *CaseFileHandler {
 }
 
 func caseFileError(c *gin.Context, op string, err error) {
-	if storageLimitError(c, err) {
+	if storageLimitError(c, err) || storageMissingError(c, err) {
 		return
 	}
 	var ref *repository.CaseFileReferenceError

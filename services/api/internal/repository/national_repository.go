@@ -98,7 +98,7 @@ func (r *NationalRepository) GetInfrastructureStats(ctx context.Context) (map[st
 			(SELECT COUNT(*) FROM zones WHERE is_active = true) as zones,
 			(SELECT COUNT(*) FROM ranges WHERE is_active = true) as ranges,
 			(SELECT COUNT(*) FROM districts WHERE is_active = true) as districts,
-			(SELECT COUNT(*) FROM police_stations WHERE is_active = true) as stations,
+			(SELECT COUNT(*) FROM stations) as stations,
 			(SELECT COALESCE(SUM(total_officers), 0) FROM states WHERE is_active = true) as officers`
 
 	var states, zones, ranges, districts, stations, officers int64
@@ -116,31 +116,34 @@ func (r *NationalRepository) GetInfrastructureStats(ctx context.Context) (map[st
 	return stats, nil
 }
 
+// stationToState climbs from the station an FIR was filed at to the state it
+// answers to. It joins stations, the table the register actually writes to —
+// police_stations is an older empty copy, and joining it made every count
+// zero. Cases reach a station the same way, through the FIR they came from,
+// because cases carries no station of its own.
+const stationToState = `
+				 JOIN stations st ON f.station_id = st.id
+				 JOIN districts d ON st.district_id = d.id
+				 JOIN ranges r ON d.range_id = r.id
+				 JOIN zones z ON r.zone_id = z.id`
+
 func (r *NationalRepository) GetStateWiseStats(ctx context.Context, period string) ([]models.StateRanking, error) {
 	dateFilter := r.getDateFilter(period)
 
 	query := `
 		WITH state_stats AS (
 			SELECT
-				s.id, s.name, s.code, s.population, s.total_officers,
-				(SELECT COUNT(*) FROM firs f
-				 JOIN police_stations ps ON f.station_id = ps.id
-				 JOIN districts d ON ps.district_id = d.id
-				 JOIN ranges r ON d.range_id = r.id
-				 JOIN zones z ON r.zone_id = z.id
+				s.id, s.name, s.code,
+				COALESCE(s.population, 0) AS population,
+				COALESCE(s.total_officers, 0) AS total_officers,
+				(SELECT COUNT(*) FROM firs f` + stationToState + `
 				 WHERE z.state_id = s.id AND f.created_at >= $1) as total_firs,
-				(SELECT COUNT(*) FROM firs f
-				 JOIN police_stations ps ON f.station_id = ps.id
-				 JOIN districts d ON ps.district_id = d.id
-				 JOIN ranges r ON d.range_id = r.id
-				 JOIN zones z ON r.zone_id = z.id
-				 WHERE z.state_id = s.id AND f.status IN ('CLOSED', 'CHARGESHEETED') AND f.created_at >= $1) as resolved_firs,
+				(SELECT COUNT(*) FROM firs f` + stationToState + `
+				 WHERE z.state_id = s.id AND f.status IN ('CLOSED', 'CHARGESHEET_FILED')
+				   AND f.created_at >= $1) as resolved_firs,
 				(SELECT COUNT(*) FROM cases c
-				 JOIN police_stations ps ON c.station_id = ps.id
-				 JOIN districts d ON ps.district_id = d.id
-				 JOIN ranges r ON d.range_id = r.id
-				 JOIN zones z ON r.zone_id = z.id
-				 WHERE z.state_id = s.id AND c.status = 'CONVICTED' AND c.created_at >= $1) as convicted
+				 JOIN firs f ON f.id = c.fir_id` + stationToState + `
+				 WHERE z.state_id = s.id AND c.status = 'CONVICTION' AND c.created_at >= $1) as convicted
 			FROM states s
 			WHERE s.is_active = true
 		)
@@ -531,16 +534,14 @@ func (r *NationalRepository) GetNationalCrimeHotspots(ctx context.Context, crime
 		SELECT
 			s.id as state_id, s.name as state_name, s.code as state_code,
 			COUNT(f.id) as crime_count
-		FROM firs f
-		JOIN police_stations ps ON f.station_id = ps.id
-		JOIN districts d ON ps.district_id = d.id
-		JOIN ranges r ON d.range_id = r.id
-		JOIN zones z ON r.zone_id = z.id
+		FROM firs f` + stationToState + `
 		JOIN states s ON z.state_id = s.id`
 	args := []interface{}{}
 
 	if crimeType != "" {
-		query += " WHERE f.crime_type = $1"
+		// There is no crime_type column. What an FIR was registered under is
+		// the statute sections it cites, so a crime type here is a section.
+		query += " WHERE $1 = ANY(f.ipc_sections)"
 		args = append(args, crimeType)
 	}
 	query += `
@@ -579,7 +580,7 @@ func (r *NationalRepository) GetResourceOverview(ctx context.Context) (*models.N
 	query := `
 		SELECT
 			COALESCE(SUM(total_officers), 0) as total_officers,
-			(SELECT COUNT(*) FROM police_stations WHERE is_active = true) as total_stations
+			(SELECT COUNT(*) FROM stations) as total_stations
 		FROM states WHERE is_active = true`
 
 	err := r.db.QueryRow(ctx, query).Scan(&overview.TotalOfficers, &overview.TotalStations)
@@ -597,19 +598,14 @@ func (r *NationalRepository) GetStateComparison(ctx context.Context, stateIDs []
 	query := `
 		WITH state_stats AS (
 			SELECT
-				s.id, s.name, s.code, s.population, s.total_officers,
-				(SELECT COUNT(*) FROM firs f
-				 JOIN police_stations ps ON f.station_id = ps.id
-				 JOIN districts d ON ps.district_id = d.id
-				 JOIN ranges r ON d.range_id = r.id
-				 JOIN zones z ON r.zone_id = z.id
+				s.id, s.name, s.code,
+				COALESCE(s.population, 0) AS population,
+				COALESCE(s.total_officers, 0) AS total_officers,
+				(SELECT COUNT(*) FROM firs f` + stationToState + `
 				 WHERE z.state_id = s.id AND f.created_at >= $1) as total_firs,
-				(SELECT COUNT(*) FROM firs f
-				 JOIN police_stations ps ON f.station_id = ps.id
-				 JOIN districts d ON ps.district_id = d.id
-				 JOIN ranges r ON d.range_id = r.id
-				 JOIN zones z ON r.zone_id = z.id
-				 WHERE z.state_id = s.id AND f.status IN ('CLOSED', 'CHARGESHEETED') AND f.created_at >= $1) as resolved_firs
+				(SELECT COUNT(*) FROM firs f` + stationToState + `
+				 WHERE z.state_id = s.id AND f.status IN ('CLOSED', 'CHARGESHEET_FILED')
+				   AND f.created_at >= $1) as resolved_firs
 			FROM states s
 			WHERE s.id = ANY($2) AND s.is_active = true
 		)

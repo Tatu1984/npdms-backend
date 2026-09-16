@@ -347,7 +347,7 @@ func (s *ReportsService) renderOfficerWorkloadPDF(pdf *gofpdf.Fpdf, data *reposi
 		pdf.Cell(25, 8, "Active")
 		pdf.Cell(25, 8, "Closed")
 		pdf.Cell(25, 8, "FIRs")
-		pdf.Cell(30, 8, "Avg Closure")
+		pdf.Cell(30, 8, "Rank")
 		pdf.Cell(0, 8, "Oldest")
 		pdf.Ln(8)
 
@@ -357,7 +357,7 @@ func (s *ReportsService) renderOfficerWorkloadPDF(pdf *gofpdf.Fpdf, data *reposi
 			pdf.Cell(25, 6, fmt.Sprintf("%d", ow.ActiveCases))
 			pdf.Cell(25, 6, fmt.Sprintf("%d", ow.ClosedCases))
 			pdf.Cell(25, 6, fmt.Sprintf("%d", ow.TotalFIRsRegistered))
-			pdf.Cell(30, 6, fmt.Sprintf("%.1f days", ow.AvgCaseClosureTime))
+			pdf.Cell(30, 6, ow.Rank)
 			pdf.Cell(0, 6, fmt.Sprintf("%d days", ow.OldestActiveCase))
 			pdf.Ln(6)
 		}
@@ -524,7 +524,7 @@ func (s *ReportsService) renderOfficerWorkloadExcel(f *excelize.File, sheet stri
 		f.SetCellValue(sheet, fmt.Sprintf("C%d", row), "Active Cases")
 		f.SetCellValue(sheet, fmt.Sprintf("D%d", row), "Closed Cases")
 		f.SetCellValue(sheet, fmt.Sprintf("E%d", row), "FIRs Registered")
-		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), "Avg Closure (days)")
+		f.SetCellValue(sheet, fmt.Sprintf("F%d", row), "Oldest Active Case (days)")
 		f.SetCellStyle(sheet, fmt.Sprintf("A%d", row), fmt.Sprintf("F%d", row), style)
 		row++
 
@@ -534,7 +534,7 @@ func (s *ReportsService) renderOfficerWorkloadExcel(f *excelize.File, sheet stri
 			f.SetCellValue(sheet, fmt.Sprintf("C%d", row), ow.ActiveCases)
 			f.SetCellValue(sheet, fmt.Sprintf("D%d", row), ow.ClosedCases)
 			f.SetCellValue(sheet, fmt.Sprintf("E%d", row), ow.TotalFIRsRegistered)
-			f.SetCellValue(sheet, fmt.Sprintf("F%d", row), ow.AvgCaseClosureTime)
+			f.SetCellValue(sheet, fmt.Sprintf("F%d", row), ow.OldestActiveCase)
 			row++
 		}
 	}
@@ -563,7 +563,7 @@ func (s *ReportsService) generateCSV(req ReportRequest, data interface{}) ([]byt
 
 	case ReportTypeOfficerWorkload:
 		report := data.(*repository.OfficerWorkloadReport)
-		writer.Write([]string{"Officer", "Rank", "Active Cases", "Closed Cases", "FIRs Registered", "Avg Closure (days)"})
+		writer.Write([]string{"Officer", "Rank", "Active Cases", "Closed Cases", "FIRs Registered", "Oldest Active Case (days)"})
 		for _, ow := range report.Officers {
 			writer.Write([]string{
 				ow.OfficerName,
@@ -571,7 +571,7 @@ func (s *ReportsService) generateCSV(req ReportRequest, data interface{}) ([]byt
 				fmt.Sprintf("%d", ow.ActiveCases),
 				fmt.Sprintf("%d", ow.ClosedCases),
 				fmt.Sprintf("%d", ow.TotalFIRsRegistered),
-				fmt.Sprintf("%.1f", ow.AvgCaseClosureTime),
+				fmt.Sprintf("%d", ow.OldestActiveCase),
 			})
 		}
 	}

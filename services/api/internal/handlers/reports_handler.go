@@ -355,6 +355,9 @@ func parseDateRange(c *gin.Context) (time.Time, time.Time, error) {
 		if err != nil {
 			return time.Time{}, time.Time{}, err
 		}
+		// A to_date names a whole day. Parsing lands on its midnight, which
+		// would leave everything filed that day out of the report.
+		toDate = toDate.Add(24*time.Hour - time.Nanosecond)
 	}
 
 	return fromDate, toDate, nil

@@ -27,7 +27,7 @@ func photoError(c *gin.Context, op string, err error) {
 	case errors.As(err, &maxErr), errors.Is(err, services.ErrPhotoTooLarge):
 		c.JSON(http.StatusRequestEntityTooLarge, models.ErrorResponse{Error: "too_large",
 			Message: fmt.Sprintf("The photograph is larger than %d MB", photos.MaxBytes>>20), Code: 413})
-	case storageLimitError(c, err):
+	case storageLimitError(c, err), storageMissingError(c, err):
 	case errors.Is(err, repository.ErrPhotoDetailsRejected), errors.Is(err, services.ErrNoStation),
 		errors.Is(err, repository.ErrStationNotFound):
 		badRequest(c, err.Error())
