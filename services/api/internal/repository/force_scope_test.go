@@ -43,20 +43,18 @@ func setUpTwoForces(t *testing.T, tdb *testutil.TestDB) forceFixture {
 		t.Skipf("no Kolkata Police officer to test with: %v", err)
 	}
 
-	// A West Bengal Police station, officer and FIR, made for this test.
-	wbpStation := uuid.New()
-	_, err := tdb.Pool.Exec(ctx, `
-		INSERT INTO stations (id, name, code, district, state, force_id)
-		VALUES ($1, $2, $3, 'Barrackpore', 'West Bengal', $4)`,
-		wbpStation, "PROBE-test WBP station "+suffix, "PRB"+suffix[:4], wbpForce)
-	require.NoError(t, err)
-
-	wbpOfficer := uuid.New()
-	_, err = tdb.Pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, name, role, station_id, force_id, is_active)
-		VALUES ($1, $2, $3, 'x', 'PROBE-test WBP officer', 'SI', $4, $5, TRUE)`,
-		wbpOfficer, "probe-wbp-"+suffix, "probe-wbp-"+suffix+"@example.invalid", wbpStation, wbpForce)
-	require.NoError(t, err)
+	// A West Bengal Police station and officer. The demo data now carries real
+	// ones, and using them is both closer to life and necessary: officers can
+	// no longer be deleted (users_are_never_deleted), so a test that created
+	// one would leave it behind for ever.
+	var wbpStation, wbpOfficer uuid.UUID
+	err := tdb.Pool.QueryRow(ctx, `
+		SELECT u.id, u.station_id FROM users u
+		 WHERE u.force_id = $1 AND u.station_id IS NOT NULL AND u.is_active
+		 ORDER BY u.created_at LIMIT 1`, wbpForce).Scan(&wbpOfficer, &wbpStation)
+	if err != nil {
+		t.Skipf("no West Bengal Police officer in this database — run scripts/seed-departments-demo.py: %v", err)
+	}
 
 	newFIR := func(station uuid.UUID, who string) uuid.UUID {
 		id := uuid.New()
@@ -81,8 +79,6 @@ func setUpTwoForces(t *testing.T, tdb *testutil.TestDB) forceFixture {
 	t.Cleanup(func() {
 		tdb.Pool.Exec(ctx, `DELETE FROM case_referrals WHERE record_id IN ($1, $2)`, fixture.kpFIR, fixture.wbpFIR)
 		tdb.Pool.Exec(ctx, `DELETE FROM firs WHERE id IN ($1, $2)`, fixture.kpFIR, fixture.wbpFIR)
-		tdb.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, wbpOfficer)
-		tdb.Pool.Exec(ctx, `DELETE FROM stations WHERE id = $1`, wbpStation)
 	})
 
 	return fixture
