@@ -263,7 +263,7 @@ func (s *ReferralService) recordIsVisibleTo(ctx context.Context, recordType stri
 		             = ANY(force_family_stations((SELECT force_id FROM users WHERE id = $2)))
 		         FROM cases c LEFT JOIN firs fir ON fir.id = c.fir_id WHERE c.id = $1`
 	case "COMPLAINT":
-		query = `SELECT c.complaint_number,
+		query = `SELECT c.tracking_number,
 		           c.station_id = ANY(force_family_stations((SELECT force_id FROM users WHERE id = $2)))
 		         FROM citizen_complaints c WHERE c.id = $1`
 	default:
@@ -287,7 +287,24 @@ func (s *ReferralService) refusal(ctx context.Context, actor uuid.UUID, action s
 
 	text := err.Error()
 	if strings.Contains(text, "idx_referrals_one_live") {
-		return errors.New("this record has already been referred and that referral is still live")
+		// "Still live" covers both a proposal awaiting a decision and one
+		// already accepted, and reads oddly for the second. Say which.
+		var status, force string
+		s.db.QueryRow(ctx, `
+			SELECT r.status, f.short_name
+			  FROM case_referrals r JOIN forces f ON f.id = r.to_force_id
+			 WHERE r.record_type = $1 AND r.record_id = $2
+			   AND r.status IN ('PROPOSED', 'ACCEPTED')
+			 LIMIT 1`, in.RecordType, in.RecordID).Scan(&status, &force)
+
+		switch status {
+		case "ACCEPTED":
+			return fmt.Errorf("this record is already with %s, which accepted it; refer it again only after they return it", force)
+		case "PROPOSED":
+			return fmt.Errorf("this record has already been referred to %s and is awaiting their decision", force)
+		default:
+			return errors.New("this record has already been referred and that referral is still live")
+		}
 	}
 	if strings.Contains(text, "referral_crosses_a_boundary") {
 		return errors.New("a record cannot be referred to the force that already holds it")

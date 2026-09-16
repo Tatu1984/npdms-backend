@@ -123,6 +123,29 @@ def main():
     check("Kolkata Police still sees the case it referred",
           case_id in [c["id"] for c in (kp_after.get("data") or [])], "it vanished from KP")
 
+    print("\nThe wording tells the officer which situation they are in")
+    status, body = call("POST", "/referrals", kp_sho, {
+        "recordType": "CASE", "recordId": case_id, "toForceCode": "CID",
+        "reason": "Probe: referring a case that CID has already accepted."})
+    check("an accepted record says so, not that a referral is pending",
+          status == 409 and "already with" in body.get("message", ""), f"{status} {body.get('message')}")
+
+    print("\nComplaints refer the same way")
+    status, complaints = call("GET", "/complaints?pageSize=1", kp_sho)
+    complaint = (complaints.get("data") or [None])[0] if status == 200 else None
+    if not complaint:
+        print("       no complaint to refer on this database — not exercised")
+    else:
+        status, body = call("POST", "/referrals", kp_sho, {
+            "recordType": "COMPLAINT", "recordId": complaint["id"], "toForceCode": "CID",
+            "reason": "Probe: the complainant names an accused under investigation elsewhere."})
+        check("a complaint can be referred", status == 201, f"{status} {body}")
+        if status == 201:
+            status, decided = call("POST", f"/referrals/{body['id']}/decision", cid_sp, {"accept": False,
+                                   "note": "Probe: declined, not a CID matter."})
+            check("and declined by the receiving department", status == 200 and decided.get("status") == "DECLINED",
+                  f"{status} {decided}")
+
     print("\nThe decision stands")
     status, body = call("POST", f"/referrals/{referral_id}/decision", cid_sp, {"accept": False})
     check("a decided referral cannot be decided again", status == 409, f"{status} {body}")
