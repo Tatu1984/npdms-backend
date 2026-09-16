@@ -304,7 +304,7 @@ func main() {
 
 		// Protected routes
 		protected := v1.Group("")
-		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret, rdb))
 		protected.Use(middleware.SessionValidationMiddleware(rdbV8, zeroTrustConfig))
 		protected.Use(middleware.DeviceVerificationMiddleware(rdbV8, zeroTrustConfig))
 		protected.Use(middleware.ContinuousAuthMiddleware(rdbV8))
@@ -547,7 +547,7 @@ func main() {
 				traffic.GET("/challans", trafficChallanHandler.List)
 				traffic.GET("/challans/:id", trafficChallanHandler.Get)
 				traffic.GET("/challans/number/:number", trafficChallanHandler.GetByNumber)
-				traffic.POST("/challans", middleware.RequireRole("CONSTABLE", "HC", "SI", "INSPECTOR", "SHO"), trafficChallanHandler.Create)
+				traffic.POST("/challans", middleware.RequireRole("CONSTABLE", "HEAD_CONSTABLE", "SI", "INSPECTOR", "SHO"), trafficChallanHandler.Create)
 				traffic.PATCH("/challans/:id/status", middleware.RequireRole("SI", "INSPECTOR", "SHO"), trafficChallanHandler.UpdateStatus)
 				traffic.POST("/challans/:id/dispute", trafficChallanHandler.FileDispute)
 				traffic.GET("/vehicle/:vehicleNumber", trafficChallanHandler.GetChallansByVehicle)

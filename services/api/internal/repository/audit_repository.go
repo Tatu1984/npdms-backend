@@ -152,6 +152,13 @@ func canonicalAuditAction(name string, success bool) string {
 	n := strings.ToUpper(name)
 
 	switch {
+	// Tested before LOGIN so "refresh_denied" is not swept into the default
+	// UPDATE. Renewing a session is a sign-in without the password, and a
+	// refused renewal belongs beside the failed sign-ins: the access log
+	// selects on LOGIN and LOGOUT, so an event filed as UPDATE is invisible
+	// exactly where somebody would go looking for it.
+	case strings.Contains(n, "REFRESH"):
+		return "LOGIN"
 	case strings.Contains(n, "LOGIN"):
 		return "LOGIN"
 	case strings.Contains(n, "LOGOUT"):

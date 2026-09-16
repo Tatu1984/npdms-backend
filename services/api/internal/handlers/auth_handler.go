@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -92,6 +93,20 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 	response, err := h.authService.RefreshToken(c.Request.Context(), req.RefreshToken)
 	if err != nil {
+		// A closed account is refused by name, and the refusal is recorded.
+		// Somebody still holding a credential after their account was stopped
+		// is exactly the event an inspection asks about, and "invalid token"
+		// in the log would not distinguish it from an expired one.
+		if errors.Is(err, services.ErrAccountClosed) {
+			h.recordAccess(c, "refresh_denied", h.authService.UserIDFromRefreshToken(req.RefreshToken),
+				false, "Refresh refused: the account has been deactivated")
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error:   "account_closed",
+				Message: err.Error(),
+				Code:    401,
+			})
+			return
+		}
 		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
 			Error:   "invalid_token",
 			Message: err.Error(),
