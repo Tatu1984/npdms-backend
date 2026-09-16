@@ -131,7 +131,17 @@ func (r *KnowledgeRepository) Search(ctx context.Context, f KnowledgeFilter) ([]
 		tsq := fmt.Sprintf("websearch_to_tsquery('simple', $%d)", n)
 		meta := "(coalesce(d.title, '') || ' ' || coalesce(d.title_bn, '') || ' ' || coalesce(d.description, ''))"
 		titleHit := fmt.Sprintf("(setweight(to_tsvector('simple', coalesce(d.title, '') || ' ' || coalesce(d.title_bn, '') || ' ' || coalesce(d.reference_number, '')), 'A') @@ %s)", tsq)
-		textHit := fmt.Sprintf("(to_tsvector('simple', d.text_content) @@ %s OR d.text_content ILIKE '%%' || $%d || '%%')", tsq, n)
+		// Text read off a scan is misspelt by the engine, so a whole-word match
+		// against it fails on exactly the documents OCR was added for: a
+		// Bengali circular read as "অভযিগ" is not found by searching "অভিযোগ".
+		// For a query in a non-Latin script the stored text is also matched by
+		// trigram similarity, which the GIN index on text_content serves.
+		fuzzyText := "FALSE"
+		if hasNonLatinLetter(q) {
+			fuzzyText = fmt.Sprintf("($%d <%% d.text_content OR word_similarity($%d, d.text_content) >= %v)",
+				n, n, wordSimilarityThreshold)
+		}
+		textHit := fmt.Sprintf("(to_tsvector('simple', d.text_content) @@ %s OR d.text_content ILIKE '%%' || $%d || '%%' OR %s)", tsq, n, fuzzyText)
 		// Trigram similarity is fuzzy. It is applied only to queries with
 		// non-Latin letters, where it catches Bengali inflections the unstemmed
 		// tsvector cannot; for English it would match near-miss reference
@@ -240,7 +250,15 @@ type NewKnowledgeDocument struct {
 	TextContent      string
 	ExtractionStatus string
 	ExtractionNote   string
-	UploadedBy       uuid.UUID
+	// Set only where the text was read off an image: which engine read it, in
+	// which languages, from which script, and how sure the engine was.
+	OCREngine     *string
+	OCRLanguages  []string
+	OCRScript     *string
+	OCRConfidence *float64
+	OCRPages      *int
+	OCRReadAt     *time.Time
+	UploadedBy    uuid.UUID
 }
 
 const knowledgeInsert = `
@@ -248,8 +266,10 @@ const knowledgeInsert = `
 		id, document_number, doc_type, title, title_bn, description, issuing_authority,
 		reference_number, issued_on, applicable_to, classification, version, supersedes_id,
 		object_key, original_filename, content_type, file_size, sha256,
-		text_content, extraction_status, extraction_note, uploaded_by
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+		text_content, extraction_status, extraction_note, uploaded_by,
+		ocr_engine, ocr_languages, ocr_script, ocr_confidence, ocr_pages, ocr_read_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+	          $23, $24, $25, $26, $27, $28)
 `
 
 func (r *KnowledgeRepository) Create(ctx context.Context, n NewKnowledgeDocument) error {
@@ -261,7 +281,8 @@ func (r *KnowledgeRepository) Create(ctx context.Context, n NewKnowledgeDocument
 		n.ID, number, n.DocType, n.Title, n.TitleBn, n.Description, n.IssuingAuthority,
 		n.ReferenceNumber, n.IssuedOn, n.ApplicableTo, n.Classification, 1, nil,
 		n.ObjectKey, n.OriginalFilename, n.ContentType, n.FileSize, n.SHA256,
-		n.TextContent, n.ExtractionStatus, n.ExtractionNote, n.UploadedBy)
+		n.TextContent, n.ExtractionStatus, n.ExtractionNote, n.UploadedBy,
+		n.OCREngine, n.OCRLanguages, n.OCRScript, n.OCRConfidence, n.OCRPages, n.OCRReadAt)
 	return err
 }
 
@@ -298,7 +319,8 @@ func (r *KnowledgeRepository) Supersede(ctx context.Context, oldID uuid.UUID, vi
 		n.ID, number, n.DocType, n.Title, n.TitleBn, n.Description, n.IssuingAuthority,
 		n.ReferenceNumber, n.IssuedOn, n.ApplicableTo, n.Classification, version+1, oldID,
 		n.ObjectKey, n.OriginalFilename, n.ContentType, n.FileSize, n.SHA256,
-		n.TextContent, n.ExtractionStatus, n.ExtractionNote, n.UploadedBy); err != nil {
+		n.TextContent, n.ExtractionStatus, n.ExtractionNote, n.UploadedBy,
+		n.OCREngine, n.OCRLanguages, n.OCRScript, n.OCRConfidence, n.OCRPages, n.OCRReadAt); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return ErrKnowledgeNotEffective

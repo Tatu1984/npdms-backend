@@ -31,8 +31,38 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
 # Final stage
 FROM alpine:3.19
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+# Install runtime dependencies.
+#
+# poppler-utils gives pdftotext (a PDF's own text layer) and pdftoppm (turning
+# a scanned page into an image). tesseract-ocr reads those images.
+RUN apk add --no-cache ca-certificates tzdata poppler-utils tesseract-ocr curl
+
+# The language models for the languages of India.
+#
+# Alpine packages only some of them — Marathi, Gujarati, Punjabi, Odia, Assamese
+# and Urdu are not in its repository — so they are fetched from the tessdata
+# project itself, which is where Alpine gets them too. These are the "best"
+# (LSTM) models rather than the "fast" ones: on a Bengali page the best model
+# read 38% of words correctly against the fast model's 9%, which is the
+# difference between a scanned circular being findable and not. Apache-2.0,
+# from https://github.com/tesseract-ocr/tessdata_best.
+#
+# About 150 MB, and no GPU is needed to use them.
+# Pinned so an image built next year reads pages the same way as this one.
+# tessdata_best at e12c65a (9 March 2024); osd comes from the tessdata
+# repository, which carries the script-detection model.
+ARG TESSDATA_BEST_COMMIT=e12c65a915945e4c28e237a9b52bc4a8f39a0cec
+ARG TESSDATA_COMMIT=ced78752cc61322fb554c280d13360b35b8684e4
+RUN set -eux; \
+    mkdir -p /usr/share/tessdata; \
+    for lang in ben hin mar tam tel kan mal guj pan ori asm urd san nep eng; do \
+        curl -fsSL -o "/usr/share/tessdata/$lang.traineddata" \
+            "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/${TESSDATA_BEST_COMMIT}/$lang.traineddata"; \
+    done; \
+    curl -fsSL -o /usr/share/tessdata/osd.traineddata \
+        "https://raw.githubusercontent.com/tesseract-ocr/tessdata/${TESSDATA_COMMIT}/osd.traineddata"; \
+    apk del curl
+ENV TESSDATA_PREFIX=/usr/share/tessdata
 
 # Create non-root user
 RUN addgroup -g 1001 -S npdms && \

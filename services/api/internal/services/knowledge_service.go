@@ -52,7 +52,14 @@ func (s *KnowledgeService) audit(ctx context.Context, action string, actor uuid.
 // Capabilities states what this server can extract, for the screen to show.
 func (s *KnowledgeService) Capabilities() map[string]interface{} {
 	return map[string]interface{}{
-		"ocrAvailable":    s.extractor.OCRAvailable(),
+		"ocrAvailable": s.extractor.OCRAvailable(),
+		// Which of India's languages this server can actually read off a scan,
+		// and with what. A deployment without the language pack should say so
+		// rather than let an officer upload a Bengali circular and wonder why
+		// it cannot be found.
+		"ocrEngine":       s.extractor.EngineVersion(),
+		"ocrLanguages":    s.extractor.Languages(),
+		"ocrNote":         "Scanned pages are read by machine so that they can be found, not quoted. The script is detected from the page; text is read in that script's languages plus English, and is never treated as the document's content.",
 		"classifications": models.KnowledgeClassifications,
 		"docTypes":        models.KnowledgeDocTypes,
 		"maxUploadBytes":  MaxKnowledgeUploadBytes,
@@ -189,6 +196,21 @@ func (s *KnowledgeService) storeUpload(ctx context.Context, v KnowledgeViewer, i
 		ContentType: contentType, FileSize: obj.Size, SHA256: obj.SHA256,
 		TextContent: result.Text, ExtractionStatus: result.Status, ExtractionNote: result.Note,
 		UploadedBy: v.ID,
+	}
+	if result.OCR != nil {
+		// Who read it and how sure they were, recorded with the text so a page
+		// read badly can be found and read again when a better model exists.
+		readAt := time.Now()
+		n.OCRReadAt = &readAt
+		n.OCREngine = &result.OCR.Engine
+		n.OCRLanguages = result.OCR.Languages
+		n.OCRPages = &result.OCR.Pages
+		if result.OCR.Script != "" {
+			n.OCRScript = &result.OCR.Script
+		}
+		if result.OCR.Confidence > 0 {
+			n.OCRConfidence = &result.OCR.Confidence
+		}
 	}
 	if t := strings.TrimSpace(in.TitleBn); t != "" {
 		n.TitleBn = &t
