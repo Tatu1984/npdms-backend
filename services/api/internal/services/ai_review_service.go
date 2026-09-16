@@ -506,7 +506,7 @@ func (s *AIReviewService) SetModuleSwitch(ctx context.Context, module string, en
 
 	tag, err := s.db.Exec(ctx, `
 		UPDATE ai_module_switches
-		   SET enabled = $2, reason = $3, note = $3, updated_by = $4, updated_at = NOW()
+		   SET enabled = $2, reason = $3, updated_by = $4, updated_at = NOW()
 		 WHERE module = $1`, module, enabled, reason, actor)
 	if err != nil {
 		s.auditRepo.Log(ctx, &repository.AuditLog{
@@ -737,7 +737,7 @@ func (s *AIReviewService) GetStatsByDateRange(ctx context.Context, startDate, en
 func (s *AIReviewService) ModuleSwitches(ctx context.Context) ([]models.AIModuleSwitch, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT s.module, s.enabled, COALESCE(s.config::text, '{}'), COALESCE(s.reason, ''),
-		       COALESCE(s.note, ''), s.updated_by, COALESCE(u.name, ''), s.updated_at
+		       s.updated_by, COALESCE(u.name, ''), s.updated_at
 		  FROM ai_module_switches s
 		  LEFT JOIN users u ON u.id = s.updated_by
 		 ORDER BY s.module`)
@@ -749,7 +749,7 @@ func (s *AIReviewService) ModuleSwitches(ctx context.Context) ([]models.AIModule
 	out := []models.AIModuleSwitch{}
 	for rows.Next() {
 		var m models.AIModuleSwitch
-		if err := rows.Scan(&m.Module, &m.Enabled, &m.Config, &m.Reason, &m.Note,
+		if err := rows.Scan(&m.Module, &m.Enabled, &m.Config, &m.Reason,
 			&m.UpdatedBy, &m.UpdatedByName, &m.UpdatedAt); err != nil {
 			return nil, err
 		}

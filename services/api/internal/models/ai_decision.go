@@ -172,7 +172,6 @@ type AIModuleSwitch struct {
 	Enabled       bool       `json:"enabled"`
 	Config        string     `json:"config,omitempty"`
 	Reason        string     `json:"reason,omitempty"`
-	Note          string     `json:"note,omitempty"`
 	UpdatedBy     *uuid.UUID `json:"updatedBy,omitempty"`
 	UpdatedByName string     `json:"updatedByName,omitempty"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
