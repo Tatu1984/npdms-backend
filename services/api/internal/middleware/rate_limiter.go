@@ -49,16 +49,30 @@ func RateLimiter(config RateLimiterConfig) gin.HandlerFunc {
 		c.Header("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
 
 		if err != nil {
-			// On Redis error, log and allow request (fail open)
-			fmt.Printf("Rate limiter error: %v\n", err)
+			// Redis is unreachable. The limit still applies, counted in this
+			// process's memory — weaker, because each instance counts its own,
+			// but a limit that disappears with Redis is not a limit. See
+			// rate_limit_memory.go.
+			allowed, remaining, resetTime = fallbackLimiter.allow(key, config.Limit, config.Window)
+			c.Header("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			c.Header("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
+			if !allowed {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":       "rate_limit_exceeded",
+					"message":     "Too many requests. Please try again later.",
+					"retry_after": resetTime.Unix(),
+				})
+				c.Abort()
+				return
+			}
 			c.Next()
 			return
 		}
 
 		if !allowed {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":   "rate_limit_exceeded",
-				"message": "Too many requests. Please try again later.",
+				"error":       "rate_limit_exceeded",
+				"message":     "Too many requests. Please try again later.",
 				"retry_after": resetTime.Unix(),
 			})
 			c.Abort()
@@ -90,6 +104,13 @@ func checkRateLimit(
 ) (allowed bool, remaining int, resetTime time.Time, err error) {
 	now := time.Now()
 	windowStart := now.Add(-window)
+
+	// No Redis client at all: count in memory rather than waving the request
+	// through.
+	if rdb == nil {
+		allowed, remaining, resetTime = fallbackLimiter.allow(key, limit, window)
+		return allowed, remaining, resetTime, nil
+	}
 
 	// Use Redis pipeline for atomic operations
 	pipe := rdb.Pipeline()

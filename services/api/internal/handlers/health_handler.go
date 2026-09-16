@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -60,13 +61,16 @@ func (h *HealthHandler) Ready(c *gin.Context) {
 		checks["redis"] = "not configured"
 	}
 
-	// Overall status
-	healthy := true
-	for _, status := range checks {
-		if status != "healthy" && status != "not configured" {
-			healthy = false
-			break
-		}
+	// Readiness is about whether this server can do its job, and the answer
+	// turns on the database: without it the platform serves nothing. Redis
+	// carries rate-limit counters, CSRF tokens and session bookkeeping, and
+	// when it is absent the limits fall back to this process's own memory
+	// (see middleware/rate_limit_memory.go) — weaker, and worth reporting
+	// loudly, but not a reason to tell a load balancer to take the server out
+	// of service and leave the platform unreachable.
+	healthy := strings.HasPrefix(checks["database"], "healthy")
+	if !strings.HasPrefix(checks["redis"], "healthy") && checks["redis"] != "not configured" {
+		checks["rateLimiting"] = "degraded: counted per instance in memory because Redis is unreachable"
 	}
 
 	status := http.StatusOK
@@ -161,4 +165,3 @@ func GetDashboardStats(c *gin.Context) {
 
 	c.JSON(http.StatusOK, stats)
 }
-
