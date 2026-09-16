@@ -687,3 +687,38 @@ type Alert struct {
 	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
 }
+
+// Referral is a record handed from one force to another — the inter-department
+// act the platform exists to make traceable.
+type Referral struct {
+	ID              uuid.UUID `json:"id"`
+	ReferralNumber  string    `json:"referralNumber"`
+	RecordType      string    `json:"recordType"` // CASE, FIR or COMPLAINT
+	RecordID        uuid.UUID `json:"recordId"`
+	RecordReference string    `json:"recordReference,omitempty"`
+	Status          string    `json:"status"`
+	Reason          string    `json:"reason"`
+	Authority       string    `json:"authority,omitempty"`
+
+	FromForceCode      string `json:"fromForceCode"`
+	FromForceShortName string `json:"fromForceShortName"`
+	ToForceCode        string `json:"toForceCode"`
+	ToForceShortName   string `json:"toForceShortName"`
+
+	ReferredBy     uuid.UUID  `json:"referredBy"`
+	ReferredByName string     `json:"referredByName,omitempty"`
+	ReferredAt     time.Time  `json:"referredAt"`
+	DecidedBy      *uuid.UUID `json:"decidedBy,omitempty"`
+	DecidedByName  string     `json:"decidedByName,omitempty"`
+	DecidedAt      *time.Time `json:"decidedAt,omitempty"`
+	DecisionNote   string     `json:"decisionNote,omitempty"`
+}
+
+// NewReferral is what an officer proposes.
+type NewReferral struct {
+	RecordType  string    `json:"recordType" binding:"required"`
+	RecordID    uuid.UUID `json:"recordId" binding:"required"`
+	ToForceCode string    `json:"toForceCode" binding:"required"`
+	Reason      string    `json:"reason" binding:"required"`
+	Authority   string    `json:"authority"`
+}

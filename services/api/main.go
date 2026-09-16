@@ -107,6 +107,7 @@ func main() {
 	trafficChallanService := services.NewTrafficChallanService(trafficChallanRepo, auditRepo)
 	reportsService := services.NewReportsService(reportsRepo, auditRepo)
 	aiReviewService := services.NewAIReviewService(db, auditRepo)
+	referralService := services.NewReferralService(db, auditRepo)
 
 	// The AI gateway (layer A0): the one route from this platform to any
 	// model. Clients are attached per registered model, from the service
@@ -223,6 +224,7 @@ func main() {
 	trafficChallanHandler := handlers.NewTrafficChallanHandler(trafficChallanService)
 	reportsHandler := handlers.NewReportsHandler(reportsService)
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
+	referralHandler := handlers.NewReferralHandler(referralService)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
@@ -1064,6 +1066,18 @@ func main() {
 				investigation.GET("/:id/evidence", investigationHandler.ListEvidence)
 				investigation.POST("/:id/evidence", investigationHandler.LinkEvidence)
 				investigation.DELETE("/:id/evidence/:evidenceId", investigationHandler.UnlinkEvidence)
+			}
+
+			// Records crossing between the four departments. A referral is
+			// proposed by the force that holds the record and accepted by the
+			// one it is sent to; until then nothing has crossed.
+			referrals := protected.Group("/referrals")
+			{
+				referrals.GET("", referralHandler.List)
+				referrals.GET("/:id", referralHandler.Get)
+				referrals.POST("", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Propose)
+				referrals.POST("/:id/decision", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Decide)
+				referrals.POST("/:id/withdraw", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Withdraw)
 			}
 
 			aiReview := protected.Group("/ai-review")
