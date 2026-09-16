@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -69,7 +70,18 @@ func pathID(c *gin.Context, param, label string) (uuid.UUID, bool) {
 	return id, true
 }
 
-func fileID(c *gin.Context) (uuid.UUID, bool) { return pathID(c, "id", "case file") }
+// fileID parses the :id path parameter and refuses another department's court
+// file. Every entry, charge, witness-fact and pack route goes through here.
+func (h *CaseFileHandler) fileID(c *gin.Context) (uuid.UUID, bool) {
+	id, ok := pathID(c, "id", "case file")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
 
 func requireActor(c *gin.Context) (uuid.UUID, bool) {
 	a := actorID(c)
@@ -92,7 +104,8 @@ func bindCaseFileJSON(c *gin.Context, dst any) bool {
 func (h *CaseFileHandler) List(c *gin.Context) {
 	page, size := pageParams(c)
 	files, total, err := h.service.List(c.Request.Context(), repository.CaseFileFilter{
-		Search: c.Query("search"), Status: c.Query("status"), Page: page, PageSize: size})
+		ViewerID: middleware.GetUserID(c),
+		Search:   c.Query("search"), Status: c.Query("status"), Page: page, PageSize: size})
 	if err != nil {
 		caseFileError(c, "list case files", err)
 		return
@@ -120,7 +133,7 @@ func (h *CaseFileHandler) Create(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Get(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -137,6 +150,11 @@ func (h *CaseFileHandler) GetByWorkspace(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// The file is the workspace's, so the workspace decides who may read it.
+	if RefuseIfNotOurs(c, h.service.WorkspaceOwner, ws) {
+		return
+	}
+
 	cf, err := h.service.GetByWorkspace(c.Request.Context(), ws)
 	if err != nil {
 		caseFileError(c, "load the case file", err)
@@ -146,7 +164,7 @@ func (h *CaseFileHandler) GetByWorkspace(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Entries(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -159,7 +177,7 @@ func (h *CaseFileHandler) Entries(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) AddEntry(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -177,7 +195,7 @@ func (h *CaseFileHandler) AddEntry(c *gin.Context) {
 
 // UploadEntry takes multipart: "file" plus "meta", a JSON AddCaseFileEntryRequest.
 func (h *CaseFileHandler) UploadEntry(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -211,7 +229,7 @@ func (h *CaseFileHandler) UploadEntry(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) RemoveEntry(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -231,7 +249,7 @@ func (h *CaseFileHandler) RemoveEntry(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) DownloadEntry(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -263,7 +281,7 @@ func (h *CaseFileHandler) DownloadEntry(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) EvidenceMatrix(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -276,7 +294,7 @@ func (h *CaseFileHandler) EvidenceMatrix(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) AddCharge(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -293,7 +311,7 @@ func (h *CaseFileHandler) AddCharge(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) RemoveCharge(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -309,7 +327,7 @@ func (h *CaseFileHandler) RemoveCharge(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) LinkSupport(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -329,7 +347,7 @@ func (h *CaseFileHandler) LinkSupport(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) UnlinkSupport(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -349,7 +367,7 @@ func (h *CaseFileHandler) UnlinkSupport(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) WitnessMatrix(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -362,7 +380,7 @@ func (h *CaseFileHandler) WitnessMatrix(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) AddWitnessFact(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -378,7 +396,7 @@ func (h *CaseFileHandler) AddWitnessFact(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) RemoveWitnessFact(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -394,7 +412,7 @@ func (h *CaseFileHandler) RemoveWitnessFact(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Completeness(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -407,7 +425,7 @@ func (h *CaseFileHandler) Completeness(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Versions(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -420,7 +438,7 @@ func (h *CaseFileHandler) Versions(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Version(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -438,7 +456,7 @@ func (h *CaseFileHandler) Version(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Submit(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -455,7 +473,7 @@ func (h *CaseFileHandler) Submit(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Packs(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -468,7 +486,7 @@ func (h *CaseFileHandler) Packs(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Pack(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -485,7 +503,7 @@ func (h *CaseFileHandler) Pack(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Approve(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -506,7 +524,7 @@ func (h *CaseFileHandler) Approve(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Return(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}
@@ -531,7 +549,7 @@ func (h *CaseFileHandler) Return(c *gin.Context) {
 }
 
 func (h *CaseFileHandler) Sources(c *gin.Context) {
-	id, ok := fileID(c)
+	id, ok := h.fileID(c)
 	if !ok {
 		return
 	}

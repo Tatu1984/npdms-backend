@@ -136,6 +136,12 @@ func (r *AIReviewRepository) ListDecisions(ctx context.Context, filters map[stri
 	if stationID, ok := filters["station_id"].(uuid.UUID); ok {
 		add(" AND station_id = $%d", stationID)
 	}
+	// The review queue is the viewer's own force's work. A decision belongs to
+	// the station that asked for it, else to the officer who asked.
+	if viewerID, ok := filters["viewer_id"].(uuid.UUID); ok && viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		where += " AND " + MustForceScopeRecordSQL("AI_DECISION", "ai_decisions", len(args))
+	}
 	if module, ok := filters["module"].(string); ok && module != "" {
 		add(" AND module = $%d", module)
 	}
@@ -187,11 +193,17 @@ func (r *AIReviewRepository) ListDecisions(ctx context.Context, filters map[stri
 }
 
 // GetPendingDecisions gets pending decisions for review
-func (r *AIReviewRepository) GetPendingDecisions(ctx context.Context, offset, limit int) ([]models.AIDecision, int64, error) {
+func (r *AIReviewRepository) GetPendingDecisions(ctx context.Context, viewerID uuid.UUID, offset, limit int) ([]models.AIDecision, int64, error) {
 	filters := map[string]interface{}{
-		"status": models.AIDecisionStatusPending,
+		"status":    models.AIDecisionStatusPending,
+		"viewer_id": viewerID,
 	}
 	return r.ListDecisions(ctx, filters, offset, limit)
+}
+
+// Owner answers which department asked for this suggestion.
+func (r *AIReviewRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "AI_DECISION", id, viewerID)
 }
 
 // CreateFeedback creates AI decision feedback

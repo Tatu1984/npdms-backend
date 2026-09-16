@@ -21,6 +21,9 @@ func NewWarrantRepository(db *pgxpool.Pool) *WarrantRepository {
 }
 
 type WarrantFilter struct {
+	// ViewerID scopes the register to the viewer's own force. A zero value
+	// means no scoping, which is only right for a background job.
+	ViewerID   uuid.UUID
 	Status     *models.WarrantStatus
 	Type       *models.WarrantType
 	Priority   *models.Priority
@@ -36,6 +39,14 @@ func (r *WarrantRepository) List(ctx context.Context, filter WarrantFilter) ([]m
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	// A warrant carries no station: it belongs to the case it was issued on,
+	// then the FIR, then the officer who executed it.
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("WARRANT", "w", argIndex))
+		argIndex++
+	}
 
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("w.status = $%d", argIndex))
@@ -143,6 +154,11 @@ func (r *WarrantRepository) List(ctx context.Context, filter WarrantFilter) ([]m
 	}
 
 	return warrants, total, nil
+}
+
+// Owner answers which department holds this warrant.
+func (r *WarrantRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "WARRANT", id, viewerID)
 }
 
 func (r *WarrantRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Warrant, error) {
@@ -288,21 +304,28 @@ func (r *WarrantRepository) GenerateWarrantNumber(ctx context.Context) (string, 
 	return formatRecordNumber(ctx, r.db, "WAR")
 }
 
-func (r *WarrantRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
+// GetStats counts the viewer's own force's warrants. A count is a disclosure
+// too: "West Bengal Police has 40 open warrants" is not Kolkata Police's to
+// read off a dashboard.
+func (r *WarrantRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	// Get total count
+	scope, args := "TRUE", []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = MustForceScopeRecordSQL("WARRANT", "w", len(args))
+	}
+
 	var total, active, executed, expired int64
 	query := `
 		SELECT
 			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE status = 'ACTIVE') as active,
-			COUNT(*) FILTER (WHERE status = 'EXECUTED') as executed,
-			COUNT(*) FILTER (WHERE status = 'EXPIRED') as expired
-		FROM warrants
-	`
+			COUNT(*) FILTER (WHERE w.status = 'ACTIVE') as active,
+			COUNT(*) FILTER (WHERE w.status = 'EXECUTED') as executed,
+			COUNT(*) FILTER (WHERE w.status = 'EXPIRED') as expired
+		FROM warrants w WHERE ` + scope
 
-	err := r.db.QueryRow(ctx, query).Scan(&total, &active, &executed, &expired)
+	err := r.db.QueryRow(ctx, query, args...).Scan(&total, &active, &executed, &expired)
 	if err != nil {
 		return nil, err
 	}

@@ -118,7 +118,7 @@ func (s *MalkhanaService) Locations(ctx context.Context, actor MalkhanaActor, st
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListLocations(ctx, station)
+	return s.repo.ListLocations(ctx, station, actor.ID)
 }
 
 func (s *MalkhanaService) CreateLocation(ctx context.Context, actor MalkhanaActor, req models.CreateMalkhanaLocationRequest) (*models.MalkhanaLocation, error) {
@@ -520,7 +520,7 @@ func (s *MalkhanaService) Dashboard(ctx context.Context, actor MalkhanaActor, st
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.Dashboard(ctx, station)
+	return s.repo.Dashboard(ctx, station, actor.ID)
 }
 
 func sortMissing(v []string) []string {
@@ -528,6 +528,11 @@ func sortMissing(v []string) []string {
 	return v
 }
 
-func (s *MalkhanaService) Stations(ctx context.Context) ([]models.MalkhanaStation, error) {
-	return s.repo.Stations(ctx)
+func (s *MalkhanaService) Stations(ctx context.Context, viewerID uuid.UUID) ([]models.MalkhanaStation, error) {
+	return s.repo.Stations(ctx, viewerID)
+}
+
+// Owner answers which department's malkhana holds an item.
+func (s *MalkhanaService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
 }

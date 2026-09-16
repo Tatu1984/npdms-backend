@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -25,6 +26,7 @@ func (h *ForensicHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.ForensicFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -66,6 +68,12 @@ func (h *ForensicHandler) Get(c *gin.Context) {
 			Message: "Invalid forensic request ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// Another department's record is refused by name, not answered with
+	// "not found": the officer should know who holds it.
+	if RefuseIfNotOurs(c, h.forensicService.Owner, id) {
 		return
 	}
 
@@ -204,7 +212,7 @@ func (h *ForensicHandler) CompleteRequest(c *gin.Context) {
 }
 
 func (h *ForensicHandler) GetStats(c *gin.Context) {
-	stats, err := h.forensicService.GetStats(c.Request.Context())
+	stats, err := h.forensicService.GetStats(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

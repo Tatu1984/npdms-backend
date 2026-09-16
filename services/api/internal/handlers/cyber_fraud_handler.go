@@ -119,8 +119,23 @@ func (h *CyberFraudHandler) SearchEntities(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": list})
 }
 
-func (h *CyberFraudHandler) Get(c *gin.Context) {
+// complaintID parses the :id path parameter and refuses a cyber-crime case
+// registered by another department. Every route under /cyber-crime/:id goes
+// through here, so the entities, transactions, freeze requests and recoveries
+// are covered with the case itself.
+func (h *CyberFraudHandler) complaintID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *CyberFraudHandler) Get(c *gin.Context) {
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -150,7 +165,7 @@ func (h *CyberFraudHandler) Register(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) Update(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -171,7 +186,7 @@ func (h *CyberFraudHandler) Update(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) SetStatus(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -194,7 +209,7 @@ func (h *CyberFraudHandler) SetStatus(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) Network(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -207,7 +222,7 @@ func (h *CyberFraudHandler) Network(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) Entities(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -220,7 +235,7 @@ func (h *CyberFraudHandler) Entities(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) RecordEntity(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -241,7 +256,7 @@ func (h *CyberFraudHandler) RecordEntity(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) RemoveEntity(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -261,7 +276,7 @@ func (h *CyberFraudHandler) RemoveEntity(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) Transactions(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -274,7 +289,7 @@ func (h *CyberFraudHandler) Transactions(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) RecordTransaction(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -295,7 +310,7 @@ func (h *CyberFraudHandler) RecordTransaction(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) FreezeRequests(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -308,7 +323,7 @@ func (h *CyberFraudHandler) FreezeRequests(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) DraftFreeze(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -329,7 +344,7 @@ func (h *CyberFraudHandler) DraftFreeze(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) TransitionFreeze(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -354,7 +369,7 @@ func (h *CyberFraudHandler) TransitionFreeze(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) Recoveries(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}
@@ -367,7 +382,7 @@ func (h *CyberFraudHandler) Recoveries(c *gin.Context) {
 }
 
 func (h *CyberFraudHandler) RecordRecovery(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.complaintID(c)
 	if !ok {
 		return
 	}

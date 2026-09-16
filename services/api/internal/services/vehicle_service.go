@@ -40,6 +40,11 @@ func (s *VehicleService) List(ctx context.Context, filter repository.VehicleFilt
 	}, nil
 }
 
+// Owner answers which department the vehicle is on the strength of.
+func (s *VehicleService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.vehicleRepo.Owner(ctx, id, viewerID)
+}
+
 func (s *VehicleService) GetByID(ctx context.Context, id uuid.UUID) (*models.Vehicle, error) {
 	return s.vehicleRepo.FindByID(ctx, id)
 }

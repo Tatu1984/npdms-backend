@@ -70,10 +70,16 @@ func malkhanaLocationLabel(room, rack, shelf string) string {
 	return label
 }
 
-func (r *MalkhanaRepository) ListLocations(ctx context.Context, stationID *uuid.UUID) ([]models.MalkhanaLocation, error) {
+func (r *MalkhanaRepository) ListLocations(ctx context.Context, stationID *uuid.UUID, viewerID uuid.UUID) ([]models.MalkhanaLocation, error) {
+	// A store room is inside a station, so it belongs to that station's force.
+	scope, args := "TRUE", []interface{}{stationID}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = ForceScopeSQL("l.station_id", len(args))
+	}
 	rows, err := r.db.Query(ctx, malkhanaLocationSelect+`
-		WHERE ($1::uuid IS NULL OR l.station_id = $1)
-		ORDER BY s.name, l.room, l.rack, l.shelf`, stationID)
+		WHERE ($1::uuid IS NULL OR l.station_id = $1) AND `+scope+`
+		ORDER BY s.name, l.room, l.rack, l.shelf`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +184,9 @@ type PropertyFilter struct {
 	Search    string
 	Status    string
 	Category  string
+	// ViewerID scopes the malkhana to the viewer's own force. Seized property
+	// sits in a station's store room, so the station carries the force.
+	ViewerID  uuid.UUID
 	StationID *uuid.UUID
 	CaseID    *uuid.UUID
 	FIRID     *uuid.UUID
@@ -192,6 +201,10 @@ func (r *MalkhanaRepository) ListItems(ctx context.Context, f PropertyFilter) ([
 	add := func(clause string, v interface{}) {
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("p.station_id", len(args)))
 	}
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
@@ -268,6 +281,11 @@ func (r *MalkhanaRepository) ListItems(ctx context.Context, f PropertyFilter) ([
 		out = append(out, p.item)
 	}
 	return out, total, nil
+}
+
+// Owner answers which department's malkhana holds this item.
+func (r *MalkhanaRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "PROPERTY", id, viewerID)
 }
 
 func (r *MalkhanaRepository) GetItem(ctx context.Context, id uuid.UUID) (*models.PropertyItem, error) {
@@ -851,26 +869,44 @@ func (r *MalkhanaRepository) ForwardingLetter(ctx context.Context, itemID, movem
 
 // ------------------------------------------------------------------ dashboard
 
-func (r *MalkhanaRepository) Dashboard(ctx context.Context, stationID *uuid.UUID) (*models.MalkhanaDashboard, error) {
+func (r *MalkhanaRepository) Dashboard(ctx context.Context, stationID *uuid.UUID, viewerID uuid.UUID) (*models.MalkhanaDashboard, error) {
 	d := models.MalkhanaDashboard{ReviewPeriodDays: models.PropertyReviewPeriodDays}
+	// $1 is the optional station filter, $2 the review period, $3 the viewer.
+	// The dashboard counts what the register shows and nothing more: a total
+	// is a disclosure as surely as a list is.
+	scope, scopeMoved := "TRUE", "TRUE"
+	groupItem, groupLocation := "TRUE", "TRUE"
+	args := []interface{}{stationID, models.PropertyReviewPeriodDays}
+	groupArgs := []interface{}{stationID}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		groupArgs = append(groupArgs, viewerID)
+		scope = ForceScopeSQL("p.station_id", 3)
+		scopeMoved = ForceScopeSQL("p2.station_id", 3)
+		groupItem = ForceScopeSQL("p.station_id", 2)
+		groupLocation = ForceScopeSQL("l.station_id", 2)
+	}
 	err := r.db.QueryRow(ctx, `
 		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE status = 'IN_MALKHANA'),
-		       COUNT(*) FILTER (WHERE status = 'MOVED_OUT'),
-		       COUNT(*) FILTER (WHERE status = 'DISPOSED'),
-		       COUNT(*) FILTER (WHERE seal_state = 'BROKEN' AND status <> 'DISPOSED'),
-		       COUNT(*) FILTER (WHERE status <> 'DISPOSED' AND deposited_at < NOW() - make_interval(days => $2)),
-		       COALESCE(SUM(value_paise) FILTER (WHERE status <> 'DISPOSED'), 0),
-		       COUNT(*) FILTER (WHERE status <> 'DISPOSED' AND value_paise IS NULL),
+		       COUNT(*) FILTER (WHERE p.status = 'IN_MALKHANA'),
+		       COUNT(*) FILTER (WHERE p.status = 'MOVED_OUT'),
+		       COUNT(*) FILTER (WHERE p.status = 'DISPOSED'),
+		       COUNT(*) FILTER (WHERE p.seal_state = 'BROKEN' AND p.status <> 'DISPOSED'),
+		       COUNT(*) FILTER (WHERE p.status <> 'DISPOSED' AND p.deposited_at < NOW() - make_interval(days => $2)),
+		       COALESCE(SUM(p.value_paise) FILTER (WHERE p.status <> 'DISPOSED'), 0),
+		       COUNT(*) FILTER (WHERE p.status <> 'DISPOSED' AND p.value_paise IS NULL),
 		       (SELECT COUNT(*) FROM property_movements m JOIN property_items p2 ON p2.id = m.item_id
-		        WHERE m.returned_at IS NULL AND m.expected_return_at < NOW() AND ($1::uuid IS NULL OR p2.station_id = $1))
-		FROM property_items WHERE $1::uuid IS NULL OR station_id = $1`, stationID, models.PropertyReviewPeriodDays).
+		        WHERE m.returned_at IS NULL AND m.expected_return_at < NOW() AND ($1::uuid IS NULL OR p2.station_id = $1)
+		          AND `+scopeMoved+`)
+		FROM property_items p WHERE ($1::uuid IS NULL OR p.station_id = $1) AND `+scope, args...).
 		Scan(&d.Total, &d.InMalkhana, &d.MovedOut, &d.Disposed, &d.SealBroken, &d.ReviewDue, &d.ValueHeldPaise, &d.ValueUnrecorded, &d.OverdueMovements)
 	if err != nil {
 		return nil, err
 	}
 	group := func(query string) ([]models.MalkhanaCount, error) {
-		rows, err := r.db.Query(ctx, query, stationID)
+		query = strings.ReplaceAll(query, "{scope}", groupItem)
+		query = strings.ReplaceAll(query, "{scope_l}", groupLocation)
+		rows, err := r.db.Query(ctx, query, groupArgs...)
 		if err != nil {
 			return nil, err
 		}
@@ -886,9 +922,9 @@ func (r *MalkhanaRepository) Dashboard(ctx context.Context, stationID *uuid.UUID
 		return out, rows.Err()
 	}
 	if d.ByCategory, err = group(`
-		SELECT category, category, COUNT(*), COALESCE(SUM(value_paise), 0)
-		FROM property_items WHERE status <> 'DISPOSED' AND ($1::uuid IS NULL OR station_id = $1)
-		GROUP BY category ORDER BY COUNT(*) DESC`); err != nil {
+		SELECT p.category, p.category, COUNT(*), COALESCE(SUM(p.value_paise), 0)
+		FROM property_items p WHERE p.status <> 'DISPOSED' AND ($1::uuid IS NULL OR p.station_id = $1) AND {scope}
+		GROUP BY p.category ORDER BY COUNT(*) DESC`); err != nil {
 		return nil, err
 	}
 	if d.ByLocation, err = group(`
@@ -897,14 +933,14 @@ func (r *MalkhanaRepository) Dashboard(ctx context.Context, stationID *uuid.UUID
 		FROM malkhana_locations l
 		LEFT JOIN stations s ON s.id = l.station_id
 		LEFT JOIN property_items p ON p.location_id = l.id AND p.status = 'IN_MALKHANA'
-		WHERE $1::uuid IS NULL OR l.station_id = $1
+		WHERE ($1::uuid IS NULL OR l.station_id = $1) AND {scope_l}
 		GROUP BY l.id, s.code, l.room, l.rack, l.shelf ORDER BY COUNT(p.id) DESC, 2`); err != nil {
 		return nil, err
 	}
 	if d.ByMovementType, err = group(`
 		SELECT m.movement_type, m.movement_type, COUNT(*), COALESCE(SUM(p.value_paise), 0)
 		FROM property_movements m JOIN property_items p ON p.id = m.item_id
-		WHERE m.returned_at IS NULL AND ($1::uuid IS NULL OR p.station_id = $1)
+		WHERE m.returned_at IS NULL AND ($1::uuid IS NULL OR p.station_id = $1) AND {scope}
 		GROUP BY m.movement_type ORDER BY COUNT(*) DESC`); err != nil {
 		return nil, err
 	}
@@ -921,9 +957,17 @@ func (r *MalkhanaRepository) OfficerRole(ctx context.Context, id uuid.UUID) (mod
 	return models.Role(role), err == nil, err
 }
 
-// Stations lists stations for choosing an inter-station destination.
-func (r *MalkhanaRepository) Stations(ctx context.Context) ([]models.MalkhanaStation, error) {
-	rows, err := r.db.Query(ctx, "SELECT id, name, COALESCE(code, '') FROM stations ORDER BY name")
+// Stations lists stations for choosing an inter-station destination. Property
+// does not move to another force by being carried there; it moves by referral,
+// so the picker offers the viewer's own force's stations only.
+func (r *MalkhanaRepository) Stations(ctx context.Context, viewerID uuid.UUID) ([]models.MalkhanaStation, error) {
+	scope, args := "TRUE", []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = ForceScopeSQL("s.id", len(args))
+	}
+	rows, err := r.db.Query(ctx,
+		"SELECT s.id, s.name, COALESCE(s.code, '') FROM stations s WHERE "+scope+" ORDER BY s.name", args...)
 	if err != nil {
 		return nil, err
 	}

@@ -67,6 +67,11 @@ func (s *DispatchService) RunEscalations(ctx context.Context, every time.Duratio
 	}
 }
 
+// Owner answers which department took a call.
+func (s *DispatchService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
 func (s *DispatchService) List(ctx context.Context, f repository.IncidentFilter) ([]models.DispatchIncident, int64, error) {
 	s.ApplyEscalations(ctx)
 	return s.repo.ListIncidents(ctx, f)

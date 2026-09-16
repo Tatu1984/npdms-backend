@@ -65,6 +65,11 @@ func scanEvidence(row pgx.Row) (*models.EvidenceRecord, error) {
 }
 
 type EvidenceFilter struct {
+	// ViewerID scopes the register to the viewer's own force. This is a second
+	// door on to the same `evidence` table the evidence module lists, so it is
+	// scoped the same way: through the FIR or case the exhibit was collected
+	// under, then the officer who collected it.
+	ViewerID  uuid.UUID
 	Search    string
 	CaseID    *uuid.UUID
 	Integrity string
@@ -77,6 +82,11 @@ func (r *CustodyRepository) List(ctx context.Context, f EvidenceFilter) ([]model
 	var args []interface{}
 	n := 1
 
+	if f.ViewerID != uuid.Nil {
+		where = append(where, MustForceScopeRecordSQL("EVIDENCE", "e", n))
+		args = append(args, f.ViewerID)
+		n++
+	}
 	if f.Search != "" {
 		where = append(where, fmt.Sprintf(
 			"(e.evidence_number ILIKE $%d OR e.description ILIKE $%d OR e.seal_number ILIKE $%d)", n, n, n))
@@ -134,6 +144,11 @@ func (r *CustodyRepository) List(ctx context.Context, f EvidenceFilter) ([]model
 
 // ErrEvidenceNotFound is returned for an id with no register entry.
 var ErrEvidenceNotFound = errors.New("evidence not found")
+
+// Owner answers which department holds this exhibit.
+func (r *CustodyRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "EVIDENCE", id, viewerID)
+}
 
 func (r *CustodyRepository) Get(ctx context.Context, id uuid.UUID) (*models.EvidenceRecord, error) {
 	item, err := scanEvidence(r.db.QueryRow(ctx, evidenceSelect+" WHERE e.id = $1", id))
@@ -519,17 +534,22 @@ func (r *CustodyRepository) IntegrityHistory(ctx context.Context, evidenceID uui
 	return out, rows.Err()
 }
 
-// Stats powers the register's headline figures.
-func (r *CustodyRepository) Stats(ctx context.Context) (map[string]int, error) {
+// Stats powers the register's headline figures, counting only what the viewer
+// may see: a total is a disclosure as surely as a list is.
+func (r *CustodyRepository) Stats(ctx context.Context, viewerID uuid.UUID) (map[string]int, error) {
+	scope, args := "TRUE", []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = MustForceScopeRecordSQL("EVIDENCE", "e", len(args))
+	}
 	var total, verified, broken, pending, withFile int
 	err := r.db.QueryRow(ctx, `
 		SELECT COUNT(*),
-		       COUNT(*) FILTER (WHERE integrity_state = 'verified'),
-		       COUNT(*) FILTER (WHERE integrity_state = 'broken'),
-		       COUNT(*) FILTER (WHERE integrity_state = 'pending'),
-		       COUNT(*) FILTER (WHERE object_key IS NOT NULL)
-		FROM evidence
-	`).Scan(&total, &verified, &broken, &pending, &withFile)
+		       COUNT(*) FILTER (WHERE e.integrity_state = 'verified'),
+		       COUNT(*) FILTER (WHERE e.integrity_state = 'broken'),
+		       COUNT(*) FILTER (WHERE e.integrity_state = 'pending'),
+		       COUNT(*) FILTER (WHERE e.object_key IS NOT NULL)
+		FROM evidence e WHERE `+scope, args...).Scan(&total, &verified, &broken, &pending, &withFile)
 	if err != nil {
 		return nil, err
 	}

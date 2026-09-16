@@ -21,6 +21,8 @@ func NewForensicRepository(db *pgxpool.Pool) *ForensicRepository {
 }
 
 type ForensicFilter struct {
+	// ViewerID scopes the register to the viewer's own force.
+	ViewerID uuid.UUID
 	Status   *models.ForensicStatus
 	Type     *models.ForensicType
 	Priority *models.Priority
@@ -34,6 +36,14 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	// A forensic request belongs to its case, else to the FIR the exhibit it
+	// examines was collected under.
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("FORENSIC", "fr", argIndex))
+		argIndex++
+	}
 
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("fr.status = $%d", argIndex))
@@ -117,6 +127,11 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	}
 
 	return forensics, total, nil
+}
+
+// Owner answers which department holds this forensic request.
+func (r *ForensicRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "FORENSIC", id, viewerID)
 }
 
 func (r *ForensicRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Forensic, error) {
@@ -234,20 +249,26 @@ func (r *ForensicRepository) CompleteRequest(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
-func (r *ForensicRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
+// GetStats counts the viewer's own force's forensic work.
+func (r *ForensicRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
+
+	scope, args := "TRUE", []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = MustForceScopeRecordSQL("FORENSIC", "fr", len(args))
+	}
 
 	query := `
 		SELECT
 			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE status = 'PENDING') as pending,
-			COUNT(*) FILTER (WHERE status = 'IN_PROGRESS') as in_progress,
-			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed
-		FROM forensics
-	`
+			COUNT(*) FILTER (WHERE fr.status = 'PENDING') as pending,
+			COUNT(*) FILTER (WHERE fr.status = 'IN_PROGRESS') as in_progress,
+			COUNT(*) FILTER (WHERE fr.status = 'COMPLETED') as completed
+		FROM forensics fr WHERE ` + scope
 
 	var total, pending, inProgress, completed int64
-	err := r.db.QueryRow(ctx, query).Scan(&total, &pending, &inProgress, &completed)
+	err := r.db.QueryRow(ctx, query, args...).Scan(&total, &pending, &inProgress, &completed)
 	if err != nil {
 		return nil, err
 	}

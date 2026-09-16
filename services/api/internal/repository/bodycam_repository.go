@@ -57,6 +57,8 @@ const bwcDeviceSelect = `
 `
 
 type BWCDeviceFilter struct {
+	// ViewerID scopes the camera register to the viewer's own force.
+	ViewerID  uuid.UUID
 	Search    string
 	Status    string
 	StationID *uuid.UUID
@@ -67,6 +69,11 @@ type BWCDeviceFilter struct {
 func (r *BodycamRepository) ListDevices(ctx context.Context, f BWCDeviceFilter) ([]models.BWCDevice, int64, error) {
 	where := []string{"1=1"}
 	args := []interface{}{}
+	// A body-worn camera is on a station's charge.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("d.station_id", len(args)))
+	}
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
 		n := len(args)
@@ -134,6 +141,11 @@ func (r *BodycamRepository) decorate(ctx context.Context, d *models.BWCDevice, o
 	}
 	d.LatestReading = reading
 	return nil
+}
+
+// Owner answers which department the camera is on the charge of.
+func (r *BodycamRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "BWC_DEVICE", id, viewerID)
 }
 
 func (r *BodycamRepository) GetDevice(ctx context.Context, id uuid.UUID) (*models.BWCDevice, error) {
@@ -436,6 +448,11 @@ func scanBWCRecording(row pgx.Row) (*BWCRecordingRow, error) {
 		return nil, err
 	}
 	return &x, nil
+}
+
+// RecordingOwner answers which department's camera this footage came off.
+func (r *BodycamRepository) RecordingOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "BWC_RECORDING", id, viewerID)
 }
 
 func (r *BodycamRepository) Recording(ctx context.Context, id uuid.UUID) (*BWCRecordingRow, error) {

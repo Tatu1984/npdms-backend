@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,9 +18,21 @@ func NewEvidenceRepository(db *pgxpool.Pool) *EvidenceRepository {
 	return &EvidenceRepository{db: db}
 }
 
-func (r *EvidenceRepository) List(ctx context.Context, page, pageSize int) ([]models.Evidence, int64, error) {
+// List returns the evidence register as the viewer's force may see it.
+//
+// Evidence carries no station of its own: it is placed by the FIR it was
+// collected under, then the case, then the officer who collected it. See
+// force_scope.go for the whole placement table.
+func (r *EvidenceRepository) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int) ([]models.Evidence, int64, error) {
+	scope := "TRUE"
+	args := []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = MustForceScopeRecordSQL("EVIDENCE", "e", len(args))
+	}
+
 	var total int64
-	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM evidence").Scan(&total)
+	err := r.db.QueryRow(ctx, "SELECT COUNT(*) FROM evidence e WHERE "+scope, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -32,7 +45,7 @@ func (r *EvidenceRepository) List(ctx context.Context, page, pageSize int) ([]mo
 	}
 	offset := (page - 1) * pageSize
 
-	query := `
+	query := fmt.Sprintf(`
 		SELECT e.id, e.evidence_number, e.case_id, e.fir_id, e.evidence_type,
 		       e.description, e.collection_location, e.collection_date, e.collected_by,
 		       e.storage_location, e.container_type, e.seal_number, e.weight,
@@ -41,11 +54,12 @@ func (r *EvidenceRepository) List(ctx context.Context, page, pageSize int) ([]mo
 		       COALESCE(u.name, '') as collected_by_name
 		FROM evidence e
 		LEFT JOIN users u ON e.collected_by = u.id
+		WHERE %s
 		ORDER BY e.created_at DESC
-		LIMIT $1 OFFSET $2
-	`
+		LIMIT $%d OFFSET $%d
+	`, scope, len(args)+1, len(args)+2)
 
-	rows, err := r.db.Query(ctx, query, pageSize, offset)
+	rows, err := r.db.Query(ctx, query, append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -71,6 +85,12 @@ func (r *EvidenceRepository) List(ctx context.Context, page, pageSize int) ([]mo
 	}
 
 	return evidence, total, nil
+}
+
+// Owner answers whose evidence this is, for a detail read that must refuse by
+// name rather than with "not found".
+func (r *EvidenceRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "EVIDENCE", id, viewerID)
 }
 
 func (r *EvidenceRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Evidence, error) {

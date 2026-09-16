@@ -26,6 +26,9 @@ func NewInvestigationRepository(db *pgxpool.Pool) *InvestigationRepository {
 }
 
 type WorkspaceFilter struct {
+	// ViewerID scopes the workspaces to the viewer's own force, plus any case
+	// or FIR referred to it and accepted.
+	ViewerID  uuid.UUID
 	StationID *uuid.UUID
 	IOID      *uuid.UUID
 	Status    *string
@@ -129,6 +132,13 @@ func (r *InvestigationRepository) ListWorkspaces(ctx context.Context, f Workspac
 	var args []interface{}
 	n := 1
 
+	// A workspace carries a station, but nullable: fall back to the FIR, then
+	// to the investigating officer.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, MustForceScopeRecordSQL("WORKSPACE", "w", n))
+		n++
+	}
 	if f.StationID != nil {
 		where = append(where, fmt.Sprintf("w.station_id = $%d", n))
 		args = append(args, *f.StationID)
@@ -193,6 +203,11 @@ func (r *InvestigationRepository) ListWorkspaces(ctx context.Context, f Workspac
 		out = append(out, *w)
 	}
 	return out, total, rows.Err()
+}
+
+// Owner answers which department the workspace belongs to.
+func (r *InvestigationRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "WORKSPACE", id, viewerID)
 }
 
 func (r *InvestigationRepository) GetWorkspace(ctx context.Context, id uuid.UUID) (*models.InvestigationWorkspace, error) {

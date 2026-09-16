@@ -116,6 +116,16 @@ func (s *CourtService) CreateOrder(ctx context.Context, order *models.CourtOrder
 	return s.courtRepo.FindOrderByID(ctx, order.ID)
 }
 
-func (s *CourtService) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	return s.courtRepo.GetStats(ctx)
+// HearingOwner and OrderOwner answer which department the case behind a court
+// paper belongs to.
+func (s *CourtService) HearingOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.courtRepo.HearingOwner(ctx, id, viewerID)
+}
+
+func (s *CourtService) OrderOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.courtRepo.OrderOwner(ctx, id, viewerID)
+}
+
+func (s *CourtService) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
+	return s.courtRepo.GetStats(ctx, viewerID)
 }

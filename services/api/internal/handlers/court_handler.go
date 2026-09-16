@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -26,6 +27,7 @@ func (h *CourtHandler) ListHearings(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.CourtHearingFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -71,6 +73,11 @@ func (h *CourtHandler) GetHearing(c *gin.Context) {
 			Message: "Invalid hearing ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// The case behind this court paper may belong to another department.
+	if RefuseIfNotOurs(c, h.courtService.HearingOwner, id) {
 		return
 	}
 
@@ -168,6 +175,7 @@ func (h *CourtHandler) ListOrders(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.CourtOrderFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -208,6 +216,11 @@ func (h *CourtHandler) GetOrder(c *gin.Context) {
 			Message: "Invalid order ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// The case behind this court paper may belong to another department.
+	if RefuseIfNotOurs(c, h.courtService.OrderOwner, id) {
 		return
 	}
 
@@ -257,7 +270,7 @@ func (h *CourtHandler) CreateOrder(c *gin.Context) {
 }
 
 func (h *CourtHandler) GetStats(c *gin.Context) {
-	stats, err := h.courtService.GetStats(c.Request.Context())
+	stats, err := h.courtService.GetStats(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

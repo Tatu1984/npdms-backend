@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -47,10 +48,16 @@ func actorName(c *gin.Context) string {
 	return ""
 }
 
-func evidenceID(c *gin.Context) (uuid.UUID, bool) {
+// evidenceID parses the :id path parameter and refuses an exhibit held by
+// another department. Every exhibit route goes through here, so the file,
+// custody chain, verifications and access log are covered with the exhibit.
+func (h *CustodyHandler) evidenceID(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		badRequest(c, "Invalid evidence id")
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return uuid.Nil, false
 	}
 	return id, true
@@ -99,6 +106,7 @@ func (h *CustodyHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.EvidenceFilter{
+		ViewerID:  middleware.GetUserID(c),
 		Page:      page,
 		PageSize:  pageSize,
 		Search:    c.Query("search"),
@@ -119,7 +127,7 @@ func (h *CustodyHandler) List(c *gin.Context) {
 }
 
 func (h *CustodyHandler) Get(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -133,7 +141,7 @@ func (h *CustodyHandler) Get(c *gin.Context) {
 }
 
 func (h *CustodyHandler) Stats(c *gin.Context) {
-	stats, err := h.service.Stats(c.Request.Context())
+	stats, err := h.service.Stats(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		serverError(c, "Failed to compute register statistics")
 		return
@@ -147,7 +155,7 @@ func (h *CustodyHandler) Stats(c *gin.Context) {
 //
 //	POST /api/v1/custody/:id/file   (multipart/form-data, field "file")
 func (h *CustodyHandler) AttachFile(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -184,7 +192,7 @@ func (h *CustodyHandler) AttachFile(c *gin.Context) {
 
 // Download streams the stored file and records the download.
 func (h *CustodyHandler) Download(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -225,7 +233,7 @@ func (h *CustodyHandler) Download(c *gin.Context) {
 /* ------------------------------ verification ------------------------------ */
 
 func (h *CustodyHandler) Verify(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -246,7 +254,7 @@ func (h *CustodyHandler) Verify(c *gin.Context) {
 }
 
 func (h *CustodyHandler) IntegrityHistory(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -261,7 +269,7 @@ func (h *CustodyHandler) IntegrityHistory(c *gin.Context) {
 /* --------------------------------- custody -------------------------------- */
 
 func (h *CustodyHandler) CustodyChain(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -274,7 +282,7 @@ func (h *CustodyHandler) CustodyChain(c *gin.Context) {
 }
 
 func (h *CustodyHandler) Transfer(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -297,7 +305,7 @@ func (h *CustodyHandler) Transfer(c *gin.Context) {
 /* ------------------------------- access log ------------------------------- */
 
 func (h *CustodyHandler) AccessLog(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}
@@ -315,7 +323,7 @@ func (h *CustodyHandler) AccessLog(c *gin.Context) {
 // CourtVerification returns only what establishes the item's identity and
 // integrity — never the case it belongs to.
 func (h *CustodyHandler) CourtVerification(c *gin.Context) {
-	id, ok := evidenceID(c)
+	id, ok := h.evidenceID(c)
 	if !ok {
 		return
 	}

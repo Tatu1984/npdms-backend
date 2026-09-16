@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -56,7 +57,8 @@ func videoActor(c *gin.Context) (uuid.UUID, bool) {
 func (h *VideoHandler) ListCameras(c *gin.Context) {
 	page, size := pageParams(c)
 	f := repository.CameraFilter{
-		Search: c.Query("search"), Status: c.Query("status"), Health: c.Query("health"),
+		ViewerID: middleware.GetUserID(c),
+		Search:   c.Query("search"), Status: c.Query("status"), Health: c.Query("health"),
 		Owner: c.Query("ownerAgency"), Page: page, PageSize: size,
 	}
 	if v := c.Query("stationId"); v != "" {
@@ -84,8 +86,34 @@ func (h *VideoHandler) CameraStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-func (h *VideoHandler) GetCamera(c *gin.Context) {
+// cameraID and eventID parse the :id path parameter for the two kinds of
+// record this module holds, and refuse another department's by name. A camera
+// belongs to the station it is installed at; an event to the camera it was
+// raised off.
+func (h *VideoHandler) cameraID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.CameraOwner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *VideoHandler) eventID(c *gin.Context) (uuid.UUID, bool) {
+	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.EventOwner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *VideoHandler) GetCamera(c *gin.Context) {
+	id, ok := h.cameraID(c)
 	if !ok {
 		return
 	}
@@ -112,7 +140,7 @@ func (h *VideoHandler) RegisterCamera(c *gin.Context) {
 }
 
 func (h *VideoHandler) UpdateCamera(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.cameraID(c)
 	if !ok {
 		return
 	}
@@ -130,7 +158,7 @@ func (h *VideoHandler) UpdateCamera(c *gin.Context) {
 }
 
 func (h *VideoHandler) Decommission(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.cameraID(c)
 	if !ok {
 		return
 	}
@@ -148,7 +176,7 @@ func (h *VideoHandler) Decommission(c *gin.Context) {
 }
 
 func (h *VideoHandler) CheckHealth(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.cameraID(c)
 	if !ok {
 		return
 	}
@@ -161,7 +189,7 @@ func (h *VideoHandler) CheckHealth(c *gin.Context) {
 }
 
 func (h *VideoHandler) HealthChecks(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.cameraID(c)
 	if !ok {
 		return
 	}
@@ -229,7 +257,7 @@ func (h *VideoHandler) SearchEvents(c *gin.Context) {
 }
 
 func (h *VideoHandler) AccessEvent(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.eventID(c)
 	if !ok {
 		return
 	}
@@ -251,7 +279,7 @@ func (h *VideoHandler) AccessEvent(c *gin.Context) {
 }
 
 func (h *VideoHandler) Triage(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.eventID(c)
 	if !ok {
 		return
 	}
@@ -273,7 +301,7 @@ func (h *VideoHandler) Triage(c *gin.Context) {
 }
 
 func (h *VideoHandler) Link(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.eventID(c)
 	if !ok {
 		return
 	}
@@ -295,7 +323,7 @@ func (h *VideoHandler) Link(c *gin.Context) {
 }
 
 func (h *VideoHandler) SetRetention(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.eventID(c)
 	if !ok {
 		return
 	}

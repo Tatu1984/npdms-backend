@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/services"
 
@@ -400,7 +401,7 @@ func (h *BiometricHandler) GetDevices(c *gin.Context) {
 		status = &deviceStatus
 	}
 
-	devices, err := h.biometricService.GetDevices(c.Request.Context(), stationID, status)
+	devices, err := h.biometricService.GetDevices(c.Request.Context(), middleware.GetUserID(c), stationID, status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

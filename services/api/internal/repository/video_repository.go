@@ -78,6 +78,9 @@ func scanCamera(row pgx.Row) (*models.Camera, error) {
 }
 
 type CameraFilter struct {
+	// ViewerID scopes the camera register to the viewer's own force: the CCTV
+	// estate, its locations and its reachability are a force's own.
+	ViewerID  uuid.UUID
 	Search    string
 	Status    string
 	Health    string
@@ -94,6 +97,10 @@ func (r *VideoRepository) ListCameras(ctx context.Context, f CameraFilter) ([]mo
 	add := func(clause string, v interface{}) {
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("x.station_id", len(args)))
 	}
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
@@ -144,6 +151,11 @@ func (r *VideoRepository) ListCameras(ctx context.Context, f CameraFilter) ([]mo
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// Owner answers which department the camera belongs to.
+func (r *VideoRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "CAMERA", id, viewerID)
 }
 
 func (r *VideoRepository) GetCamera(ctx context.Context, id uuid.UUID) (*models.Camera, error) {
@@ -373,6 +385,11 @@ func (r *VideoRepository) RaiseEvent(ctx context.Context, req models.RaiseVideoE
 
 // GetEvent returns the event whether or not it has passed its expiry; the
 // service decides what an expired event may be used for.
+// EventOwner answers which department's camera raised this event.
+func (r *VideoRepository) EventOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "VIDEO_EVENT", id, viewerID)
+}
+
 func (r *VideoRepository) GetEvent(ctx context.Context, id uuid.UUID) (*models.VideoEvent, error) {
 	e, err := scanVideoEvent(r.db.QueryRow(ctx, videoEventSelect+" WHERE e.id = $1", id))
 	if errors.Is(err, pgx.ErrNoRows) {

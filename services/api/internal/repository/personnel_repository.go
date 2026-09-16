@@ -21,6 +21,10 @@ func NewPersonnelRepository(db *pgxpool.Pool) *PersonnelRepository {
 }
 
 type PersonnelFilter struct {
+	// ViewerID scopes the register to the viewer's own force: a posting is a
+	// fact about a department, and a CID officer has no business reading
+	// Kolkata Police's strength station by station.
+	ViewerID  uuid.UUID
 	Status    *models.PersonnelStatus
 	Rank      *models.Role
 	StationID *uuid.UUID
@@ -33,6 +37,12 @@ func (r *PersonnelRepository) List(ctx context.Context, filter PersonnelFilter) 
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("PERSONNEL", "p", argIndex))
+		argIndex++
+	}
 
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("p.status = $%d", argIndex))
@@ -116,6 +126,11 @@ func (r *PersonnelRepository) List(ctx context.Context, filter PersonnelFilter) 
 	}
 
 	return personnel, total, nil
+}
+
+// Owner answers which department an officer is posted to.
+func (r *PersonnelRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "PERSONNEL", id, viewerID)
 }
 
 func (r *PersonnelRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Personnel, error) {

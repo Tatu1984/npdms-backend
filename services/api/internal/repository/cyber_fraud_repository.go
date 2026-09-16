@@ -35,6 +35,13 @@ func NewCyberFraudRepository(db *pgxpool.Pool) *CyberFraudRepository {
 	return &CyberFraudRepository{db: db}
 }
 
+// Owner answers which department registered this cyber-crime case. Listing was
+// already scoped; the detail read was not, which is how a register can look
+// bounded while the records behind it are not.
+func (r *CyberFraudRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "CYBER_CRIME", id, viewerID)
+}
+
 /* ------------------------------------------------------------ complaints */
 
 // A complaint is "linked" to another when both name the same entity in a role

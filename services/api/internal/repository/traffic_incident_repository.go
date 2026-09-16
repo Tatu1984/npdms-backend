@@ -86,6 +86,8 @@ func scanTrafficIncident(row pgx.Row) (*models.TrafficIncident, error) {
 }
 
 type TrafficIncidentFilter struct {
+	// ViewerID scopes the accident register to the viewer's own force.
+	ViewerID     uuid.UUID
 	Search       string
 	StationID    *uuid.UUID
 	From         *time.Time
@@ -102,6 +104,10 @@ func (r *TrafficIncidentRepository) List(ctx context.Context, f TrafficIncidentF
 	add := func(clause string, v interface{}) {
 		args = append(args, v)
 		where = append(where, strings.ReplaceAll(clause, "?", fmt.Sprintf("$%d", len(args))))
+	}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("i.station_id", len(args)))
 	}
 	if f.Search != "" {
 		// Registration numbers are stored normalised, so the search term is too.
@@ -153,6 +159,11 @@ func (r *TrafficIncidentRepository) List(ctx context.Context, f TrafficIncidentF
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// Owner answers which department recorded this accident.
+func (r *TrafficIncidentRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "TRAFFIC_INCIDENT", id, viewerID)
 }
 
 func (r *TrafficIncidentRepository) Get(ctx context.Context, id uuid.UUID) (*models.TrafficIncident, error) {

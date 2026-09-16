@@ -734,8 +734,8 @@ func (s *BiometricService) calculateConfidence(score, threshold float64) float64
 // Device Management Methods
 
 // GetDevices retrieves all biometric devices with optional filters
-func (s *BiometricService) GetDevices(ctx context.Context, stationID *uuid.UUID, status *models.BiometricDeviceStatus) ([]models.BiometricDevice, error) {
-	return s.repo.ListDevices(ctx, stationID, status)
+func (s *BiometricService) GetDevices(ctx context.Context, viewerID uuid.UUID, stationID *uuid.UUID, status *models.BiometricDeviceStatus) ([]models.BiometricDevice, error) {
+	return s.repo.ListDevices(ctx, viewerID, stationID, status)
 }
 
 // GetDevice retrieves a single device by ID

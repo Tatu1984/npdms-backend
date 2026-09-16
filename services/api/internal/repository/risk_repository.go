@@ -259,8 +259,16 @@ func scanBeat(row pgx.Row) (*models.RiskBeat, error) {
 	return &b, nil
 }
 
-func (r *RiskRepository) ListBeats(ctx context.Context, stationID *uuid.UUID) ([]models.RiskBeat, error) {
-	rows, err := r.db.Query(ctx, beatSelect+" WHERE $1::uuid IS NULL OR b.station_id = $1 ORDER BY s.name, b.name", stationID)
+// ListBeats returns the viewer's own force's beats. A beat is drawn inside a
+// station's area, so the station carries the force.
+func (r *RiskRepository) ListBeats(ctx context.Context, stationID *uuid.UUID, viewerID uuid.UUID) ([]models.RiskBeat, error) {
+	scope, args := "TRUE", []interface{}{stationID}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = ForceScopeSQL("b.station_id", 2)
+	}
+	rows, err := r.db.Query(ctx, beatSelect+" WHERE ($1::uuid IS NULL OR b.station_id = $1) AND "+scope+
+		" ORDER BY s.name, b.name", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +282,11 @@ func (r *RiskRepository) ListBeats(ctx context.Context, stationID *uuid.UUID) ([
 		out = append(out, *b)
 	}
 	return out, rows.Err()
+}
+
+// Owner answers which department's ground this beat is drawn on.
+func (r *RiskRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "RISK_BEAT", id, viewerID)
 }
 
 func (r *RiskRepository) GetBeat(ctx context.Context, id uuid.UUID) (*models.RiskBeat, error) {

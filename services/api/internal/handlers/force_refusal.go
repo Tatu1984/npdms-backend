@@ -38,6 +38,39 @@ func RefuseIfAnotherForces(c *gin.Context, db *pgxpool.Pool, recordType string, 
 		// record; it is also not a reason to claim another force holds it.
 		return false
 	}
+
+	return refuseOtherForce(c, visible, owner)
+}
+
+// OwnerLookup is how a service answers "whose record is this?". Most handlers
+// hold a service rather than the connection pool, so the question travels down
+// to the repository that already has one instead of every handler being handed
+// a pool it otherwise has no use for.
+type OwnerLookup func(ctx context.Context, recordID, viewerID uuid.UUID) (visible bool, owner string, err error)
+
+// RefuseIfNotOurs is RefuseIfAnotherForces for a handler that reaches the
+// database through its service. It returns true when the request has been
+// refused and the caller should stop.
+func RefuseIfNotOurs(c *gin.Context, lookup OwnerLookup, recordID uuid.UUID) bool {
+	value, exists := c.Get("userID")
+	if !exists {
+		return false
+	}
+	viewer, ok := value.(uuid.UUID)
+	if !ok {
+		return false
+	}
+
+	visible, owner, err := lookup(context.WithoutCancel(c.Request.Context()), recordID, viewer)
+	if err != nil {
+		return false
+	}
+	return refuseOtherForce(c, visible, owner)
+}
+
+func refuseOtherForce(c *gin.Context, visible bool, owner string) bool {
+	// An owner of "" means the record is unplaced or absent, neither of which
+	// is another force holding it.
 	if visible || owner == "" {
 		return false
 	}

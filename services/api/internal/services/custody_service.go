@@ -143,8 +143,13 @@ func (s *CustodyService) Get(ctx context.Context, id uuid.UUID, actor *uuid.UUID
 	return item, nil
 }
 
-func (s *CustodyService) Stats(ctx context.Context) (map[string]int, error) {
-	return s.repo.Stats(ctx)
+func (s *CustodyService) Stats(ctx context.Context, viewerID uuid.UUID) (map[string]int, error) {
+	return s.repo.Stats(ctx, viewerID)
+}
+
+// Owner answers which department holds an exhibit.
+func (s *CustodyService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
 }
 
 /* ------------------------------ file handling ----------------------------- */

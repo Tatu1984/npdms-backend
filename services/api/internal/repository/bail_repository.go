@@ -21,6 +21,8 @@ func NewBailRepository(db *pgxpool.Pool) *BailRepository {
 }
 
 type BailFilter struct {
+	// ViewerID scopes the register to the viewer's own force.
+	ViewerID uuid.UUID
 	Status   *models.BailStatus
 	BailType *models.BailType
 	Search   string
@@ -33,6 +35,13 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	// A bail application sits with the case, else the FIR, it was made on.
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("BAIL", "b", argIndex))
+		argIndex++
+	}
 
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("b.status = $%d", argIndex))
@@ -120,6 +129,11 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 	}
 
 	return bails, total, nil
+}
+
+// Owner answers which department holds this bail application.
+func (r *BailRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "BAIL", id, viewerID)
 }
 
 func (r *BailRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Bail, error) {
@@ -277,20 +291,27 @@ func (r *BailRepository) GenerateApplicationNumber(ctx context.Context) (string,
 	return formatRecordNumber(ctx, r.db, "BAIL")
 }
 
-func (r *BailRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
+// GetStats counts the viewer's own force's bail applications. A count is a
+// disclosure too, so the dashboard is scoped like the register.
+func (r *BailRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
+
+	scope, args := "TRUE", []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = MustForceScopeRecordSQL("BAIL", "b", len(args))
+	}
 
 	query := `
 		SELECT
 			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE status = 'PENDING') as pending,
-			COUNT(*) FILTER (WHERE status IN ('APPROVED', 'RELEASED')) as approved,
-			COUNT(*) FILTER (WHERE status IN ('REJECTED', 'CANCELLED')) as rejected
-		FROM bail
-	`
+			COUNT(*) FILTER (WHERE b.status = 'PENDING') as pending,
+			COUNT(*) FILTER (WHERE b.status IN ('APPROVED', 'RELEASED')) as approved,
+			COUNT(*) FILTER (WHERE b.status IN ('REJECTED', 'CANCELLED')) as rejected
+		FROM bail b WHERE ` + scope
 
 	var total, pending, approved, rejected int64
-	err := r.db.QueryRow(ctx, query).Scan(&total, &pending, &approved, &rejected)
+	err := r.db.QueryRow(ctx, query, args...).Scan(&total, &pending, &approved, &rejected)
 	if err != nil {
 		return nil, err
 	}

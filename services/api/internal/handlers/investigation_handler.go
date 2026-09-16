@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -76,11 +77,20 @@ func serverError(c *gin.Context, message string) {
 	})
 }
 
-// workspaceID parses the :id path parameter, replying 400 when it is not a UUID.
-func workspaceID(c *gin.Context) (uuid.UUID, bool) {
+// workspaceID parses the :id path parameter, replying 400 when it is not a
+// UUID and refusing a workspace that belongs to another department.
+//
+// Every route in this module goes through here, including the twenty-odd that
+// read a workspace's persons, timeline, gaps and tasks. Guarding the detail
+// read alone would leave each of those open, which is how a boundary comes to
+// be advertised without being enforced.
+func (h *InvestigationHandler) workspaceID(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		badRequest(c, "Invalid workspace id")
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return uuid.Nil, false
 	}
 	return id, true
@@ -102,6 +112,7 @@ func (h *InvestigationHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.WorkspaceFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -131,7 +142,7 @@ func (h *InvestigationHandler) List(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) Get(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -160,7 +171,7 @@ func (h *InvestigationHandler) Create(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) Update(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -180,7 +191,7 @@ func (h *InvestigationHandler) Update(c *gin.Context) {
 /* --------------------------------- persons -------------------------------- */
 
 func (h *InvestigationHandler) ListPersons(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -193,7 +204,7 @@ func (h *InvestigationHandler) ListPersons(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) CreatePerson(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -211,7 +222,7 @@ func (h *InvestigationHandler) CreatePerson(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) UpdatePerson(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -233,7 +244,7 @@ func (h *InvestigationHandler) UpdatePerson(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) DeletePerson(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -251,7 +262,7 @@ func (h *InvestigationHandler) DeletePerson(c *gin.Context) {
 /* -------------------------------- timeline -------------------------------- */
 
 func (h *InvestigationHandler) ListTimeline(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -264,7 +275,7 @@ func (h *InvestigationHandler) ListTimeline(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) CreateWorkspaceTimelineEntry(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -282,7 +293,7 @@ func (h *InvestigationHandler) CreateWorkspaceTimelineEntry(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) ReviewWorkspaceTimelineEntry(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -307,7 +318,7 @@ func (h *InvestigationHandler) ReviewWorkspaceTimelineEntry(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) DeleteWorkspaceTimelineEntry(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -325,7 +336,7 @@ func (h *InvestigationHandler) DeleteWorkspaceTimelineEntry(c *gin.Context) {
 /* ----------------------------- contradictions ----------------------------- */
 
 func (h *InvestigationHandler) ListContradictions(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -338,7 +349,7 @@ func (h *InvestigationHandler) ListContradictions(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) CreateContradiction(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -356,7 +367,7 @@ func (h *InvestigationHandler) CreateContradiction(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) ReviewContradiction(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -383,7 +394,7 @@ func (h *InvestigationHandler) ReviewContradiction(c *gin.Context) {
 /* ----------------------------------- gaps --------------------------------- */
 
 func (h *InvestigationHandler) ListGaps(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -397,7 +408,7 @@ func (h *InvestigationHandler) ListGaps(c *gin.Context) {
 
 // Recompute re-runs the deterministic gap rules. Safe to call at any time.
 func (h *InvestigationHandler) RecomputeGaps(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -410,7 +421,7 @@ func (h *InvestigationHandler) RecomputeGaps(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) CreateGap(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -428,7 +439,7 @@ func (h *InvestigationHandler) CreateGap(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) UpdateGapStatus(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -457,7 +468,7 @@ func (h *InvestigationHandler) UpdateGapStatus(c *gin.Context) {
 /* ---------------------------------- tasks --------------------------------- */
 
 func (h *InvestigationHandler) ListTasks(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -470,7 +481,7 @@ func (h *InvestigationHandler) ListTasks(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) CreateTask(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -488,7 +499,7 @@ func (h *InvestigationHandler) CreateTask(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) UpdateTask(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -510,7 +521,7 @@ func (h *InvestigationHandler) UpdateTask(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) DeleteTask(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -528,7 +539,7 @@ func (h *InvestigationHandler) DeleteTask(c *gin.Context) {
 /* --------------------------------- evidence ------------------------------- */
 
 func (h *InvestigationHandler) ListEvidence(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -541,7 +552,7 @@ func (h *InvestigationHandler) ListEvidence(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) LinkEvidence(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -559,7 +570,7 @@ func (h *InvestigationHandler) LinkEvidence(c *gin.Context) {
 }
 
 func (h *InvestigationHandler) UnlinkEvidence(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -597,7 +608,7 @@ func (h *InvestigationHandler) ListOfficers(c *gin.Context) {
 
 // LinkGraph returns the relationships recorded on this case.
 func (h *InvestigationHandler) LinkGraph(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}
@@ -612,7 +623,7 @@ func (h *InvestigationHandler) LinkGraph(c *gin.Context) {
 /* ----------------------------------- brief -------------------------------- */
 
 func (h *InvestigationHandler) Brief(c *gin.Context) {
-	id, ok := workspaceID(c)
+	id, ok := h.workspaceID(c)
 	if !ok {
 		return
 	}

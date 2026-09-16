@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -40,6 +41,7 @@ func (h *WarrantHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.WarrantFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -95,6 +97,12 @@ func (h *WarrantHandler) Get(c *gin.Context) {
 			Message: "Invalid warrant ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// Another department's warrant is refused by name, not answered with
+	// "not found".
+	if RefuseIfNotOurs(c, h.warrantService.Owner, id) {
 		return
 	}
 
@@ -278,7 +286,7 @@ func (h *WarrantHandler) UpdateStatus(c *gin.Context) {
 // @Failure 500 {object} models.ErrorResponse
 // @Router /warrants/stats [get]
 func (h *WarrantHandler) GetStats(c *gin.Context) {
-	stats, err := h.warrantService.GetStats(c.Request.Context())
+	stats, err := h.warrantService.GetStats(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

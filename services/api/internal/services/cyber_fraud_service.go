@@ -116,6 +116,11 @@ func (s *CyberFraudService) List(ctx context.Context, f repository.CyberComplain
 	return s.repo.ListComplaints(ctx, f)
 }
 
+// Owner answers which department registered a cyber-crime case.
+func (s *CyberFraudService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
 func (s *CyberFraudService) Get(ctx context.Context, id uuid.UUID) (*models.CyberComplaint, error) {
 	return s.repo.GetComplaint(ctx, id)
 }

@@ -108,6 +108,11 @@ func (s *WarrantService) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 	return s.warrantRepo.FindByID(ctx, id)
 }
 
-func (s *WarrantService) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	return s.warrantRepo.GetStats(ctx)
+// Owner answers which department holds a warrant.
+func (s *WarrantService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.warrantRepo.Owner(ctx, id, viewerID)
+}
+
+func (s *WarrantService) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
+	return s.warrantRepo.GetStats(ctx, viewerID)
 }

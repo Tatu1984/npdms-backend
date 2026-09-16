@@ -24,7 +24,9 @@ func (h *EvidenceHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
-	response, err := h.evidenceService.List(c.Request.Context(), page, pageSize)
+	// The register is the viewer's own force's, plus what has been referred to
+	// it: evidence follows the FIR or case it was collected under.
+	response, err := h.evidenceService.List(c.Request.Context(), middleware.GetUserID(c), page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -45,6 +47,12 @@ func (h *EvidenceHandler) Get(c *gin.Context) {
 			Message: "Invalid evidence ID",
 			Code:    400,
 		})
+		return
+	}
+
+	// Another department's exhibit is refused by name, not answered with
+	// "not found": the officer should know who holds it.
+	if RefuseIfNotOurs(c, h.evidenceService.Owner, id) {
 		return
 	}
 
@@ -133,6 +141,12 @@ func (h *EvidenceHandler) GetChainOfCustody(c *gin.Context) {
 			Message: "Invalid evidence ID",
 			Code:    400,
 		})
+		return
+	}
+
+	// The chain of custody names officers and locations, so it is refused on
+	// the same terms as the exhibit itself.
+	if RefuseIfNotOurs(c, h.evidenceService.Owner, id) {
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -66,7 +67,8 @@ func trafficActor(c *gin.Context) (uuid.UUID, bool) {
 func (h *TrafficIncidentHandler) List(c *gin.Context) {
 	page, size := pageParams(c)
 	f := repository.TrafficIncidentFilter{
-		Search: c.Query("search"), FatalOnly: c.Query("fatal") == "true", Page: page, PageSize: size,
+		ViewerID: middleware.GetUserID(c),
+		Search:   c.Query("search"), FatalOnly: c.Query("fatal") == "true", Page: page, PageSize: size,
 	}
 	switch rs := c.Query("reportStatus"); rs {
 	case "", "NONE", "DRAFT", "SUBMITTED", "RETURNED", "APPROVED":
@@ -119,8 +121,21 @@ func (h *TrafficIncidentHandler) Stats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-func (h *TrafficIncidentHandler) Get(c *gin.Context) {
+// incidentID parses the :id path parameter and refuses another department's
+// accident by name.
+func (h *TrafficIncidentHandler) incidentID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *TrafficIncidentHandler) Get(c *gin.Context) {
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -150,7 +165,7 @@ func (h *TrafficIncidentHandler) Register(c *gin.Context) {
 }
 
 func (h *TrafficIncidentHandler) Workspace(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -163,7 +178,7 @@ func (h *TrafficIncidentHandler) Workspace(c *gin.Context) {
 }
 
 func (h *TrafficIncidentHandler) Update(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -185,10 +200,17 @@ func (h *TrafficIncidentHandler) Update(c *gin.Context) {
 
 /* --------------------------- attached records ------------------------------ */
 
-// listChildren serves a GET for one kind of attached record.
-func listChildren[T any](c *gin.Context, op string, fetch func(uuid.UUID) ([]T, error)) {
+// listChildren serves a GET for one kind of attached record. It takes the
+// owner lookup so that the twenty-odd attached-record routes are held to the
+// same boundary as the incident itself: guarding only the detail read would
+// leave the vehicles, casualties and plate reads of another force's accident
+// readable one route down.
+func listChildren[T any](owner OwnerLookup, c *gin.Context, op string, fetch func(uuid.UUID) ([]T, error)) {
 	id, ok := childID(c, "id")
 	if !ok {
+		return
+	}
+	if RefuseIfNotOurs(c, owner, id) {
 		return
 	}
 	list, err := fetch(id)
@@ -200,9 +222,12 @@ func listChildren[T any](c *gin.Context, op string, fetch func(uuid.UUID) ([]T, 
 }
 
 // addChild binds a body and runs one attach operation.
-func addChild[In any, Out any](c *gin.Context, op string, add func(uuid.UUID, In, uuid.UUID) (*Out, error)) {
+func addChild[In any, Out any](owner OwnerLookup, c *gin.Context, op string, add func(uuid.UUID, In, uuid.UUID) (*Out, error)) {
 	id, ok := childID(c, "id")
 	if !ok {
+		return
+	}
+	if RefuseIfNotOurs(c, owner, id) {
 		return
 	}
 	actor, ok := trafficActor(c)
@@ -222,49 +247,49 @@ func addChild[In any, Out any](c *gin.Context, op string, add func(uuid.UUID, In
 }
 
 func (h *TrafficIncidentHandler) Vehicles(c *gin.Context) {
-	listChildren(c, "list vehicles", func(id uuid.UUID) ([]models.TrafficIncidentVehicle, error) {
+	listChildren(h.service.Owner, c, "list vehicles", func(id uuid.UUID) ([]models.TrafficIncidentVehicle, error) {
 		return h.service.Vehicles(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddVehicle(c *gin.Context) {
-	addChild(c, "add vehicle", func(id uuid.UUID, in models.TrafficVehicleInput, actor uuid.UUID) (*models.TrafficIncidentVehicle, error) {
+	addChild(h.service.Owner, c, "add vehicle", func(id uuid.UUID, in models.TrafficVehicleInput, actor uuid.UUID) (*models.TrafficIncidentVehicle, error) {
 		return h.service.AddVehicle(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) Persons(c *gin.Context) {
-	listChildren(c, "list persons", func(id uuid.UUID) ([]models.TrafficIncidentPerson, error) {
+	listChildren(h.service.Owner, c, "list persons", func(id uuid.UUID) ([]models.TrafficIncidentPerson, error) {
 		return h.service.Persons(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddPerson(c *gin.Context) {
-	addChild(c, "add person", func(id uuid.UUID, in models.TrafficPersonInput, actor uuid.UUID) (*models.TrafficIncidentPerson, error) {
+	addChild(h.service.Owner, c, "add person", func(id uuid.UUID, in models.TrafficPersonInput, actor uuid.UUID) (*models.TrafficIncidentPerson, error) {
 		return h.service.AddPerson(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) Cameras(c *gin.Context) {
-	listChildren(c, "list cameras", func(id uuid.UUID) ([]models.TrafficIncidentCamera, error) {
+	listChildren(h.service.Owner, c, "list cameras", func(id uuid.UUID) ([]models.TrafficIncidentCamera, error) {
 		return h.service.Cameras(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddCamera(c *gin.Context) {
-	addChild(c, "link camera", func(id uuid.UUID, in models.TrafficCameraInput, actor uuid.UUID) (*models.TrafficIncidentCamera, error) {
+	addChild(h.service.Owner, c, "link camera", func(id uuid.UUID, in models.TrafficCameraInput, actor uuid.UUID) (*models.TrafficIncidentCamera, error) {
 		return h.service.AddCamera(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) PlateReads(c *gin.Context) {
-	listChildren(c, "list plate reads", func(id uuid.UUID) ([]models.TrafficPlateRead, error) {
+	listChildren(h.service.Owner, c, "list plate reads", func(id uuid.UUID) ([]models.TrafficPlateRead, error) {
 		return h.service.PlateReads(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddPlateRead(c *gin.Context) {
-	addChild(c, "record plate read", func(id uuid.UUID, in models.TrafficPlateReadInput, actor uuid.UUID) (*models.TrafficPlateRead, error) {
+	addChild(h.service.Owner, c, "record plate read", func(id uuid.UUID, in models.TrafficPlateReadInput, actor uuid.UUID) (*models.TrafficPlateRead, error) {
 		return h.service.AddPlateRead(c.Request.Context(), id, in, actor)
 	})
 }
@@ -272,43 +297,43 @@ func (h *TrafficIncidentHandler) AddPlateRead(c *gin.Context) {
 // AttachANPRRead records a read from the vehicle detection module as a plate
 // read, keeping its model version and confidence.
 func (h *TrafficIncidentHandler) AttachANPRRead(c *gin.Context) {
-	addChild(c, "attach ANPR read", func(id uuid.UUID, in models.AttachANPRReadRequest, actor uuid.UUID) (*models.TrafficPlateRead, error) {
+	addChild(h.service.Owner, c, "attach ANPR read", func(id uuid.UUID, in models.AttachANPRReadRequest, actor uuid.UUID) (*models.TrafficPlateRead, error) {
 		return h.service.AttachANPRRead(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) SignalPhases(c *gin.Context) {
-	listChildren(c, "list signal phases", func(id uuid.UUID) ([]models.TrafficSignalPhase, error) {
+	listChildren(h.service.Owner, c, "list signal phases", func(id uuid.UUID) ([]models.TrafficSignalPhase, error) {
 		return h.service.SignalPhases(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddSignalPhase(c *gin.Context) {
-	addChild(c, "record signal phase", func(id uuid.UUID, in models.TrafficSignalPhaseInput, actor uuid.UUID) (*models.TrafficSignalPhase, error) {
+	addChild(h.service.Owner, c, "record signal phase", func(id uuid.UUID, in models.TrafficSignalPhaseInput, actor uuid.UUID) (*models.TrafficSignalPhase, error) {
 		return h.service.AddSignalPhase(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) Facts(c *gin.Context) {
-	listChildren(c, "list facts", func(id uuid.UUID) ([]models.TrafficFact, error) {
+	listChildren(h.service.Owner, c, "list facts", func(id uuid.UUID) ([]models.TrafficFact, error) {
 		return h.service.Facts(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) AddFact(c *gin.Context) {
-	addChild(c, "record fact", func(id uuid.UUID, in models.TrafficFactInput, actor uuid.UUID) (*models.TrafficFact, error) {
+	addChild(h.service.Owner, c, "record fact", func(id uuid.UUID, in models.TrafficFactInput, actor uuid.UUID) (*models.TrafficFact, error) {
 		return h.service.AddFact(c.Request.Context(), id, in, actor)
 	})
 }
 
 func (h *TrafficIncidentHandler) Timeline(c *gin.Context) {
-	listChildren(c, "assemble timeline", func(id uuid.UUID) ([]models.TrafficTimelineItem, error) {
+	listChildren(h.service.Owner, c, "assemble timeline", func(id uuid.UUID) ([]models.TrafficTimelineItem, error) {
 		return h.service.Timeline(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) PriorChallans(c *gin.Context) {
-	listChildren(c, "list prior challans", func(id uuid.UUID) ([]models.PriorChallan, error) {
+	listChildren(h.service.Owner, c, "list prior challans", func(id uuid.UUID) ([]models.PriorChallan, error) {
 		return h.service.PriorChallans(c.Request.Context(), id)
 	})
 }
@@ -316,7 +341,7 @@ func (h *TrafficIncidentHandler) PriorChallans(c *gin.Context) {
 // RemoveChild deletes one attached record; the kind is the route's own segment.
 func (h *TrafficIncidentHandler) RemoveChild(kind string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id, ok := childID(c, "id")
+		id, ok := h.incidentID(c)
 		if !ok {
 			return
 		}
@@ -339,7 +364,7 @@ func (h *TrafficIncidentHandler) RemoveChild(kind string) gin.HandlerFunc {
 /* --------------------------------- reports --------------------------------- */
 
 func (h *TrafficIncidentHandler) Draft(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -352,13 +377,13 @@ func (h *TrafficIncidentHandler) Draft(c *gin.Context) {
 }
 
 func (h *TrafficIncidentHandler) Reports(c *gin.Context) {
-	listChildren(c, "list reports", func(id uuid.UUID) ([]models.TrafficIncidentReport, error) {
+	listChildren(h.service.Owner, c, "list reports", func(id uuid.UUID) ([]models.TrafficIncidentReport, error) {
 		return h.service.Reports(c.Request.Context(), id)
 	})
 }
 
 func (h *TrafficIncidentHandler) Report(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -375,7 +400,7 @@ func (h *TrafficIncidentHandler) Report(c *gin.Context) {
 }
 
 func (h *TrafficIncidentHandler) CreateReport(c *gin.Context) {
-	addChild(c, "draft report", func(id uuid.UUID, in models.TrafficReportInput, actor uuid.UUID) (*models.TrafficIncidentReport, error) {
+	addChild(h.service.Owner, c, "draft report", func(id uuid.UUID, in models.TrafficReportInput, actor uuid.UUID) (*models.TrafficIncidentReport, error) {
 		return h.service.CreateReport(c.Request.Context(), id, in, actor)
 	})
 }
@@ -383,7 +408,7 @@ func (h *TrafficIncidentHandler) CreateReport(c *gin.Context) {
 // reportAction resolves the incident, report and actor for a report transition.
 func (h *TrafficIncidentHandler) reportAction(c *gin.Context, op string, status int,
 	run func(id, reportID, actor uuid.UUID) (*models.TrafficIncidentReport, error)) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}

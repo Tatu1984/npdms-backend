@@ -175,6 +175,10 @@ func (h *RiskHandler) DeleteBeat(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// A beat on another force's ground is not this officer's to delete.
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
+		return
+	}
 	if err := h.service.DeleteBeat(c.Request.Context(), riskActor(c), id); err != nil {
 		riskError(c, "delete beat", err)
 		return

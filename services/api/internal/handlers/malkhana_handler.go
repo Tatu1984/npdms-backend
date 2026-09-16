@@ -138,7 +138,8 @@ func (h *MalkhanaHandler) List(c *gin.Context) {
 	}
 	page, size := pageParams(c)
 	f := repository.PropertyFilter{
-		Search: strings.TrimSpace(c.Query("search")), Status: c.Query("status"), Category: c.Query("category"),
+		ViewerID: middleware.GetUserID(c),
+		Search:   strings.TrimSpace(c.Query("search")), Status: c.Query("status"), Category: c.Query("category"),
 		Attention: c.Query("attention"), Page: page, PageSize: size,
 	}
 	var okID bool
@@ -179,10 +180,16 @@ func (h *MalkhanaHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, item)
 }
 
+// itemID parses the :id path parameter and refuses an item held in another
+// department's malkhana. Every item route goes through here, so the label,
+// seal checks, movement history and events are covered with the item itself.
 func (h *MalkhanaHandler) itemID(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		badRequest(c, "Invalid property id")
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return uuid.Nil, false
 	}
 	return id, true
@@ -447,7 +454,7 @@ func (h *MalkhanaHandler) Dispose(c *gin.Context) {
 }
 
 func (h *MalkhanaHandler) Stations(c *gin.Context) {
-	list, err := h.service.Stations(c.Request.Context())
+	list, err := h.service.Stations(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		malkhanaError(c, "list stations", err)
 		return

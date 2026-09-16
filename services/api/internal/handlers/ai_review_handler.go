@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/services"
 
@@ -40,6 +41,7 @@ func (h *AIReviewHandler) GetReviewQueue(c *gin.Context) {
 	}
 
 	filters := services.QueueFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 	}
@@ -89,6 +91,11 @@ func (h *AIReviewHandler) GetDecision(c *gin.Context) {
 			Message: "Invalid decision ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// A suggestion raised for another department is refused by name.
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return
 	}
 
@@ -820,6 +827,7 @@ func (h *AIReviewHandler) GetMyAssignments(c *gin.Context) {
 	}
 
 	filters := services.QueueFilter{
+		ViewerID:   middleware.GetUserID(c),
 		AssignedTo: &uid,
 		Page:       page,
 		PageSize:   pageSize,
@@ -952,6 +960,10 @@ func (h *AIReviewHandler) GetDecisionHistory(c *gin.Context) {
 			Message: "Invalid decision ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return
 	}
 

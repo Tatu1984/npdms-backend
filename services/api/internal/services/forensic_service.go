@@ -96,6 +96,11 @@ func (s *ForensicService) CompleteRequest(ctx context.Context, id uuid.UUID, sum
 	return s.forensicRepo.FindByID(ctx, id)
 }
 
-func (s *ForensicService) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	return s.forensicRepo.GetStats(ctx)
+// Owner answers which department holds a forensic request.
+func (s *ForensicService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.forensicRepo.Owner(ctx, id, viewerID)
+}
+
+func (s *ForensicService) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
+	return s.forensicRepo.GetStats(ctx, viewerID)
 }

@@ -71,6 +71,16 @@ func (s *CaseFileService) Create(ctx context.Context, workspaceID uuid.UUID, act
 	return cf, nil
 }
 
+// Owner and WorkspaceOwner answer which department a court file, or the
+// workspace behind it, belongs to.
+func (s *CaseFileService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
+func (s *CaseFileService) WorkspaceOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.WorkspaceOwner(ctx, id, viewerID)
+}
+
 func (s *CaseFileService) List(ctx context.Context, f repository.CaseFileFilter) ([]models.CaseFile, int64, error) {
 	return s.repo.List(ctx, f)
 }

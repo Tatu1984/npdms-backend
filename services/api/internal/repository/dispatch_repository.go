@@ -141,6 +141,9 @@ func scanAssignment(row pgx.Row) (*models.DispatchAssignment, error) {
 /* -------------------------------- incidents ------------------------------- */
 
 type IncidentFilter struct {
+	// ViewerID scopes the control-room queue to the viewer's own force: a 112
+	// call is taken by a station, and the station carries the force.
+	ViewerID  uuid.UUID
 	// View: "queue" (NEW, CLASSIFIED), "active" (DISPATCHED, ON_SCENE),
 	// "open" (anything not closed), "closed", or "" for all.
 	View      string
@@ -158,6 +161,10 @@ func (r *DispatchRepository) ListIncidents(ctx context.Context, f IncidentFilter
 	add := func(clause string, v interface{}) {
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("i.station_id", len(args)))
 	}
 	switch f.View {
 	case "queue":
@@ -216,6 +223,11 @@ func (r *DispatchRepository) ListIncidents(ctx context.Context, f IncidentFilter
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// Owner answers which department took this call.
+func (r *DispatchRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "DISPATCH_INCIDENT", id, viewerID)
 }
 
 func (r *DispatchRepository) GetIncident(ctx context.Context, id uuid.UUID) (*models.DispatchIncident, error) {

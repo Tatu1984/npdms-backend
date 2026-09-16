@@ -103,6 +103,11 @@ func (s *BailService) UpdateStatus(ctx context.Context, id uuid.UUID, status mod
 	return s.bailRepo.FindByID(ctx, id)
 }
 
-func (s *BailService) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	return s.bailRepo.GetStats(ctx)
+// Owner answers which department holds a bail application.
+func (s *BailService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.bailRepo.Owner(ctx, id, viewerID)
+}
+
+func (s *BailService) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
+	return s.bailRepo.GetStats(ctx, viewerID)
 }

@@ -88,6 +88,9 @@ func scanCaseFile(row pgx.Row) (*models.CaseFile, error) {
 }
 
 type CaseFileFilter struct {
+	// ViewerID scopes the court files to the viewer's own force, through the
+	// workspace each one is built from.
+	ViewerID uuid.UUID
 	Search   string
 	Status   string
 	Page     int
@@ -97,6 +100,10 @@ type CaseFileFilter struct {
 func (r *CaseFileRepository) List(ctx context.Context, f CaseFileFilter) ([]models.CaseFile, int64, error) {
 	where := []string{"1=1"}
 	args := []any{}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, MustForceScopeRecordSQL("CASE_FILE", "f", len(args)))
+	}
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
 		n := len(args)
@@ -135,6 +142,16 @@ func (r *CaseFileRepository) List(ctx context.Context, f CaseFileFilter) ([]mode
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+// Owner answers which department the court file belongs to.
+func (r *CaseFileRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "CASE_FILE", id, viewerID)
+}
+
+// WorkspaceOwner answers the same for the workspace a file is looked up by.
+func (r *CaseFileRepository) WorkspaceOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "WORKSPACE", id, viewerID)
 }
 
 func (r *CaseFileRepository) Get(ctx context.Context, id uuid.UUID) (*models.CaseFile, error) {

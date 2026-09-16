@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -69,10 +70,15 @@ func armouryError(c *gin.Context, op string, err error) {
 	}
 }
 
-func weaponID(c *gin.Context) (uuid.UUID, bool) {
+// weaponID parses the :id path parameter and refuses a weapon held in another
+// department's armoury.
+func (h *ArmouryHandler) weaponID(c *gin.Context) (uuid.UUID, bool) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		badRequest(c, "Invalid weapon id")
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
 		return uuid.Nil, false
 	}
 	return id, true
@@ -81,7 +87,8 @@ func weaponID(c *gin.Context) (uuid.UUID, bool) {
 func (h *ArmouryHandler) List(c *gin.Context) {
 	page, size := pageParams(c)
 	f := repository.WeaponFilter{
-		Search: c.Query("search"), Status: c.Query("status"),
+		ViewerID: middleware.GetUserID(c),
+		Search:   c.Query("search"), Status: c.Query("status"),
 		Overdue: c.Query("overdue") == "true", Page: page, PageSize: size,
 	}
 	if sid, err := uuid.Parse(c.Query("stationId")); err == nil {
@@ -100,7 +107,7 @@ func (h *ArmouryHandler) Stats(c *gin.Context) {
 	if sid, err := uuid.Parse(c.Query("stationId")); err == nil {
 		station = &sid
 	}
-	stats, err := h.service.Stats(c.Request.Context(), station)
+	stats, err := h.service.Stats(c.Request.Context(), station, middleware.GetUserID(c))
 	if err != nil {
 		armouryError(c, "load armoury statistics", err)
 		return
@@ -109,7 +116,7 @@ func (h *ArmouryHandler) Stats(c *gin.Context) {
 }
 
 func (h *ArmouryHandler) Get(c *gin.Context) {
-	id, ok := weaponID(c)
+	id, ok := h.weaponID(c)
 	if !ok {
 		return
 	}
@@ -136,7 +143,7 @@ func (h *ArmouryHandler) Register(c *gin.Context) {
 }
 
 func (h *ArmouryHandler) SetState(c *gin.Context) {
-	id, ok := weaponID(c)
+	id, ok := h.weaponID(c)
 	if !ok {
 		return
 	}
@@ -154,7 +161,7 @@ func (h *ArmouryHandler) SetState(c *gin.Context) {
 }
 
 func (h *ArmouryHandler) Issue(c *gin.Context) {
-	id, ok := weaponID(c)
+	id, ok := h.weaponID(c)
 	if !ok {
 		return
 	}
@@ -177,7 +184,7 @@ func (h *ArmouryHandler) Issue(c *gin.Context) {
 }
 
 func (h *ArmouryHandler) Return(c *gin.Context) {
-	id, ok := weaponID(c)
+	id, ok := h.weaponID(c)
 	if !ok {
 		return
 	}
@@ -202,7 +209,8 @@ func (h *ArmouryHandler) Return(c *gin.Context) {
 // Issuances lists the ledger, optionally for one weapon or one officer.
 func (h *ArmouryHandler) Issuances(c *gin.Context) {
 	page, size := pageParams(c)
-	f := repository.IssuanceFilter{OpenOnly: c.Query("open") == "true", Page: page, PageSize: size}
+	f := repository.IssuanceFilter{ViewerID: middleware.GetUserID(c),
+		OpenOnly: c.Query("open") == "true", Page: page, PageSize: size}
 	if id, err := uuid.Parse(c.Param("id")); err == nil {
 		f.WeaponID = &id
 	}

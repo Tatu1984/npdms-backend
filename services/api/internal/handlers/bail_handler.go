@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -25,6 +26,7 @@ func (h *BailHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.BailFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -61,6 +63,12 @@ func (h *BailHandler) Get(c *gin.Context) {
 			Message: "Invalid bail application ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// Another department's record is refused by name, not answered with
+	// "not found": the officer should know who holds it.
+	if RefuseIfNotOurs(c, h.bailService.Owner, id) {
 		return
 	}
 
@@ -199,7 +207,7 @@ func (h *BailHandler) UpdateStatus(c *gin.Context) {
 }
 
 func (h *BailHandler) GetStats(c *gin.Context) {
-	stats, err := h.bailService.GetStats(c.Request.Context())
+	stats, err := h.bailService.GetStats(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

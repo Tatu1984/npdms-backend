@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -80,7 +81,8 @@ func bodycamBind(c *gin.Context, dst interface{}) bool {
 
 func (h *BodycamHandler) ListDevices(c *gin.Context) {
 	page, size := pageParams(c)
-	f := repository.BWCDeviceFilter{Search: c.Query("search"), Status: c.Query("status"), Page: page, PageSize: size}
+	f := repository.BWCDeviceFilter{ViewerID: middleware.GetUserID(c),
+		Search: c.Query("search"), Status: c.Query("status"), Page: page, PageSize: size}
 	if sid, err := uuid.Parse(c.Query("stationId")); err == nil {
 		f.StationID = &sid
 	}
@@ -112,8 +114,33 @@ func (h *BodycamHandler) Stats(c *gin.Context) {
 	})
 }
 
-func (h *BodycamHandler) GetDevice(c *gin.Context) {
+// deviceID and recordingID parse the :id path parameter for the two kinds of
+// record this module holds, and refuse another department's by name. A camera
+// is on a station's charge; footage sits with the camera it came off.
+func (h *BodycamHandler) deviceID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.DeviceOwner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *BodycamHandler) recordingID(c *gin.Context) (uuid.UUID, bool) {
+	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.RecordingOwner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *BodycamHandler) GetDevice(c *gin.Context) {
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -139,7 +166,7 @@ func (h *BodycamHandler) RegisterDevice(c *gin.Context) {
 }
 
 func (h *BodycamHandler) SetStatus(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -156,7 +183,7 @@ func (h *BodycamHandler) SetStatus(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Readings(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -169,7 +196,7 @@ func (h *BodycamHandler) Readings(c *gin.Context) {
 }
 
 func (h *BodycamHandler) RecordReading(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -192,7 +219,7 @@ func (h *BodycamHandler) RecordReading(c *gin.Context) {
 /* ------------------------------- assignments ------------------------------ */
 
 func (h *BodycamHandler) Assignments(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -206,7 +233,7 @@ func (h *BodycamHandler) Assignments(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Issue(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -227,7 +254,7 @@ func (h *BodycamHandler) Issue(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Return(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -256,7 +283,7 @@ func (h *BodycamHandler) Return(c *gin.Context) {
 // Dock accepts one recording as multipart form data: file, startedAt, endedAt
 // (RFC 3339). The wearing officer or ASI and above may dock.
 func (h *BodycamHandler) Dock(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.deviceID(c)
 	if !ok {
 		return
 	}
@@ -344,7 +371,7 @@ func (h *BodycamHandler) Recordings(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Access(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -365,7 +392,7 @@ func (h *BodycamHandler) Access(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Download(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -389,7 +416,7 @@ func (h *BodycamHandler) Download(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Verify(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -406,7 +433,7 @@ func (h *BodycamHandler) Verify(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Link(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -427,7 +454,7 @@ func (h *BodycamHandler) Link(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Chain(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -440,7 +467,7 @@ func (h *BodycamHandler) Chain(c *gin.Context) {
 }
 
 func (h *BodycamHandler) AccessLog(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}
@@ -453,7 +480,7 @@ func (h *BodycamHandler) AccessLog(c *gin.Context) {
 }
 
 func (h *BodycamHandler) Purge(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.recordingID(c)
 	if !ok {
 		return
 	}

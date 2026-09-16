@@ -103,6 +103,11 @@ func (s *TrafficIncidentService) validateIncident(in *models.TrafficIncidentInpu
 	return nil
 }
 
+// Owner answers which department recorded an accident.
+func (s *TrafficIncidentService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
 func (s *TrafficIncidentService) List(ctx context.Context, f repository.TrafficIncidentFilter) ([]models.TrafficIncident, int64, error) {
 	return s.repo.List(ctx, f)
 }

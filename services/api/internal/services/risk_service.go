@@ -383,7 +383,16 @@ func (s *RiskService) Beats(ctx context.Context, actor RiskActor, station *uuid.
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListBeats(ctx, scope)
+	var viewer uuid.UUID
+	if actor.ID != nil {
+		viewer = *actor.ID
+	}
+	return s.repo.ListBeats(ctx, scope, viewer)
+}
+
+// Owner answers which department's ground a beat is drawn on.
+func (s *RiskService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
 }
 
 func (s *RiskService) CreateBeat(ctx context.Context, actor RiskActor, req models.CreateRiskBeatRequest) (*models.RiskBeat, error) {

@@ -71,6 +71,11 @@ func (s *InvestigationService) ListWorkspaces(ctx context.Context, filter reposi
 	}, nil
 }
 
+// Owner answers which department the workspace belongs to.
+func (s *InvestigationService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
 func (s *InvestigationService) GetWorkspace(ctx context.Context, id uuid.UUID) (*models.InvestigationWorkspace, error) {
 	return s.repo.GetWorkspace(ctx, id)
 }

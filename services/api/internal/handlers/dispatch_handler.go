@@ -81,7 +81,8 @@ func (h *DispatchHandler) List(c *gin.Context) {
 		return
 	}
 	list, total, err := h.service.List(c.Request.Context(), repository.IncidentFilter{
-		View: view, Status: c.Query("status"), Severity: c.Query("severity"),
+		ViewerID: middleware.GetUserID(c),
+		View:     view, Status: c.Query("status"), Severity: c.Query("severity"),
 		StationID: station, Search: c.Query("search"), Page: page, PageSize: size,
 	})
 	if err != nil {
@@ -104,8 +105,23 @@ func (h *DispatchHandler) Stats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
-func (h *DispatchHandler) Get(c *gin.Context) {
+// incidentID parses the :id path parameter and refuses an incident that
+// belongs to another department. Every route below reaches an incident through
+// here, so the events, classification and closure routes are covered with the
+// detail read rather than one at a time.
+func (h *DispatchHandler) incidentID(c *gin.Context) (uuid.UUID, bool) {
 	id, ok := childID(c, "id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	if RefuseIfNotOurs(c, h.service.Owner, id) {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func (h *DispatchHandler) Get(c *gin.Context) {
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -118,7 +134,7 @@ func (h *DispatchHandler) Get(c *gin.Context) {
 }
 
 func (h *DispatchHandler) Events(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -167,7 +183,7 @@ func (h *DispatchHandler) Intake(c *gin.Context) {
 }
 
 func (h *DispatchHandler) Classify(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -189,7 +205,7 @@ func (h *DispatchHandler) Classify(c *gin.Context) {
 }
 
 func (h *DispatchHandler) Assign(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -258,7 +274,7 @@ func (h *DispatchHandler) CancelAssignment(c *gin.Context) {
 }
 
 func (h *DispatchHandler) Escalate(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}
@@ -280,7 +296,7 @@ func (h *DispatchHandler) Escalate(c *gin.Context) {
 }
 
 func (h *DispatchHandler) Close(c *gin.Context) {
-	id, ok := childID(c, "id")
+	id, ok := h.incidentID(c)
 	if !ok {
 		return
 	}

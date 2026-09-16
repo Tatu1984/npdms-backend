@@ -40,6 +40,11 @@ func (s *PersonnelService) List(ctx context.Context, filter repository.Personnel
 	}, nil
 }
 
+// Owner answers which department an officer is posted to.
+func (s *PersonnelService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.personnelRepo.Owner(ctx, id, viewerID)
+}
+
 func (s *PersonnelService) GetByID(ctx context.Context, id uuid.UUID) (*models.Personnel, error) {
 	return s.personnelRepo.FindByID(ctx, id)
 }

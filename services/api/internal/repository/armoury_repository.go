@@ -96,6 +96,10 @@ func (r *ArmouryRepository) issuance(ctx context.Context, id uuid.UUID) (*models
 }
 
 type WeaponFilter struct {
+	// ViewerID scopes the armoury to the viewer's own force: a weapon is held
+	// at a station, and what another force is armed with is not a neighbour's
+	// to count.
+	ViewerID  uuid.UUID
 	Search    string
 	Status    string
 	StationID *uuid.UUID
@@ -115,6 +119,10 @@ func (r *ArmouryRepository) ListWeapons(ctx context.Context, f WeaponFilter) ([]
 		args = append(args, "%"+f.Search+"%")
 		n := len(args)
 		where = append(where, fmt.Sprintf("(w.weapon_number ILIKE $%d OR w.serial_number ILIKE $%d OR w.make ILIKE $%d OR w.weapon_type ILIKE $%d)", n, n, n, n))
+	}
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("w.station_id", len(args)))
 	}
 	if f.Status != "" {
 		add("w.status = $%d", f.Status)
@@ -174,6 +182,11 @@ func (r *ArmouryRepository) ListWeapons(ctx context.Context, f WeaponFilter) ([]
 		weapons = append(weapons, p.w)
 	}
 	return weapons, total, nil
+}
+
+// Owner answers which department's armoury holds this weapon.
+func (r *ArmouryRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "WEAPON", id, viewerID)
 }
 
 func (r *ArmouryRepository) GetWeapon(ctx context.Context, id uuid.UUID) (*models.Weapon, error) {
@@ -325,6 +338,8 @@ func (r *ArmouryRepository) Return(ctx context.Context, weaponID uuid.UUID, req 
 var ErrInvalidReturn = errors.New("invalid return")
 
 type IssuanceFilter struct {
+	// ViewerID scopes the ledger through the weapon's station.
+	ViewerID  uuid.UUID
 	WeaponID  *uuid.UUID
 	OfficerID *uuid.UUID
 	OpenOnly  bool
@@ -335,6 +350,14 @@ type IssuanceFilter struct {
 func (r *ArmouryRepository) ListIssuances(ctx context.Context, f IssuanceFilter) ([]models.WeaponIssuance, int64, error) {
 	where := []string{"1=1"}
 	args := []interface{}{}
+	// An issue and return sits with the weapon, so it sits at the weapon's
+	// station. The count query has no join to weapons, so this is written as a
+	// subquery rather than a column comparison.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL(
+			"(SELECT iw.station_id FROM weapons iw WHERE iw.id = i.weapon_id)", len(args)))
+	}
 	if f.WeaponID != nil {
 		args = append(args, *f.WeaponID)
 		where = append(where, fmt.Sprintf("i.weapon_id = $%d", len(args)))
@@ -373,8 +396,15 @@ func (r *ArmouryRepository) ListIssuances(ctx context.Context, f IssuanceFilter)
 	return out, total, nil
 }
 
-func (r *ArmouryRepository) Stats(ctx context.Context, stationID *uuid.UUID) (*models.WeaponStats, error) {
+func (r *ArmouryRepository) Stats(ctx context.Context, stationID *uuid.UUID, viewerID uuid.UUID) (*models.WeaponStats, error) {
 	var s models.WeaponStats
+	// $1 is the optional station filter, $2 the viewer.
+	scope, scope2, args := "TRUE", "TRUE", []interface{}{stationID}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = ForceScopeSQL("w.station_id", 2)
+		scope2 = ForceScopeSQL("w2.station_id", 2)
+	}
 	err := r.db.QueryRow(ctx, `
 		SELECT
 			COUNT(*),
@@ -386,11 +416,12 @@ func (r *ArmouryRepository) Stats(ctx context.Context, stationID *uuid.UUID) (*m
 			COALESCE(SUM(open.rounds_issued), 0),
 			COALESCE((SELECT SUM(i.rounds_issued - i.rounds_returned) FROM weapon_issuances i
 			          JOIN weapons w2 ON w2.id = i.weapon_id
-			          WHERE i.returned_at IS NOT NULL AND ($1::uuid IS NULL OR w2.station_id = $1)), 0)
+			          WHERE i.returned_at IS NOT NULL AND ($1::uuid IS NULL OR w2.station_id = $1)
+			            AND `+scope2+`), 0)
 		FROM weapons w
 		LEFT JOIN weapon_issuances open ON open.weapon_id = w.id AND open.returned_at IS NULL
-		WHERE $1::uuid IS NULL OR w.station_id = $1
-	`, stationID).Scan(&s.Total, &s.InArmoury, &s.Issued, &s.Maintenance, &s.Condemned,
+		WHERE ($1::uuid IS NULL OR w.station_id = $1) AND `+scope+`
+	`, args...).Scan(&s.Total, &s.InArmoury, &s.Issued, &s.Maintenance, &s.Condemned,
 		&s.Overdue, &s.RoundsOut, &s.RoundsShortfall)
 	if err != nil {
 		return nil, err

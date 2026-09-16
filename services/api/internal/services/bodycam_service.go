@@ -59,6 +59,16 @@ func (s *BodycamService) audit(ctx context.Context, actor *uuid.UUID, action str
 
 /* --------------------------------- devices -------------------------------- */
 
+// DeviceOwner and RecordingOwner answer which department a body-worn camera,
+// or footage off one, belongs to.
+func (s *BodycamService) DeviceOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
+func (s *BodycamService) RecordingOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.RecordingOwner(ctx, id, viewerID)
+}
+
 func (s *BodycamService) ListDevices(ctx context.Context, f repository.BWCDeviceFilter) ([]models.BWCDevice, int64, error) {
 	return s.repo.ListDevices(ctx, f)
 }

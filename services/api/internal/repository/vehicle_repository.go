@@ -21,6 +21,8 @@ func NewVehicleRepository(db *pgxpool.Pool) *VehicleRepository {
 }
 
 type VehicleFilter struct {
+	// ViewerID scopes the fleet to the viewer's own force.
+	ViewerID  uuid.UUID
 	Status    *models.VehicleStatus
 	Type      *models.PoliceVehicleType
 	StationID *uuid.UUID
@@ -33,6 +35,13 @@ func (r *VehicleRepository) List(ctx context.Context, filter VehicleFilter) ([]m
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	// A vehicle is on a station's strength, so it belongs to that force.
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("VEHICLE", "v", argIndex))
+		argIndex++
+	}
 
 	if filter.Status != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("v.status = $%d", argIndex))
@@ -113,6 +122,11 @@ func (r *VehicleRepository) List(ctx context.Context, filter VehicleFilter) ([]m
 	}
 
 	return vehicles, total, nil
+}
+
+// Owner answers which department the vehicle is on the strength of.
+func (r *VehicleRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "VEHICLE", id, viewerID)
 }
 
 func (r *VehicleRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Vehicle, error) {

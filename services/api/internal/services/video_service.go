@@ -108,6 +108,16 @@ func validateCoordinates(lat, lng *float64) error {
 	return nil
 }
 
+// CameraOwner and EventOwner answer which department a camera, or an event
+// raised off one, belongs to.
+func (s *VideoService) CameraOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
+func (s *VideoService) EventOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.EventOwner(ctx, id, viewerID)
+}
+
 func (s *VideoService) ListCameras(ctx context.Context, f repository.CameraFilter) ([]models.Camera, int64, error) {
 	return s.repo.ListCameras(ctx, f)
 }

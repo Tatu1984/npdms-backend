@@ -21,6 +21,9 @@ func NewCourtRepository(db *pgxpool.Pool) *CourtRepository {
 }
 
 type CourtHearingFilter struct {
+	// ViewerID scopes the cause list to the viewer's own force. A hearing
+	// belongs to the case being heard.
+	ViewerID uuid.UUID
 	Type     *models.HearingType
 	Priority *models.Priority
 	Search   string
@@ -30,6 +33,8 @@ type CourtHearingFilter struct {
 }
 
 type CourtOrderFilter struct {
+	// ViewerID scopes the orders to the viewer's own force, through the case.
+	ViewerID  uuid.UUID
 	OrderType *models.CourtOrderType
 	Search    string
 	CaseID    *uuid.UUID
@@ -41,6 +46,12 @@ func (r *CourtRepository) ListHearings(ctx context.Context, filter CourtHearingF
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("COURT_HEARING", "h", argIndex))
+		argIndex++
+	}
 
 	if filter.Type != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("h.type = $%d", argIndex))
@@ -119,6 +130,16 @@ func (r *CourtRepository) ListHearings(ctx context.Context, filter CourtHearingF
 	}
 
 	return hearings, total, nil
+}
+
+// HearingOwner and OrderOwner answer which department the case behind the
+// court paper belongs to.
+func (r *CourtRepository) HearingOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "COURT_HEARING", id, viewerID)
+}
+
+func (r *CourtRepository) OrderOwner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return RecordOwner(ctx, r.db, "COURT_ORDER", id, viewerID)
 }
 
 func (r *CourtRepository) FindHearingByID(ctx context.Context, id uuid.UUID) (*models.CourtHearing, error) {
@@ -213,6 +234,12 @@ func (r *CourtRepository) ListOrders(ctx context.Context, filter CourtOrderFilte
 	whereClauses := []string{"1=1"}
 	args := []interface{}{}
 	argIndex := 1
+
+	if filter.ViewerID != uuid.Nil {
+		args = append(args, filter.ViewerID)
+		whereClauses = append(whereClauses, MustForceScopeRecordSQL("COURT_ORDER", "o", argIndex))
+		argIndex++
+	}
 
 	if filter.OrderType != nil {
 		whereClauses = append(whereClauses, fmt.Sprintf("o.order_type = $%d", argIndex))
@@ -335,8 +362,17 @@ func (r *CourtRepository) CreateOrder(ctx context.Context, order *models.CourtOr
 	return err
 }
 
-func (r *CourtRepository) GetStats(ctx context.Context) (map[string]interface{}, error) {
+// GetStats counts the viewer's own force's court work.
+func (r *CourtRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
+
+	hearingScope, orderScope := "TRUE", "TRUE"
+	args := []interface{}{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		hearingScope = MustForceScopeRecordSQL("COURT_HEARING", "h", len(args))
+		orderScope = MustForceScopeRecordSQL("COURT_ORDER", "o", len(args))
+	}
 
 	// Day boundaries come from the database clock, not time.Truncate, which
 	// cuts at midnight UTC and so counts the wrong day for the first five and
@@ -344,18 +380,17 @@ func (r *CourtRepository) GetStats(ctx context.Context) (map[string]interface{},
 	var todayHearings, thisWeekHearings, activeCases int64
 	err := r.db.QueryRow(ctx, `
 		SELECT
-			COUNT(*) FILTER (WHERE hearing_date = CURRENT_DATE),
-			COUNT(*) FILTER (WHERE hearing_date >= CURRENT_DATE AND hearing_date < CURRENT_DATE + 7),
-			COUNT(DISTINCT case_id) FILTER (WHERE hearing_date >= CURRENT_DATE)
-		FROM court_hearings
-	`).Scan(&todayHearings, &thisWeekHearings, &activeCases)
+			COUNT(*) FILTER (WHERE h.hearing_date = CURRENT_DATE),
+			COUNT(*) FILTER (WHERE h.hearing_date >= CURRENT_DATE AND h.hearing_date < CURRENT_DATE + 7),
+			COUNT(DISTINCT h.case_id) FILTER (WHERE h.hearing_date >= CURRENT_DATE)
+		FROM court_hearings h WHERE `+hearingScope, args...).Scan(&todayHearings, &thisWeekHearings, &activeCases)
 	if err != nil {
 		return nil, err
 	}
 
 	// Orders carry no pending/complete state, so this is every order recorded.
 	var ordersRecorded int64
-	err = r.db.QueryRow(ctx, "SELECT COUNT(*) FROM court_orders").Scan(&ordersRecorded)
+	err = r.db.QueryRow(ctx, "SELECT COUNT(*) FROM court_orders o WHERE "+orderScope, args...).Scan(&ordersRecorded)
 	if err != nil {
 		return nil, err
 	}

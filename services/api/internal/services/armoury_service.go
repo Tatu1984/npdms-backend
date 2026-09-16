@@ -47,8 +47,13 @@ func (s *ArmouryService) Get(ctx context.Context, id uuid.UUID) (*models.Weapon,
 	return s.repo.GetWeapon(ctx, id)
 }
 
-func (s *ArmouryService) Stats(ctx context.Context, stationID *uuid.UUID) (*models.WeaponStats, error) {
-	return s.repo.Stats(ctx, stationID)
+// Owner answers which department's armoury holds a weapon.
+func (s *ArmouryService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo.Owner(ctx, id, viewerID)
+}
+
+func (s *ArmouryService) Stats(ctx context.Context, stationID *uuid.UUID, viewerID uuid.UUID) (*models.WeaponStats, error) {
+	return s.repo.Stats(ctx, stationID, viewerID)
 }
 
 func (s *ArmouryService) Issuances(ctx context.Context, f repository.IssuanceFilter) ([]models.WeaponIssuance, int64, error) {

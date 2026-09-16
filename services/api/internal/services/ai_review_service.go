@@ -68,6 +68,8 @@ type QueueFilter struct {
 	Status     *models.AIDecisionStatus   `json:"status,omitempty"`
 	Priority   *models.AIDecisionPriority `json:"priority,omitempty"`
 	AssignedTo *uuid.UUID                 `json:"assignedTo,omitempty"`
+	// ViewerID scopes the queue to the viewer's own force.
+	ViewerID   uuid.UUID                  `json:"-"`
 	StationID  *uuid.UUID                 `json:"stationId,omitempty"`
 	FromDate   *time.Time                 `json:"fromDate,omitempty"`
 	ToDate     *time.Time                 `json:"toDate,omitempty"`
@@ -211,6 +213,11 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 }
 
 // GetDecision retrieves an AI decision by ID
+// Owner answers which department asked for a suggestion.
+func (s *AIReviewService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.repo().Owner(ctx, id, viewerID)
+}
+
 func (s *AIReviewService) GetDecision(ctx context.Context, id uuid.UUID) (*models.AIDecision, error) {
 	decision, err := s.repo().GetDecision(ctx, id)
 	if err != nil {
@@ -313,6 +320,7 @@ func (s *AIReviewService) GetReviewQueue(ctx context.Context, filter QueueFilter
 	if filter.StationID != nil {
 		filters["station_id"] = *filter.StationID
 	}
+	filters["viewer_id"] = filter.ViewerID
 
 	items, count, err := s.repo().ListDecisions(ctx, filters,
 		(filter.Page-1)*filter.PageSize, filter.PageSize)

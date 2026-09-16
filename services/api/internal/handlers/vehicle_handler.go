@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -25,6 +26,7 @@ func (h *VehicleHandler) List(c *gin.Context) {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
 	filter := repository.VehicleFilter{
+		ViewerID: middleware.GetUserID(c),
 		Page:     page,
 		PageSize: pageSize,
 		Search:   c.Query("search"),
@@ -67,6 +69,12 @@ func (h *VehicleHandler) Get(c *gin.Context) {
 			Message: "Invalid vehicle ID format",
 			Code:    400,
 		})
+		return
+	}
+
+	// Another department's record is refused by name, not answered with
+	// "not found": the officer should know who holds it.
+	if RefuseIfNotOurs(c, h.vehicleService.Owner, id) {
 		return
 	}
 

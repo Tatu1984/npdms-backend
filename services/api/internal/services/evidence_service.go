@@ -20,8 +20,8 @@ func NewEvidenceService(evidenceRepo *repository.EvidenceRepository, auditRepo *
 	}
 }
 
-func (s *EvidenceService) List(ctx context.Context, page, pageSize int) (*models.PaginatedResponse, error) {
-	evidence, total, err := s.evidenceRepo.List(ctx, page, pageSize)
+func (s *EvidenceService) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int) (*models.PaginatedResponse, error) {
+	evidence, total, err := s.evidenceRepo.List(ctx, viewerID, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +42,12 @@ func (s *EvidenceService) List(ctx context.Context, page, pageSize int) (*models
 
 func (s *EvidenceService) Get(ctx context.Context, id uuid.UUID) (*models.Evidence, error) {
 	return s.evidenceRepo.FindByID(ctx, id)
+}
+
+// Owner answers whose evidence this is, so a handler can refuse another
+// department's record by name.
+func (s *EvidenceService) Owner(ctx context.Context, id, viewerID uuid.UUID) (bool, string, error) {
+	return s.evidenceRepo.Owner(ctx, id, viewerID)
 }
 
 func (s *EvidenceService) Create(ctx context.Context, e *models.Evidence, userID uuid.UUID) error {

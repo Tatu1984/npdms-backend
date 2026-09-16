@@ -90,16 +90,29 @@ func (r *BiometricRepository) GetDeviceByDeviceID(ctx context.Context, deviceID 
 }
 
 // ListDevices retrieves all biometric devices with optional filters
-func (r *BiometricRepository) ListDevices(ctx context.Context, stationID *uuid.UUID, status *models.BiometricDeviceStatus) ([]models.BiometricDevice, error) {
+// ListDevices returns the viewer's own force's devices. A reader is installed
+// at a station, so the station carries the force.
+func (r *BiometricRepository) ListDevices(ctx context.Context, viewerID uuid.UUID, stationID *uuid.UUID, status *models.BiometricDeviceStatus) ([]models.BiometricDevice, error) {
+	// Every optional text column is COALESCEd: the Go model holds plain
+	// strings, and a reader registered without a location or an IP address
+	// leaves NULLs behind. Without this the row failed to scan and the device
+	// disappeared from the register rather than showing with a blank field.
 	query := `
-		SELECT id, device_id, name, type, status, station_id, location,
-			   ip_address, port, serial_number, manufacturer, model,
-			   firmware_version, last_sync, last_heartbeat, created_at, updated_at
+		SELECT id, device_id, name, type, status, station_id, COALESCE(location, ''),
+			   COALESCE(ip_address, ''), COALESCE(port, 0), COALESCE(serial_number, ''),
+			   COALESCE(manufacturer, ''), COALESCE(model, ''),
+			   COALESCE(firmware_version, ''), last_sync, last_heartbeat, created_at, updated_at
 		FROM biometric_devices
 		WHERE 1=1
 	`
 	args := []interface{}{}
 	argCount := 1
+
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		query += " AND " + ForceScopeSQL("station_id", argCount)
+		argCount++
+	}
 
 	if stationID != nil {
 		query += fmt.Sprintf(" AND station_id = $%d", argCount)
@@ -132,7 +145,9 @@ func (r *BiometricRepository) ListDevices(ctx context.Context, stationID *uuid.U
 			&device.CreatedAt, &device.UpdatedAt,
 		)
 		if err != nil {
-			continue
+			// A row that cannot be read is a fault to report, not a device to
+			// drop quietly from the register.
+			return nil, fmt.Errorf("failed to read a device: %w", err)
 		}
 		devices = append(devices, device)
 	}
