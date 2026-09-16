@@ -150,8 +150,8 @@ Neither requires a token.
 
 ## Surface
 
-292 routes are registered. Those with a complete specification in
-`openapi.yaml` are the ones whose behaviour is settled:
+585 routes are registered, as of 16 September 2026. Those with a complete
+specification in `openapi.yaml` are the ones whose behaviour is settled:
 
 - `/auth/*` — sign-in, refresh, sign-out
 - `/investigation/*` — Phase 01, the investigation workspace
@@ -161,4 +161,10 @@ Neither requires a token.
 The remainder are implemented and callable but their request and response
 shapes are still moving as each phase is made functional. Treat anything not in
 `openapi.yaml` as unstable, and expect it to be specified as its phase lands.
-`docs/api/routes.txt` lists every registered route so nothing is hidden.
+`docs/api/routes.txt` lists every registered route so nothing is hidden. It is
+taken from the routes the API itself registers at start-up, not from reading
+the source, so it cannot quietly fall behind:
+
+    ./api 2>&1 | grep 'GIN-debug.*-->' \
+      | sed -E 's/^\[GIN-debug\] ([A-Z]+) +([^ ]+) +-->.*/\1 \2/' \
+      | sort -u > docs/api/routes.txt
