@@ -20,15 +20,19 @@ func NewFIRRepository(db *pgxpool.Pool) *FIRRepository {
 }
 
 type FIRFilter struct {
-	StationID  *uuid.UUID
-	Status     *models.FIRStatus
-	Priority   *models.Priority
-	Search     string
-	DateFrom   *time.Time
-	DateTo     *time.Time
-	OfficerID  *uuid.UUID
-	Page       int
-	PageSize   int
+	// ViewerID scopes the register to the viewer's own force. A zero value
+	// means no scoping, which is only right for a background job: a request
+	// that forgets it would show one force another's FIRs.
+	ViewerID  uuid.UUID
+	StationID *uuid.UUID
+	Status    *models.FIRStatus
+	Priority  *models.Priority
+	Search    string
+	DateFrom  *time.Time
+	DateTo    *time.Time
+	OfficerID *uuid.UUID
+	Page      int
+	PageSize  int
 }
 
 func (r *FIRRepository) List(ctx context.Context, filter FIRFilter) ([]models.FIR, int64, error) {
@@ -36,6 +40,14 @@ func (r *FIRRepository) List(ctx context.Context, filter FIRFilter) ([]models.FI
 	var conditions []string
 	var args []interface{}
 	argCount := 1
+
+	// An FIR belongs to the force whose station registered it, unless it has
+	// been referred to the viewer's force and accepted.
+	if filter.ViewerID != uuid.Nil {
+		conditions = append(conditions, ForceScopeOrReferredSQL("f.station_id", "f.id", "FIR", argCount))
+		args = append(args, filter.ViewerID)
+		argCount++
+	}
 
 	if filter.StationID != nil {
 		conditions = append(conditions, fmt.Sprintf("f.station_id = $%d", argCount))

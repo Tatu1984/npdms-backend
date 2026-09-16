@@ -24,24 +24,33 @@ func (r *UserRepository) FindByUsername(ctx context.Context, username string) (*
 		       u.created_at, u.updated_at,
 		       COALESCE(s.name, '') as station_name,
 		       s.district_id, COALESCE(d.name, '') as district_name,
-		       s.state_id, COALESCE(st.name, '') as state_name
+		       s.state_id, COALESCE(st.name, '') as state_name,
+		       u.force_id, COALESCE(f.code, ''), COALESCE(f.name, ''), COALESCE(f.name_bn, ''),
+		       COALESCE(f.short_name, ''), COALESCE(f.kind, ''), COALESCE(pf.code, ''),
+		       COALESCE(pf.name, ''), COALESCE(f.headquarters, ''), COALESCE(f.remit, '')
 		FROM users u
 		LEFT JOIN stations s ON u.station_id = s.id
 		LEFT JOIN districts d ON s.district_id = d.id
 		LEFT JOIN states st ON s.state_id = st.id
+		LEFT JOIN forces f ON u.force_id = f.id
+		LEFT JOIN forces pf ON f.parent_id = pf.id
 		WHERE u.username = $1 AND u.is_active = true
 	`
 
 	var user models.User
+	var force models.Force
 	err := r.db.QueryRow(ctx, query, username).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.Name,
 		&user.Role, &user.BadgeNumber, &user.StationID, &user.Phone, &user.IsActive,
 		&user.LastLogin, &user.CreatedAt, &user.UpdatedAt, &user.StationName,
 		&user.DistrictID, &user.DistrictName, &user.StateID, &user.StateName,
+		&user.ForceID, &force.Code, &force.Name, &force.NameBn, &force.ShortName,
+		&force.Kind, &force.ParentCode, &force.ParentName, &force.Headquarters, &force.Remit,
 	)
 	if err != nil {
 		return nil, err
 	}
+	attachForce(&user, force)
 
 	return &user, nil
 }
@@ -53,24 +62,33 @@ func (r *UserRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Us
 		       u.created_at, u.updated_at,
 		       COALESCE(s.name, '') as station_name,
 		       s.district_id, COALESCE(d.name, '') as district_name,
-		       s.state_id, COALESCE(st.name, '') as state_name
+		       s.state_id, COALESCE(st.name, '') as state_name,
+		       u.force_id, COALESCE(f.code, ''), COALESCE(f.name, ''), COALESCE(f.name_bn, ''),
+		       COALESCE(f.short_name, ''), COALESCE(f.kind, ''), COALESCE(pf.code, ''),
+		       COALESCE(pf.name, ''), COALESCE(f.headquarters, ''), COALESCE(f.remit, '')
 		FROM users u
 		LEFT JOIN stations s ON u.station_id = s.id
 		LEFT JOIN districts d ON s.district_id = d.id
 		LEFT JOIN states st ON s.state_id = st.id
+		LEFT JOIN forces f ON u.force_id = f.id
+		LEFT JOIN forces pf ON f.parent_id = pf.id
 		WHERE u.id = $1
 	`
 
 	var user models.User
+	var force models.Force
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.Name,
 		&user.Role, &user.BadgeNumber, &user.StationID, &user.Phone, &user.IsActive,
 		&user.LastLogin, &user.CreatedAt, &user.UpdatedAt, &user.StationName,
 		&user.DistrictID, &user.DistrictName, &user.StateID, &user.StateName,
+		&user.ForceID, &force.Code, &force.Name, &force.NameBn, &force.ShortName,
+		&force.Kind, &force.ParentCode, &force.ParentName, &force.Headquarters, &force.Remit,
 	)
 	if err != nil {
 		return nil, err
 	}
+	attachForce(&user, force)
 
 	return &user, nil
 }
@@ -100,7 +118,7 @@ func (r *UserRepository) GetUserWithStation(ctx context.Context, id uuid.UUID) (
 		       u.created_at, u.updated_at, COALESCE(s.name, '') as station_name,
 		       COALESCE(s.code, 'UNK') as station_code
 		FROM users u
-		LEFT JOIN police_stations s ON u.station_id = s.id
+		LEFT JOIN stations s ON u.station_id = s.id
 		WHERE u.id = $1
 	`
 
@@ -116,4 +134,16 @@ func (r *UserRepository) GetUserWithStation(ctx context.Context, id uuid.UUID) (
 	}
 
 	return &user, stationCode, nil
+}
+
+// attachForce hangs the officer's department off the user, where there is one.
+// An account with no force is one created before the departments existed; it
+// is treated as Kolkata Police by the migration that added them, so an empty
+// force here means the row was not read rather than that the officer has none.
+func attachForce(user *models.User, force models.Force) {
+	if user.ForceID == nil || force.Code == "" {
+		return
+	}
+	force.ID = *user.ForceID
+	user.Force = &force
 }

@@ -55,11 +55,32 @@ type User struct {
 	DistrictName string     `json:"districtName,omitempty"`
 	StateID      *uuid.UUID `json:"stateId,omitempty" db:"state_id"`
 	StateName    string     `json:"stateName,omitempty"`
-	Phone        *string    `json:"phone" db:"phone"`
-	IsActive     bool       `json:"isActive" db:"is_active"`
-	LastLogin    *time.Time `json:"lastLogin" db:"last_login"`
-	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
+	// Which department the officer belongs to. It follows from their posting
+	// and is not chosen: an officer sees their own force's records, and the
+	// audit trail means nothing if the force could be picked from a menu.
+	ForceID   *uuid.UUID `json:"forceId,omitempty" db:"force_id"`
+	Force     *Force     `json:"force,omitempty"`
+	Phone     *string    `json:"phone" db:"phone"`
+	IsActive  bool       `json:"isActive" db:"is_active"`
+	LastLogin *time.Time `json:"lastLogin" db:"last_login"`
+	CreatedAt time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time  `json:"updatedAt" db:"updated_at"`
+}
+
+// Force is one of the departments the platform connects: a force in its own
+// right (Kolkata Police, West Bengal Police) or a wing of one (Kolkata Traffic
+// Police, CID).
+type Force struct {
+	ID           uuid.UUID `json:"id"`
+	Code         string    `json:"code"`
+	Name         string    `json:"name"`
+	NameBn       string    `json:"nameBn,omitempty"`
+	ShortName    string    `json:"shortName"`
+	Kind         string    `json:"kind"` // FORCE or WING
+	ParentCode   string    `json:"parentCode,omitempty"`
+	ParentName   string    `json:"parentName,omitempty"`
+	Headquarters string    `json:"headquarters,omitempty"`
+	Remit        string    `json:"remit,omitempty"`
 }
 
 // Station model
@@ -102,18 +123,18 @@ const (
 
 // FIR model
 type FIR struct {
-	ID                   uuid.UUID  `json:"id" db:"id"`
-	FIRNumber            string     `json:"firNumber" db:"fir_number"`
-	StationID            uuid.UUID  `json:"stationId" db:"station_id"`
-	StationName          string     `json:"stationName,omitempty"`
-	ComplainantName      string     `json:"complainantName" db:"complainant_name"`
-	ComplainantPhone     *string    `json:"complainantPhone" db:"complainant_phone"`
-	ComplainantAddress   *string    `json:"complainantAddress" db:"complainant_address"`
-	ComplainantIDType    *string    `json:"complainantIdType" db:"complainant_id_type"`
-	ComplainantIDNumber  *string    `json:"complainantIdNumber" db:"complainant_id_number"`
-	IncidentDate         time.Time  `json:"incidentDate" db:"incident_date"`
-	IncidentTime         *string    `json:"incidentTime" db:"incident_time"`
-	IncidentLocation     string     `json:"incidentLocation" db:"incident_location"`
+	ID                  uuid.UUID `json:"id" db:"id"`
+	FIRNumber           string    `json:"firNumber" db:"fir_number"`
+	StationID           uuid.UUID `json:"stationId" db:"station_id"`
+	StationName         string    `json:"stationName,omitempty"`
+	ComplainantName     string    `json:"complainantName" db:"complainant_name"`
+	ComplainantPhone    *string   `json:"complainantPhone" db:"complainant_phone"`
+	ComplainantAddress  *string   `json:"complainantAddress" db:"complainant_address"`
+	ComplainantIDType   *string   `json:"complainantIdType" db:"complainant_id_type"`
+	ComplainantIDNumber *string   `json:"complainantIdNumber" db:"complainant_id_number"`
+	IncidentDate        time.Time `json:"incidentDate" db:"incident_date"`
+	IncidentTime        *string   `json:"incidentTime" db:"incident_time"`
+	IncidentLocation    string    `json:"incidentLocation" db:"incident_location"`
 	// Incident point on the map, both or neither, inside West Bengal.
 	IncidentLatitude     *float64   `json:"incidentLatitude" db:"incident_latitude"`
 	IncidentLongitude    *float64   `json:"incidentLongitude" db:"incident_longitude"`
@@ -293,9 +314,9 @@ type TimelineEntry struct {
 
 // JWT Claims
 type JWTClaims struct {
-	UserID    uuid.UUID `json:"userId"`
-	Username  string    `json:"username"`
-	Role      Role      `json:"role"`
+	UserID    uuid.UUID  `json:"userId"`
+	Username  string     `json:"username"`
+	Role      Role       `json:"role"`
 	StationID *uuid.UUID `json:"stationId"`
 }
 
@@ -332,14 +353,14 @@ type PaginatedResponse struct {
 
 // Dashboard Stats
 type DashboardStats struct {
-	TotalFIRs          int64 `json:"totalFirs"`
-	ActiveCases        int64 `json:"activeCases"`
-	PendingWarrants    int64 `json:"pendingWarrants"`
-	EvidenceItems      int64 `json:"evidenceItems"`
-	TodayFIRs          int64 `json:"todayFirs"`
-	CriticalCases      int64 `json:"criticalCases"`
-	PendingForensics   int64 `json:"pendingForensics"`
-	UpcomingHearings   int64 `json:"upcomingHearings"`
+	TotalFIRs        int64 `json:"totalFirs"`
+	ActiveCases      int64 `json:"activeCases"`
+	PendingWarrants  int64 `json:"pendingWarrants"`
+	EvidenceItems    int64 `json:"evidenceItems"`
+	TodayFIRs        int64 `json:"todayFirs"`
+	CriticalCases    int64 `json:"criticalCases"`
+	PendingForensics int64 `json:"pendingForensics"`
+	UpcomingHearings int64 `json:"upcomingHearings"`
 }
 
 // Warrant Types and Status
@@ -362,38 +383,38 @@ const (
 
 // Warrant model
 type Warrant struct {
-	ID                 uuid.UUID     `json:"id" db:"id"`
-	WarrantNumber      string        `json:"warrantNumber" db:"warrant_number"`
-	Type               WarrantType   `json:"type" db:"type"`
-	Status             WarrantStatus `json:"status" db:"status"`
-	IssuedFor          string        `json:"issuedFor" db:"issued_for"`
-	CaseID             *uuid.UUID    `json:"caseId" db:"case_id"`
-	CaseNumber         string        `json:"caseNumber,omitempty"`
-	FIRID              *uuid.UUID    `json:"firId" db:"fir_id"`
-	FIRNumber          string        `json:"firNumber,omitempty"`
-	IssuedBy           string        `json:"issuedBy" db:"issued_by"`
-	JudgeName          *string       `json:"judgeName" db:"judge_name"`
-	IssuedDate         time.Time     `json:"issuedDate" db:"issued_date"`
-	ValidUntil         *time.Time    `json:"validUntil" db:"valid_until"`
-	IPCSections        []string      `json:"charges" db:"ipc_sections"`
-	LastKnownLocation  *string       `json:"lastKnownLocation" db:"last_known_location"`
-	Priority           Priority      `json:"priority" db:"priority"`
-	ExecutedDate       *time.Time    `json:"executedDate" db:"executed_date"`
-	ExecutedBy         *uuid.UUID    `json:"executedBy" db:"executed_by"`
-	ExecutedByName     string        `json:"executedByName,omitempty"`
-	Description        *string       `json:"description" db:"description"`
-	Age                *int          `json:"age" db:"age"`
-	Gender             *string       `json:"gender" db:"gender"`
-	Address            *string       `json:"address" db:"address"`
-	IdentifyingMarks   *string       `json:"identifyingMarks" db:"identifying_marks"`
-	SearchPremises     *string       `json:"searchPremises" db:"search_premises"`
-	SearchScope        *string       `json:"searchScope" db:"search_scope"`
-	SummonsPurpose     *string       `json:"summonsPurpose" db:"summons_purpose"`
-	HearingDate        *time.Time    `json:"hearingDate" db:"hearing_date"`
-	Latitude           *float64      `json:"latitude" db:"latitude"`
-	Longitude          *float64      `json:"longitude" db:"longitude"`
-	CreatedAt          time.Time     `json:"createdAt" db:"created_at"`
-	UpdatedAt          time.Time     `json:"updatedAt" db:"updated_at"`
+	ID                uuid.UUID     `json:"id" db:"id"`
+	WarrantNumber     string        `json:"warrantNumber" db:"warrant_number"`
+	Type              WarrantType   `json:"type" db:"type"`
+	Status            WarrantStatus `json:"status" db:"status"`
+	IssuedFor         string        `json:"issuedFor" db:"issued_for"`
+	CaseID            *uuid.UUID    `json:"caseId" db:"case_id"`
+	CaseNumber        string        `json:"caseNumber,omitempty"`
+	FIRID             *uuid.UUID    `json:"firId" db:"fir_id"`
+	FIRNumber         string        `json:"firNumber,omitempty"`
+	IssuedBy          string        `json:"issuedBy" db:"issued_by"`
+	JudgeName         *string       `json:"judgeName" db:"judge_name"`
+	IssuedDate        time.Time     `json:"issuedDate" db:"issued_date"`
+	ValidUntil        *time.Time    `json:"validUntil" db:"valid_until"`
+	IPCSections       []string      `json:"charges" db:"ipc_sections"`
+	LastKnownLocation *string       `json:"lastKnownLocation" db:"last_known_location"`
+	Priority          Priority      `json:"priority" db:"priority"`
+	ExecutedDate      *time.Time    `json:"executedDate" db:"executed_date"`
+	ExecutedBy        *uuid.UUID    `json:"executedBy" db:"executed_by"`
+	ExecutedByName    string        `json:"executedByName,omitempty"`
+	Description       *string       `json:"description" db:"description"`
+	Age               *int          `json:"age" db:"age"`
+	Gender            *string       `json:"gender" db:"gender"`
+	Address           *string       `json:"address" db:"address"`
+	IdentifyingMarks  *string       `json:"identifyingMarks" db:"identifying_marks"`
+	SearchPremises    *string       `json:"searchPremises" db:"search_premises"`
+	SearchScope       *string       `json:"searchScope" db:"search_scope"`
+	SummonsPurpose    *string       `json:"summonsPurpose" db:"summons_purpose"`
+	HearingDate       *time.Time    `json:"hearingDate" db:"hearing_date"`
+	Latitude          *float64      `json:"latitude" db:"latitude"`
+	Longitude         *float64      `json:"longitude" db:"longitude"`
+	CreatedAt         time.Time     `json:"createdAt" db:"created_at"`
+	UpdatedAt         time.Time     `json:"updatedAt" db:"updated_at"`
 }
 
 // Bail Types and Status
@@ -535,78 +556,78 @@ const (
 )
 
 const (
-	VehicleStatusOnDuty     VehicleStatus = "ON_DUTY"
-	VehicleStatusAvailable  VehicleStatus = "AVAILABLE"
+	VehicleStatusOnDuty      VehicleStatus = "ON_DUTY"
+	VehicleStatusAvailable   VehicleStatus = "AVAILABLE"
 	VehicleStatusMaintenance VehicleStatus = "MAINTENANCE"
-	VehicleStatusReserved   VehicleStatus = "RESERVED"
+	VehicleStatusReserved    VehicleStatus = "RESERVED"
 )
 
 // Vehicle model
 type Vehicle struct {
-	ID                 uuid.UUID     `json:"id" db:"id"`
-	RegistrationNumber string        `json:"registrationNumber" db:"registration_number"`
+	ID                 uuid.UUID         `json:"id" db:"id"`
+	RegistrationNumber string            `json:"registrationNumber" db:"registration_number"`
 	Type               PoliceVehicleType `json:"type" db:"type"`
-	Make               string        `json:"make" db:"make"`
-	Status             VehicleStatus `json:"status" db:"status"`
-	CurrentDriver      *uuid.UUID    `json:"currentDriverId" db:"current_driver"`
-	CurrentDriverName  *string       `json:"currentDriver,omitempty"`
-	FuelLevel          int           `json:"fuelLevel" db:"fuel_level"`
-	OdometerReading    int64         `json:"odometerReading" db:"odometer_reading"`
-	LastService        time.Time     `json:"lastService" db:"last_service"`
-	GPSLatitude        *float64      `json:"gpsLatitude" db:"gps_latitude"`
-	GPSLongitude       *float64      `json:"gpsLongitude" db:"gps_longitude"`
-	CurrentDuty        *string       `json:"currentDuty" db:"current_duty"`
-	MaintenanceNote    *string       `json:"maintenanceNote" db:"maintenance_note"`
-	ReservedFor        *string       `json:"reservedFor" db:"reserved_for"`
-	StationID          uuid.UUID     `json:"stationId" db:"station_id"`
-	StationName        string        `json:"stationName,omitempty"`
-	CreatedAt          time.Time     `json:"createdAt" db:"created_at"`
-	UpdatedAt          time.Time     `json:"updatedAt" db:"updated_at"`
+	Make               string            `json:"make" db:"make"`
+	Status             VehicleStatus     `json:"status" db:"status"`
+	CurrentDriver      *uuid.UUID        `json:"currentDriverId" db:"current_driver"`
+	CurrentDriverName  *string           `json:"currentDriver,omitempty"`
+	FuelLevel          int               `json:"fuelLevel" db:"fuel_level"`
+	OdometerReading    int64             `json:"odometerReading" db:"odometer_reading"`
+	LastService        time.Time         `json:"lastService" db:"last_service"`
+	GPSLatitude        *float64          `json:"gpsLatitude" db:"gps_latitude"`
+	GPSLongitude       *float64          `json:"gpsLongitude" db:"gps_longitude"`
+	CurrentDuty        *string           `json:"currentDuty" db:"current_duty"`
+	MaintenanceNote    *string           `json:"maintenanceNote" db:"maintenance_note"`
+	ReservedFor        *string           `json:"reservedFor" db:"reserved_for"`
+	StationID          uuid.UUID         `json:"stationId" db:"station_id"`
+	StationName        string            `json:"stationName,omitempty"`
+	CreatedAt          time.Time         `json:"createdAt" db:"created_at"`
+	UpdatedAt          time.Time         `json:"updatedAt" db:"updated_at"`
 }
 
 // Court Hearing Types
 type HearingType string
 
 const (
-	HearingTypeArguments        HearingType = "ARGUMENTS"
-	HearingTypeEvidence         HearingType = "EVIDENCE"
-	HearingTypeBailHearing      HearingType = "BAIL_HEARING"
-	HearingTypeRemandExtension  HearingType = "REMAND_EXTENSION"
-	HearingTypeJudgment         HearingType = "JUDGMENT"
-	HearingTypeChargesheet      HearingType = "CHARGESHEET"
+	HearingTypeArguments       HearingType = "ARGUMENTS"
+	HearingTypeEvidence        HearingType = "EVIDENCE"
+	HearingTypeBailHearing     HearingType = "BAIL_HEARING"
+	HearingTypeRemandExtension HearingType = "REMAND_EXTENSION"
+	HearingTypeJudgment        HearingType = "JUDGMENT"
+	HearingTypeChargesheet     HearingType = "CHARGESHEET"
 )
 
 // Court Hearing model
 type CourtHearing struct {
-	ID                uuid.UUID   `json:"id" db:"id"`
-	CaseID            *uuid.UUID  `json:"caseId" db:"case_id"`
-	CaseNumber        string      `json:"caseNumber,omitempty"`
-	Title             string      `json:"title" db:"title"`
-	Court             string      `json:"court" db:"court"`
-	CourtRoom         string      `json:"courtRoom" db:"court_room"`
-	JudgeName         string      `json:"judge" db:"judge_name"`
-	HearingDate       time.Time   `json:"date" db:"hearing_date"`
-	HearingTime       string      `json:"time" db:"hearing_time"`
-	Type              HearingType `json:"type" db:"type"`
-	InvestigatingOfficer *uuid.UUID `json:"ioId" db:"investigating_officer"`
-	IOName            string      `json:"io,omitempty"`
-	IPCSections       []string    `json:"charges" db:"ipc_sections"`
-	RequiredDocuments []string    `json:"requiredDocuments" db:"required_documents"`
-	Priority          Priority    `json:"priority" db:"priority"`
-	CreatedAt         time.Time   `json:"createdAt" db:"created_at"`
-	UpdatedAt         time.Time   `json:"updatedAt" db:"updated_at"`
+	ID                   uuid.UUID   `json:"id" db:"id"`
+	CaseID               *uuid.UUID  `json:"caseId" db:"case_id"`
+	CaseNumber           string      `json:"caseNumber,omitempty"`
+	Title                string      `json:"title" db:"title"`
+	Court                string      `json:"court" db:"court"`
+	CourtRoom            string      `json:"courtRoom" db:"court_room"`
+	JudgeName            string      `json:"judge" db:"judge_name"`
+	HearingDate          time.Time   `json:"date" db:"hearing_date"`
+	HearingTime          string      `json:"time" db:"hearing_time"`
+	Type                 HearingType `json:"type" db:"type"`
+	InvestigatingOfficer *uuid.UUID  `json:"ioId" db:"investigating_officer"`
+	IOName               string      `json:"io,omitempty"`
+	IPCSections          []string    `json:"charges" db:"ipc_sections"`
+	RequiredDocuments    []string    `json:"requiredDocuments" db:"required_documents"`
+	Priority             Priority    `json:"priority" db:"priority"`
+	CreatedAt            time.Time   `json:"createdAt" db:"created_at"`
+	UpdatedAt            time.Time   `json:"updatedAt" db:"updated_at"`
 }
 
 // Court Order Types
 type CourtOrderType string
 
 const (
-	CourtOrderTypeRemand        CourtOrderType = "REMAND"
-	CourtOrderTypeBailRejected  CourtOrderType = "BAIL_REJECTED"
-	CourtOrderTypeBailGranted   CourtOrderType = "BAIL_GRANTED"
-	CourtOrderTypeDirections    CourtOrderType = "DIRECTIONS"
-	CourtOrderTypeJudgment      CourtOrderType = "JUDGMENT"
-	CourtOrderTypeStay          CourtOrderType = "STAY"
+	CourtOrderTypeRemand       CourtOrderType = "REMAND"
+	CourtOrderTypeBailRejected CourtOrderType = "BAIL_REJECTED"
+	CourtOrderTypeBailGranted  CourtOrderType = "BAIL_GRANTED"
+	CourtOrderTypeDirections   CourtOrderType = "DIRECTIONS"
+	CourtOrderTypeJudgment     CourtOrderType = "JUDGMENT"
+	CourtOrderTypeStay         CourtOrderType = "STAY"
 )
 
 // Court Order model
@@ -643,26 +664,26 @@ const (
 
 // Alert model
 type Alert struct {
-	ID              uuid.UUID  `json:"id" db:"id"`
-	Type            AlertType  `json:"type" db:"type"`
-	Scope           AlertScope `json:"scope" db:"scope"`
-	Title           string     `json:"title" db:"title"`
-	Description     string     `json:"description" db:"description"`
-	IssuedAt        time.Time  `json:"issuedAt" db:"issued_at"`
-	ExpiresAt       time.Time  `json:"expiresAt" db:"expires_at"`
-	IssuedBy        *uuid.UUID `json:"issuedById" db:"issued_by"`
-	IssuedByName    string     `json:"issuedBy,omitempty"`
-	Acknowledged    bool       `json:"acknowledged" db:"acknowledged"`
-	AcknowledgedBy  *uuid.UUID `json:"acknowledgedById" db:"acknowledged_by"`
-	AcknowledgedByName string  `json:"acknowledgedBy,omitempty"`
-	AcknowledgedAt  *time.Time `json:"acknowledgedAt" db:"acknowledged_at"`
-	Priority        int        `json:"priority" db:"priority"`
-	HasImage        bool       `json:"image" db:"has_image"`
-	StationID       *uuid.UUID `json:"stationId" db:"station_id"`
+	ID                 uuid.UUID  `json:"id" db:"id"`
+	Type               AlertType  `json:"type" db:"type"`
+	Scope              AlertScope `json:"scope" db:"scope"`
+	Title              string     `json:"title" db:"title"`
+	Description        string     `json:"description" db:"description"`
+	IssuedAt           time.Time  `json:"issuedAt" db:"issued_at"`
+	ExpiresAt          time.Time  `json:"expiresAt" db:"expires_at"`
+	IssuedBy           *uuid.UUID `json:"issuedById" db:"issued_by"`
+	IssuedByName       string     `json:"issuedBy,omitempty"`
+	Acknowledged       bool       `json:"acknowledged" db:"acknowledged"`
+	AcknowledgedBy     *uuid.UUID `json:"acknowledgedById" db:"acknowledged_by"`
+	AcknowledgedByName string     `json:"acknowledgedBy,omitempty"`
+	AcknowledgedAt     *time.Time `json:"acknowledgedAt" db:"acknowledged_at"`
+	Priority           int        `json:"priority" db:"priority"`
+	HasImage           bool       `json:"image" db:"has_image"`
+	StationID          *uuid.UUID `json:"stationId" db:"station_id"`
 	// The record the alert was raised from, when the platform raised it
 	// (resource_type "missing_person" is the report).
-	ResourceType    *string    `json:"resourceType" db:"resource_type"`
-	ResourceID      *uuid.UUID `json:"resourceId" db:"resource_id"`
-	CreatedAt       time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt       time.Time  `json:"updatedAt" db:"updated_at"`
+	ResourceType *string    `json:"resourceType" db:"resource_type"`
+	ResourceID   *uuid.UUID `json:"resourceId" db:"resource_id"`
+	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
 }

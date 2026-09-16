@@ -22,6 +22,9 @@ func NewCaseRepository(db *pgxpool.Pool) *CaseRepository {
 // CaseFilter narrows the case register. Search matches case number, title
 // and the linked FIR number.
 type CaseFilter struct {
+	// ViewerID scopes the register to the viewer's own force. Zero means no
+	// scoping, which is only right for a background job.
+	ViewerID uuid.UUID
 	Search   string
 	Status   string
 	Page     int
@@ -33,6 +36,17 @@ var ErrCaseNotFound = errors.New("case not found")
 func (r *CaseRepository) List(ctx context.Context, f CaseFilter) ([]models.Case, int64, error) {
 	where := []string{"1=1"}
 	args := []interface{}{}
+
+	// A case sits where its FIR was registered. A case with no FIR — one
+	// opened directly — sits with the officer investigating it, so that it
+	// belongs to a force rather than to nobody and disappearing from view.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeOrReferredSQL(
+			"COALESCE(f.station_id, (SELECT iou.station_id FROM users iou WHERE iou.id = c.investigating_officer))",
+			"c.id", "CASE", len(args)))
+	}
+
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
 		n := len(args)

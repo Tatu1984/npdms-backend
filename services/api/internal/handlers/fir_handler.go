@@ -31,6 +31,13 @@ func (h *FIRHandler) List(c *gin.Context) {
 		Search:   c.Query("search"),
 	}
 
+	// The register is the viewer's own force's, plus anything referred to it.
+	if userID, ok := c.Get("userID"); ok {
+		if id, ok := userID.(uuid.UUID); ok {
+			filter.ViewerID = id
+		}
+	}
+
 	if status := c.Query("status"); status != "" {
 		s := models.FIRStatus(status)
 		filter.Status = &s
@@ -253,4 +260,3 @@ func (h *FIRHandler) GetTimeline(c *gin.Context) {
 		"timeline":  timeline,
 	})
 }
-

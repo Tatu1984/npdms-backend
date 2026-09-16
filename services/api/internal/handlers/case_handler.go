@@ -25,9 +25,17 @@ func (h *CaseHandler) List(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 
-	response, err := h.caseService.List(c.Request.Context(), repository.CaseFilter{
+	filter := repository.CaseFilter{
 		Search: c.Query("search"), Status: c.Query("status"), Page: page, PageSize: pageSize,
-	})
+	}
+	// The register is the viewer's own force's, plus anything referred to it.
+	if userID, ok := c.Get("userID"); ok {
+		if id, ok := userID.(uuid.UUID); ok {
+			filter.ViewerID = id
+		}
+	}
+
+	response, err := h.caseService.List(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
