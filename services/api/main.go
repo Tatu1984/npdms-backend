@@ -108,6 +108,9 @@ func main() {
 	reportsService := services.NewReportsService(reportsRepo, auditRepo)
 	aiReviewService := services.NewAIReviewService(db, auditRepo)
 	referralService := services.NewReferralService(db, auditRepo)
+	// Officer accounts. Until this module every account in the platform was
+	// inserted by hand; there was no way to appoint, transfer or retire one.
+	userAdminService := services.NewUserAdminService(db, auditRepo)
 
 	// The AI gateway (layer A0): the one route from this platform to any
 	// model. Clients are attached per registered model, from the service
@@ -225,6 +228,7 @@ func main() {
 	reportsHandler := handlers.NewReportsHandler(reportsService)
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
 	referralHandler := handlers.NewReferralHandler(referralService)
+	userAdminHandler := handlers.NewUserAdminHandler(userAdminService)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
@@ -1078,6 +1082,33 @@ func main() {
 				referrals.POST("", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Propose)
 				referrals.POST("/:id/decision", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Decide)
 				referrals.POST("/:id/withdraw", middleware.RequireRole("SHO", "DSP", "SP", "DIG", "IG", "DGP"), referralHandler.Withdraw)
+			}
+
+			// Officer accounts: who may sign in, where they are posted, and
+			// when they stop. Note what is not here — there is no DELETE. An
+			// account is deactivated, and the FIRs, cases and custody entries
+			// the officer made keep naming them.
+			//
+			// Reading the roster is a supervisor's work, so it sits at DSP:
+			// a sub-divisional officer plans postings and needs to see who is
+			// where, and the list carries no credential.
+			//
+			// Every write sits at SP. Opening an account creates authority
+			// inside the platform, and a transfer moves an officer between
+			// departments; the Superintendent is the first rank that commands
+			// a district or a force unit and answers for both. One floor for
+			// every write, rather than a scale, so that there is no rank that
+			// can amend an account but not account for the amendment.
+			officers := protected.Group("/officers")
+			{
+				officers.GET("", middleware.RequireRole("DSP"), userAdminHandler.List)
+				officers.GET("/options", middleware.RequireRole("DSP"), userAdminHandler.Options)
+				officers.GET("/:id", middleware.RequireRole("DSP"), userAdminHandler.Get)
+				officers.POST("", middleware.RequireRole("SP"), userAdminHandler.Create)
+				officers.PATCH("/:id", middleware.RequireRole("SP"), userAdminHandler.Amend)
+				officers.POST("/:id/deactivate", middleware.RequireRole("SP"), userAdminHandler.Deactivate)
+				officers.POST("/:id/reactivate", middleware.RequireRole("SP"), userAdminHandler.Reactivate)
+				officers.POST("/:id/password-reset", middleware.RequireRole("SP"), userAdminHandler.ResetPassword)
 			}
 
 			aiReview := protected.Group("/ai-review")
