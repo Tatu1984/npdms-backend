@@ -56,23 +56,23 @@ type AlternativePrediction struct {
 
 // ReviewRequest represents a request to review an AI decision
 type ReviewRequest struct {
-	Status        models.AIDecisionStatus `json:"status"`
-	HumanDecision string                  `json:"humanDecision,omitempty"`
-	OverrideReason string                 `json:"overrideReason,omitempty"`
-	Notes         string                  `json:"notes,omitempty"`
+	Status         models.AIDecisionStatus `json:"status"`
+	HumanDecision  string                  `json:"humanDecision,omitempty"`
+	OverrideReason string                  `json:"overrideReason,omitempty"`
+	Notes          string                  `json:"notes,omitempty"`
 }
 
 // QueueFilter represents filters for the review queue
 type QueueFilter struct {
-	Type       *models.AIDecisionType    `json:"type,omitempty"`
-	Status     *models.AIDecisionStatus  `json:"status,omitempty"`
+	Type       *models.AIDecisionType     `json:"type,omitempty"`
+	Status     *models.AIDecisionStatus   `json:"status,omitempty"`
 	Priority   *models.AIDecisionPriority `json:"priority,omitempty"`
-	AssignedTo *uuid.UUID                `json:"assignedTo,omitempty"`
-	StationID  *uuid.UUID                `json:"stationId,omitempty"`
-	FromDate   *time.Time                `json:"fromDate,omitempty"`
-	ToDate     *time.Time                `json:"toDate,omitempty"`
-	Page       int                       `json:"page"`
-	PageSize   int                       `json:"pageSize"`
+	AssignedTo *uuid.UUID                 `json:"assignedTo,omitempty"`
+	StationID  *uuid.UUID                 `json:"stationId,omitempty"`
+	FromDate   *time.Time                 `json:"fromDate,omitempty"`
+	ToDate     *time.Time                 `json:"toDate,omitempty"`
+	Page       int                        `json:"page"`
+	PageSize   int                        `json:"pageSize"`
 }
 
 // QueueResponse represents the review queue response
@@ -283,91 +283,34 @@ func (s *AIReviewService) GetReviewQueue(ctx context.Context, filter QueueFilter
 		filter.PageSize = 20
 	}
 
-	// Build query
-	baseQuery := `FROM ai_decisions WHERE 1=1`
-	args := []interface{}{}
-	argIndex := 1
-
+	// One query builder, in the repository, so the queue and every other
+	// listing read the same columns. The queue runs oldest first within a
+	// priority: a suggestion nobody has looked at should rise, not sink.
+	filters := map[string]interface{}{"oldest_first": true}
 	if filter.Status != nil {
-		baseQuery += fmt.Sprintf(" AND status = $%d", argIndex)
-		args = append(args, *filter.Status)
-		argIndex++
+		filters["status"] = *filter.Status
 	} else {
-		// Default to pending
-		baseQuery += fmt.Sprintf(" AND status = $%d", argIndex)
-		args = append(args, models.AIDecisionStatusPending)
-		argIndex++
+		filters["status"] = models.AIDecisionStatusPending
 	}
-
 	if filter.Type != nil {
-		baseQuery += fmt.Sprintf(" AND type = $%d", argIndex)
-		args = append(args, *filter.Type)
-		argIndex++
+		filters["type"] = *filter.Type
 	}
-
 	if filter.Priority != nil {
-		baseQuery += fmt.Sprintf(" AND priority = $%d", argIndex)
-		args = append(args, *filter.Priority)
-		argIndex++
+		filters["priority"] = *filter.Priority
 	}
-
 	if filter.AssignedTo != nil {
-		baseQuery += fmt.Sprintf(" AND assigned_to = $%d", argIndex)
-		args = append(args, *filter.AssignedTo)
-		argIndex++
+		filters["assigned_to"] = *filter.AssignedTo
 	}
-
 	if filter.StationID != nil {
-		baseQuery += fmt.Sprintf(" AND station_id = $%d", argIndex)
-		args = append(args, *filter.StationID)
-		argIndex++
+		filters["station_id"] = *filter.StationID
 	}
 
-	// Count total
-	var total int
-	countQuery := "SELECT COUNT(*) " + baseQuery
-	err := s.db.QueryRow(ctx, countQuery, args...).Scan(&total)
+	items, count, err := s.repo().ListDecisions(ctx, filters,
+		(filter.Page-1)*filter.PageSize, filter.PageSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count decisions: %w", err)
+		return nil, fmt.Errorf("failed to read the review queue: %w", err)
 	}
-
-	// Get items
-	selectQuery := `
-		SELECT id, type, status, priority, source_type, source_id, source_reference,
-			   model_name, prediction, confidence, confidence_threshold,
-			   assigned_to, due_by, requested_by, created_at
-		` + baseQuery + `
-		ORDER BY
-			CASE priority
-				WHEN 'CRITICAL' THEN 1
-				WHEN 'HIGH' THEN 2
-				WHEN 'MEDIUM' THEN 3
-				WHEN 'LOW' THEN 4
-			END,
-			created_at ASC
-		LIMIT $` + fmt.Sprintf("%d", argIndex) + ` OFFSET $` + fmt.Sprintf("%d", argIndex+1)
-
-	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
-
-	rows, err := s.db.Query(ctx, selectQuery, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query decisions: %w", err)
-	}
-	defer rows.Close()
-
-	var items []models.AIDecision
-	for rows.Next() {
-		var d models.AIDecision
-		err := rows.Scan(
-			&d.ID, &d.Type, &d.Status, &d.Priority, &d.SourceType, &d.SourceID,
-			&d.SourceReference, &d.ModelName, &d.Prediction, &d.Confidence,
-			&d.ConfidenceThreshold, &d.AssignedTo, &d.DueBy, &d.RequestedBy, &d.CreatedAt,
-		)
-		if err != nil {
-			continue
-		}
-		items = append(items, d)
-	}
+	total := int(count)
 
 	totalPages := (total + filter.PageSize - 1) / filter.PageSize
 
@@ -707,7 +650,7 @@ func (s *AIReviewService) GetStatsByDateRange(ctx context.Context, startDate, en
 func (s *AIReviewService) ModuleSwitches(ctx context.Context) ([]models.AIModuleSwitch, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT s.module, s.enabled, COALESCE(s.config::text, '{}'), COALESCE(s.reason, ''),
-		       COALESCE(s.note, ''), s.updated_by, COALESCE(u.full_name, ''), s.updated_at
+		       COALESCE(s.note, ''), s.updated_by, COALESCE(u.name, ''), s.updated_at
 		  FROM ai_module_switches s
 		  LEFT JOIN users u ON u.id = s.updated_by
 		 ORDER BY s.module`)

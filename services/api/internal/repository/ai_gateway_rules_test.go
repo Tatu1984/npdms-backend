@@ -38,18 +38,45 @@ func registerModel(t *testing.T, tdb *testutil.TestDB, name, version, module str
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		tdb.Pool.Exec(ctx, `DELETE FROM ai_decisions WHERE model_name = $1`, name)
-		tdb.Pool.Exec(ctx, `DELETE FROM ai_model_evaluations WHERE model_name = $1`, name)
-		tdb.Pool.Exec(ctx, `DELETE FROM ai_model_configs WHERE model_name = $1`, name)
+		// Evaluations are append-only by trigger, which is the rule under test
+		// three lines up. A test still has to leave the database as it found
+		// it, so the trigger comes off for this one transaction and goes
+		// straight back — the same thing scripts/cleanup-test-data.sql does.
+		tx, err := tdb.Pool.Begin(ctx)
+		if err != nil {
+			t.Logf("Warning: could not remove the test model %s: %v", name, err)
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		for _, statement := range []string{
+			`ALTER TABLE ai_model_evaluations DISABLE TRIGGER trg_ai_evaluations_append_only`,
+			`DELETE FROM ai_decisions WHERE model_name = $1`,
+			`DELETE FROM ai_model_evaluations WHERE model_name = $1`,
+			`DELETE FROM ai_model_configs WHERE model_name = $1`,
+			`ALTER TABLE ai_model_evaluations ENABLE TRIGGER trg_ai_evaluations_append_only`,
+		} {
+			args := []interface{}{name}
+			if !strings.Contains(statement, "$1") {
+				args = nil
+			}
+			if _, err := tx.Exec(ctx, statement, args...); err != nil {
+				t.Logf("Warning: could not remove the test model %s: %v", name, err)
+				return
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			t.Logf("Warning: could not remove the test model %s: %v", name, err)
+		}
 	})
 }
 
 func TestModelCannotBeEnabledUntilItIsMeasured(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	ctx := context.Background()
-	name := "test-model-" + uuid.NewString()[:8]
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
 	registerModel(t, tdb, name, "v1", "")
 	runBy := officer(t, tdb)
 
@@ -85,10 +112,9 @@ func TestModelCannotBeEnabledUntilItIsMeasured(t *testing.T) {
 
 func TestEvaluationVerdictMustMatchItsNumbers(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	ctx := context.Background()
-	name := "test-model-" + uuid.NewString()[:8]
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
 	registerModel(t, tdb, name, "v1", "")
 	runBy := officer(t, tdb)
 
@@ -130,10 +156,9 @@ func insertDecision(tdb *testutil.TestDB, name, version string, actor uuid.UUID)
 
 func TestSuggestionsNeedAnEnabledModelAtTheRegisteredVersion(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	ctx := context.Background()
-	name := "test-model-" + uuid.NewString()[:8]
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
 	registerModel(t, tdb, name, "v1", "")
 	actor := officer(t, tdb)
 
@@ -192,10 +217,9 @@ func TestSuggestionsNeedAnEnabledModelAtTheRegisteredVersion(t *testing.T) {
 
 func TestSuggestionsNeedTheirModuleSwitchedOn(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	ctx := context.Background()
-	name := "test-model-" + uuid.NewString()[:8]
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
 	// VEHICLE_DETECTION ships switched off, which is what this needs.
 	registerModel(t, tdb, name, "v1", "VEHICLE_DETECTION")
 	actor := officer(t, tdb)

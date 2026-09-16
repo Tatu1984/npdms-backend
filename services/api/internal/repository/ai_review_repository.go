@@ -183,7 +183,13 @@ func (r *AIReviewRepository) ListDecisions(ctx context.Context, filters map[stri
 	}
 
 	// Most pressing first: a critical suggestion that nobody has looked at
-	// should not sit behind a page of low-priority ones.
+	// should not sit behind a page of low-priority ones. Within a priority a
+	// review queue runs oldest first, so nothing rots at the bottom of it,
+	// while a plain listing reads newest first.
+	order := "created_at DESC"
+	if oldestFirst, ok := filters["oldest_first"].(bool); ok && oldestFirst {
+		order = "created_at ASC"
+	}
 	query := decisionColumns + where + `
 		ORDER BY
 			CASE priority
@@ -192,7 +198,7 @@ func (r *AIReviewRepository) ListDecisions(ctx context.Context, filters map[stri
 				WHEN 'MEDIUM' THEN 3
 				WHEN 'LOW' THEN 4
 			END,
-			created_at DESC`
+			` + order
 	query += fmt.Sprintf(" OFFSET $%d LIMIT $%d", len(args)+1, len(args)+2)
 	args = append(args, offset, limit)
 
@@ -461,7 +467,7 @@ func (r *AIReviewRepository) ListEvaluations(ctx context.Context, modelName stri
 		SELECT e.id, e.model_name, e.model_version, e.dataset, e.dataset_size,
 		       COALESCE(e.dataset_sha256, ''), e.metric, e.threshold, e.measured,
 		       e.passed, COALESCE(e.limitations, ''), COALESCE(e.notes, ''),
-		       e.run_by, COALESCE(u.full_name, ''), e.run_at
+		       e.run_by, COALESCE(u.name, ''), e.run_at
 		  FROM ai_model_evaluations e
 		  LEFT JOIN users u ON u.id = e.run_by
 		 WHERE ($1 = '' OR e.model_name = $1)

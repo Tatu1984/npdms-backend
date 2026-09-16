@@ -40,7 +40,6 @@ func removeFIR(t *testing.T, tdb *testutil.TestDB, id uuid.UUID) {
 
 func TestFIRRepository_CreateAndFindByID(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()
@@ -64,7 +63,6 @@ func TestFIRRepository_CreateAndFindByID(t *testing.T) {
 
 func TestFIRRepository_FindByID_NotFound(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 
@@ -75,7 +73,6 @@ func TestFIRRepository_FindByID_NotFound(t *testing.T) {
 
 func TestFIRRepository_ListFiltersAndPages(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()
@@ -115,7 +112,6 @@ func TestFIRRepository_ListFiltersAndPages(t *testing.T) {
 
 func TestFIRRepository_ListSearchesText(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()
@@ -135,7 +131,6 @@ func TestFIRRepository_ListSearchesText(t *testing.T) {
 
 func TestFIRRepository_UpdateAndStatus(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()
@@ -159,7 +154,6 @@ func TestFIRRepository_UpdateAndStatus(t *testing.T) {
 
 func TestFIRRepository_GenerateFIRNumberIsUnique(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()
@@ -180,7 +174,6 @@ func TestFIRRepository_GenerateFIRNumberIsUnique(t *testing.T) {
 
 func TestFIRRepository_GetStatsCounts(t *testing.T) {
 	tdb := testutil.NewTestDB(t)
-	defer tdb.Close()
 
 	repo := NewFIRRepository(tdb.Pool)
 	ctx := context.Background()

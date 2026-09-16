@@ -46,10 +46,16 @@ func NewTestDB(t *testing.T) *TestDB {
 		t.Skipf("Cannot reach the test database: %v", err)
 	}
 
+	// The pool is closed through t.Cleanup rather than a defer in each test, so
+	// that it outlives the cleanups those tests register: a `defer Close()`
+	// runs before them, and every tidy-up then fails on a closed pool.
+	t.Cleanup(pool.Close)
+
 	return &TestDB{Pool: pool, DSN: dsn, t: t}
 }
 
-// Close releases the pool.
+// Close releases the pool early. Tests do not need to call it — NewTestDB
+// closes the pool after the test's own cleanups have run.
 func (tdb *TestDB) Close() {
 	tdb.Pool.Close()
 }

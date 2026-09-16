@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -97,6 +98,7 @@ type Suggestion struct {
 // Gateway holds the model clients and the review service the suggestions land in.
 type Gateway struct {
 	review  *services.AIReviewService
+	mu      sync.RWMutex
 	clients map[string]Client
 	timeout time.Duration
 }
@@ -112,11 +114,16 @@ func NewGateway(review *services.AIReviewService) *Gateway {
 
 // Register attaches a client to a model name in the registry.
 func (g *Gateway) Register(modelName string, client Client) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.clients[modelName] = client
 }
 
 // ModelNames lists the models the gateway has a client for.
 func (g *Gateway) ModelNames() []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
 	names := make([]string, 0, len(g.clients))
 	for name := range g.clients {
 		names = append(names, name)
@@ -124,9 +131,39 @@ func (g *Gateway) ModelNames() []string {
 	return names
 }
 
+// clientFor returns the client for a registry entry, building one from the
+// entry's service address if this is the first time the gateway has seen it.
+//
+// Without this a model registered today would need the API restarted before
+// anything could call it, and the screens would say "no client is built in"
+// where the truth is that its address is simply not set here.
+func (g *Gateway) clientFor(entry models.AIModelConfig) (Client, bool) {
+	g.mu.RLock()
+	client, ok := g.clients[entry.ModelName]
+	g.mu.RUnlock()
+	if ok {
+		return client, true
+	}
+
+	if entry.EndpointEnv == "" {
+		return nil, false
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if client, ok := g.clients[entry.ModelName]; ok {
+		return client, true
+	}
+	client = NewHTTPModel(entry.EndpointEnv)
+	g.clients[entry.ModelName] = client
+	return client, true
+}
+
 // Connected reports whether a model's service is configured here.
 func (g *Gateway) Connected(modelName string) bool {
+	g.mu.RLock()
 	client, ok := g.clients[modelName]
+	g.mu.RUnlock()
 	return ok && client.Configured()
 }
 
@@ -149,7 +186,7 @@ func (g *Gateway) Suggest(ctx context.Context, modelName string, req Request, ac
 		return nil, fmt.Errorf("%w: %s is retired", ErrSwitchedOff, modelName)
 	}
 
-	client, ok := g.clients[modelName]
+	client, ok := g.clientFor(*entry)
 	if !ok || !client.Configured() {
 		return nil, fmt.Errorf("%w: %s", ErrNotConnected, modelName)
 	}
@@ -233,7 +270,7 @@ func (g *Gateway) Statuses(ctx context.Context) ([]Status, error) {
 	for _, entry := range entries {
 		status := Status{AIModelConfig: entry}
 
-		client, ok := g.clients[entry.ModelName]
+		client, ok := g.clientFor(entry)
 		status.HasClient = ok
 		switch {
 		case !ok:

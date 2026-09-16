@@ -54,6 +54,21 @@ CREATE OR REPLACE FUNCTION pg_temp.tagged(col TEXT) RETURNS TEXT AS $$
     SELECT format('%I ~ %L', col, '(PROBE|DIAG|E2E|P0[0-9][A-Z]*-|P1[0-3][A-Z]*-|P10|API-[AB]|KP-PRB|WB-P07|P2API|chain-diag|Probe )')
 $$ LANGUAGE sql;
 
+-- The AI layer's probe rows. ai_model_evaluations is append-only by trigger,
+-- so the trigger is disabled inside this transaction only: a probe model that
+-- cannot be removed would sit in the registry claiming to have been measured.
+-- Real evaluations do not carry a probe tag, and the trigger is put back.
+DO $$
+BEGIN
+    IF to_regclass('public.ai_model_evaluations') IS NOT NULL THEN
+        ALTER TABLE ai_model_evaluations DISABLE TRIGGER trg_ai_evaluations_append_only;
+        PERFORM pg_temp.purge('ai_decisions',           pg_temp.tagged('model_name'));
+        PERFORM pg_temp.purge('ai_model_evaluations',   pg_temp.tagged('model_name'));
+        PERFORM pg_temp.purge('ai_model_configs',       pg_temp.tagged('model_name'));
+        ALTER TABLE ai_model_evaluations ENABLE TRIGGER trg_ai_evaluations_append_only;
+    END IF;
+END $$;
+
 -- Children first.
 DO $$
 BEGIN
