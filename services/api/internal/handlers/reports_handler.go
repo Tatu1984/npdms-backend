@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/npdms/api/internal/models"
+	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
 
 	"github.com/gin-gonic/gin"
@@ -89,19 +91,12 @@ func (h *ReportsHandler) GetDailySummary(c *gin.Context) {
 		return
 	}
 
-	var stationID, districtID *uuid.UUID
-	if sid := c.Query("station_id"); sid != "" {
-		if id, err := uuid.Parse(sid); err == nil {
-			stationID = &id
-		}
-	}
-	if did := c.Query("district_id"); did != "" {
-		if id, err := uuid.Parse(did); err == nil {
-			districtID = &id
-		}
+	scope, ok := reportScope(c)
+	if !ok {
+		return
 	}
 
-	summary, err := h.reportsService.GetDailyCrimeSummary(c.Request.Context(), date, stationID, districtID)
+	summary, err := h.reportsService.GetDailyCrimeSummary(c.Request.Context(), date, scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -126,14 +121,12 @@ func (h *ReportsHandler) GetFIRStatus(c *gin.Context) {
 		return
 	}
 
-	var stationID *uuid.UUID
-	if sid := c.Query("station_id"); sid != "" {
-		if id, err := uuid.Parse(sid); err == nil {
-			stationID = &id
-		}
+	scope, ok := reportScope(c)
+	if !ok {
+		return
 	}
 
-	report, err := h.reportsService.GetFIRStatusReport(c.Request.Context(), fromDate, toDate, stationID)
+	report, err := h.reportsService.GetFIRStatusReport(c.Request.Context(), fromDate, toDate, scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -148,14 +141,12 @@ func (h *ReportsHandler) GetFIRStatus(c *gin.Context) {
 
 // GetPendingInvestigation returns pending investigation report
 func (h *ReportsHandler) GetPendingInvestigation(c *gin.Context) {
-	var stationID *uuid.UUID
-	if sid := c.Query("station_id"); sid != "" {
-		if id, err := uuid.Parse(sid); err == nil {
-			stationID = &id
-		}
+	scope, ok := reportScope(c)
+	if !ok {
+		return
 	}
 
-	report, err := h.reportsService.GetPendingInvestigationReport(c.Request.Context(), stationID)
+	report, err := h.reportsService.GetPendingInvestigationReport(c.Request.Context(), scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -180,14 +171,12 @@ func (h *ReportsHandler) GetCrimeStatistics(c *gin.Context) {
 		return
 	}
 
-	var stationID *uuid.UUID
-	if sid := c.Query("station_id"); sid != "" {
-		if id, err := uuid.Parse(sid); err == nil {
-			stationID = &id
-		}
+	scope, ok := reportScope(c)
+	if !ok {
+		return
 	}
 
-	report, err := h.reportsService.GetCrimeStatisticsReport(c.Request.Context(), fromDate, toDate, stationID)
+	report, err := h.reportsService.GetCrimeStatisticsReport(c.Request.Context(), fromDate, toDate, scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -202,14 +191,12 @@ func (h *ReportsHandler) GetCrimeStatistics(c *gin.Context) {
 
 // GetOfficerWorkload returns officer workload report
 func (h *ReportsHandler) GetOfficerWorkload(c *gin.Context) {
-	var stationID *uuid.UUID
-	if sid := c.Query("station_id"); sid != "" {
-		if id, err := uuid.Parse(sid); err == nil {
-			stationID = &id
-		}
+	scope, ok := reportScope(c)
+	if !ok {
+		return
 	}
 
-	report, err := h.reportsService.GetOfficerWorkloadReport(c.Request.Context(), stationID)
+	report, err := h.reportsService.GetOfficerWorkloadReport(c.Request.Context(), scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
@@ -376,4 +363,48 @@ func getContentType(format services.ExportFormat) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// reportScope reads who is asking and how widely they asked to look.
+//
+// The default is the asking officer's own force family. A senior officer
+// comparing departments is a real need — that is what a DIG is for — so
+// force=ALL lifts the boundary, at DIG rank and above, and is refused below
+// it. Comparing forces should be an act somebody chose, not the default nobody
+// noticed.
+func reportScope(c *gin.Context) (repository.ReportScope, bool) {
+	scope := repository.ReportScope{}
+
+	if value, exists := c.Get("userID"); exists {
+		if id, ok := value.(uuid.UUID); ok {
+			scope.ViewerID = id
+		}
+	}
+
+	if strings.EqualFold(c.Query("force"), "ALL") {
+		role, _ := c.Get("role")
+		rank, _ := role.(models.Role)
+		if models.RoleHierarchy[rank] < models.RoleHierarchy[models.Role("DIG")] {
+			c.JSON(http.StatusForbidden, models.ErrorResponse{
+				Error:   "force_comparison_not_permitted",
+				Message: "Figures across all four departments are for DIG rank and above. Without it you see your own department's.",
+				Code:    403,
+			})
+			return scope, false
+		}
+		scope.AcrossForces = true
+	}
+
+	if sid := c.Query("station_id"); sid != "" {
+		if id, err := uuid.Parse(sid); err == nil {
+			scope.StationID = &id
+		}
+	}
+	if did := c.Query("district_id"); did != "" {
+		if id, err := uuid.Parse(did); err == nil {
+			scope.DistrictID = &id
+		}
+	}
+
+	return scope, true
 }

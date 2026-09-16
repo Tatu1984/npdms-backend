@@ -80,7 +80,7 @@ func TestReportsRepository_DailySummaryCountsTodaysRegister(t *testing.T) {
 	f := seedReportsFixture(t, tdb)
 
 	repo := NewReportsRepository(tdb.Pool)
-	summary, err := repo.GetDailyCrimeSummary(context.Background(), time.Now(), &f.stationID, nil)
+	summary, err := repo.GetDailyCrimeSummary(context.Background(), time.Now(), ReportScope{StationID: &f.stationID})
 	require.NoError(t, err)
 	require.NotNil(t, summary)
 
@@ -119,7 +119,7 @@ func TestReportsRepository_FIRStatusReportGroupsByStatusAndAct(t *testing.T) {
 	from := time.Now().Add(-24 * time.Hour)
 	to := time.Now().Add(time.Hour)
 
-	report, err := repo.GetFIRStatusReport(context.Background(), from, to, &f.stationID)
+	report, err := repo.GetFIRStatusReport(context.Background(), from, to, ReportScope{StationID: &f.stationID})
 	require.NoError(t, err)
 	require.NotNil(t, report)
 
@@ -136,7 +136,7 @@ func TestReportsRepository_PendingInvestigationNamesTheOfficer(t *testing.T) {
 	f := seedReportsFixture(t, tdb)
 
 	repo := NewReportsRepository(tdb.Pool)
-	report, err := repo.GetPendingInvestigationReport(context.Background(), &f.stationID)
+	report, err := repo.GetPendingInvestigationReport(context.Background(), ReportScope{StationID: &f.stationID})
 	require.NoError(t, err)
 	require.NotNil(t, report)
 
@@ -190,7 +190,7 @@ func TestReportsRepository_CrimeStatisticsCountEachFIROnce(t *testing.T) {
 	from := time.Now().Add(-24 * time.Hour)
 	to := time.Now().Add(time.Hour)
 
-	report, err := repo.GetCrimeStatisticsReport(context.Background(), from, to, &f.stationID)
+	report, err := repo.GetCrimeStatisticsReport(context.Background(), from, to, ReportScope{StationID: &f.stationID})
 	require.NoError(t, err)
 	require.NotNil(t, report)
 
@@ -236,7 +236,7 @@ func TestReportsRepository_OfficerWorkloadCountsCasesAndFIRsOnce(t *testing.T) {
 	t.Cleanup(func() { tdb.MustExec(t, `DELETE FROM firs WHERE id = $1`, secondFIR) })
 
 	repo := NewReportsRepository(tdb.Pool)
-	report, err := repo.GetOfficerWorkloadReport(context.Background(), &f.stationID)
+	report, err := repo.GetOfficerWorkloadReport(context.Background(), ReportScope{StationID: &f.stationID})
 	require.NoError(t, err)
 	require.NotNil(t, report)
 
@@ -267,24 +267,24 @@ func TestReportsRepository_ReportsSurviveAStationWithNothingInIt(t *testing.T) {
 	from := time.Now().Add(-24 * time.Hour)
 	to := time.Now().Add(time.Hour)
 
-	summary, err := repo.GetDailyCrimeSummary(ctx, time.Now(), &empty, nil)
+	summary, err := repo.GetDailyCrimeSummary(ctx, time.Now(), ReportScope{StationID: &empty})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), summary.TotalFIRs)
 	assert.Empty(t, summary.StationWise)
 
-	status, err := repo.GetFIRStatusReport(ctx, from, to, &empty)
+	status, err := repo.GetFIRStatusReport(ctx, from, to, ReportScope{StationID: &empty})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), status.TotalFIRs)
 
-	pending, err := repo.GetPendingInvestigationReport(ctx, &empty)
+	pending, err := repo.GetPendingInvestigationReport(ctx, ReportScope{StationID: &empty})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), pending.TotalPending)
 
-	stats, err := repo.GetCrimeStatisticsReport(ctx, from, to, &empty)
+	stats, err := repo.GetCrimeStatisticsReport(ctx, from, to, ReportScope{StationID: &empty})
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), stats.TotalCrimes)
 
-	workload, err := repo.GetOfficerWorkloadReport(ctx, &empty)
+	workload, err := repo.GetOfficerWorkloadReport(ctx, ReportScope{StationID: &empty})
 	require.NoError(t, err)
 	assert.Empty(t, workload.Officers)
 }

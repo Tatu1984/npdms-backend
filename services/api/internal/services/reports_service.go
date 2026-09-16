@@ -31,13 +31,13 @@ func NewReportsService(reportsRepo *repository.ReportsRepository, auditRepo *rep
 type ReportType string
 
 const (
-	ReportTypeDailyCrimeSummary     ReportType = "daily_crime_summary"
-	ReportTypeFIRStatus             ReportType = "fir_status"
-	ReportTypePendingInvestigation  ReportType = "pending_investigation"
-	ReportTypeCrimeStatistics       ReportType = "crime_statistics"
-	ReportTypeOfficerWorkload       ReportType = "officer_workload"
-	ReportTypeMonthlyTrends         ReportType = "monthly_trends"
-	ReportTypeQuarterlyAnalysis     ReportType = "quarterly_analysis"
+	ReportTypeDailyCrimeSummary    ReportType = "daily_crime_summary"
+	ReportTypeFIRStatus            ReportType = "fir_status"
+	ReportTypePendingInvestigation ReportType = "pending_investigation"
+	ReportTypeCrimeStatistics      ReportType = "crime_statistics"
+	ReportTypeOfficerWorkload      ReportType = "officer_workload"
+	ReportTypeMonthlyTrends        ReportType = "monthly_trends"
+	ReportTypeQuarterlyAnalysis    ReportType = "quarterly_analysis"
 )
 
 // ExportFormat defines export formats
@@ -52,24 +52,24 @@ const (
 
 // ReportRequest represents a report generation request
 type ReportRequest struct {
-	ReportType  ReportType   `json:"report_type"`
-	Format      ExportFormat `json:"format"`
-	FromDate    time.Time    `json:"from_date"`
-	ToDate      time.Time    `json:"to_date"`
-	StationID   *uuid.UUID   `json:"station_id,omitempty"`
-	DistrictID  *uuid.UUID   `json:"district_id,omitempty"`
-	IncludeCharts bool       `json:"include_charts"`
+	ReportType    ReportType   `json:"report_type"`
+	Format        ExportFormat `json:"format"`
+	FromDate      time.Time    `json:"from_date"`
+	ToDate        time.Time    `json:"to_date"`
+	StationID     *uuid.UUID   `json:"station_id,omitempty"`
+	DistrictID    *uuid.UUID   `json:"district_id,omitempty"`
+	IncludeCharts bool         `json:"include_charts"`
 }
 
 // ReportMetadata contains metadata about a generated report
 type ReportMetadata struct {
-	ReportType   ReportType   `json:"report_type"`
-	GeneratedAt  time.Time    `json:"generated_at"`
-	Format       ExportFormat `json:"format"`
-	Period       string       `json:"period"`
-	GeneratedBy  string       `json:"generated_by"`
-	FileSize     int64        `json:"file_size"`
-	FileName     string       `json:"file_name"`
+	ReportType  ReportType   `json:"report_type"`
+	GeneratedAt time.Time    `json:"generated_at"`
+	Format      ExportFormat `json:"format"`
+	Period      string       `json:"period"`
+	GeneratedBy string       `json:"generated_by"`
+	FileSize    int64        `json:"file_size"`
+	FileName    string       `json:"file_name"`
 }
 
 // GeneratedReport contains the report data and metadata
@@ -80,28 +80,28 @@ type GeneratedReport struct {
 }
 
 // GetDailyCrimeSummary returns daily crime summary
-func (s *ReportsService) GetDailyCrimeSummary(ctx context.Context, date time.Time, stationID, districtID *uuid.UUID) (*repository.DailyCrimeSummary, error) {
-	return s.reportsRepo.GetDailyCrimeSummary(ctx, date, stationID, districtID)
+func (s *ReportsService) GetDailyCrimeSummary(ctx context.Context, date time.Time, scope repository.ReportScope) (*repository.DailyCrimeSummary, error) {
+	return s.reportsRepo.GetDailyCrimeSummary(ctx, date, scope)
 }
 
 // GetFIRStatusReport returns FIR status report
-func (s *ReportsService) GetFIRStatusReport(ctx context.Context, fromDate, toDate time.Time, stationID *uuid.UUID) (*repository.FIRStatusReport, error) {
-	return s.reportsRepo.GetFIRStatusReport(ctx, fromDate, toDate, stationID)
+func (s *ReportsService) GetFIRStatusReport(ctx context.Context, fromDate, toDate time.Time, scope repository.ReportScope) (*repository.FIRStatusReport, error) {
+	return s.reportsRepo.GetFIRStatusReport(ctx, fromDate, toDate, scope)
 }
 
 // GetPendingInvestigationReport returns pending investigation report
-func (s *ReportsService) GetPendingInvestigationReport(ctx context.Context, stationID *uuid.UUID) (*repository.PendingInvestigationReport, error) {
-	return s.reportsRepo.GetPendingInvestigationReport(ctx, stationID)
+func (s *ReportsService) GetPendingInvestigationReport(ctx context.Context, scope repository.ReportScope) (*repository.PendingInvestigationReport, error) {
+	return s.reportsRepo.GetPendingInvestigationReport(ctx, scope)
 }
 
 // GetCrimeStatisticsReport returns crime statistics report
-func (s *ReportsService) GetCrimeStatisticsReport(ctx context.Context, fromDate, toDate time.Time, stationID *uuid.UUID) (*repository.CrimeStatisticsReport, error) {
-	return s.reportsRepo.GetCrimeStatisticsReport(ctx, fromDate, toDate, stationID)
+func (s *ReportsService) GetCrimeStatisticsReport(ctx context.Context, fromDate, toDate time.Time, scope repository.ReportScope) (*repository.CrimeStatisticsReport, error) {
+	return s.reportsRepo.GetCrimeStatisticsReport(ctx, fromDate, toDate, scope)
 }
 
 // GetOfficerWorkloadReport returns officer workload report
-func (s *ReportsService) GetOfficerWorkloadReport(ctx context.Context, stationID *uuid.UUID) (*repository.OfficerWorkloadReport, error) {
-	return s.reportsRepo.GetOfficerWorkloadReport(ctx, stationID)
+func (s *ReportsService) GetOfficerWorkloadReport(ctx context.Context, scope repository.ReportScope) (*repository.OfficerWorkloadReport, error) {
+	return s.reportsRepo.GetOfficerWorkloadReport(ctx, scope)
 }
 
 // GenerateReport generates a report in the specified format
@@ -109,18 +109,27 @@ func (s *ReportsService) GenerateReport(ctx context.Context, req ReportRequest, 
 	var data interface{}
 	var err error
 
+	// A downloaded report is bounded exactly as the screen is: the officer
+	// asking for a PDF of another department's figures should no more get one
+	// than they would on screen.
+	scope := repository.ReportScope{
+		ViewerID:   userID,
+		StationID:  req.StationID,
+		DistrictID: req.DistrictID,
+	}
+
 	// Fetch report data based on type
 	switch req.ReportType {
 	case ReportTypeDailyCrimeSummary:
-		data, err = s.reportsRepo.GetDailyCrimeSummary(ctx, req.FromDate, req.StationID, req.DistrictID)
+		data, err = s.reportsRepo.GetDailyCrimeSummary(ctx, req.FromDate, scope)
 	case ReportTypeFIRStatus:
-		data, err = s.reportsRepo.GetFIRStatusReport(ctx, req.FromDate, req.ToDate, req.StationID)
+		data, err = s.reportsRepo.GetFIRStatusReport(ctx, req.FromDate, req.ToDate, scope)
 	case ReportTypePendingInvestigation:
-		data, err = s.reportsRepo.GetPendingInvestigationReport(ctx, req.StationID)
+		data, err = s.reportsRepo.GetPendingInvestigationReport(ctx, scope)
 	case ReportTypeCrimeStatistics:
-		data, err = s.reportsRepo.GetCrimeStatisticsReport(ctx, req.FromDate, req.ToDate, req.StationID)
+		data, err = s.reportsRepo.GetCrimeStatisticsReport(ctx, req.FromDate, req.ToDate, scope)
 	case ReportTypeOfficerWorkload:
-		data, err = s.reportsRepo.GetOfficerWorkloadReport(ctx, req.StationID)
+		data, err = s.reportsRepo.GetOfficerWorkloadReport(ctx, scope)
 	default:
 		return nil, fmt.Errorf("unsupported report type: %s", req.ReportType)
 	}

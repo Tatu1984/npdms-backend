@@ -38,11 +38,35 @@ const (
 	caseDisposed           = `'CHARGESHEET_FILED', 'IN_COURT', 'CONVICTION', 'ACQUITTAL', 'CLOSED'`
 )
 
-// firScope builds the station and district conditions that every report
-// shares. Conditions are written against the alias firs is given, because
-// cases carry no station of their own and have to reach one through the FIR.
-func firScope(alias string, stationID, districtID *uuid.UUID, args []interface{}) (string, []interface{}) {
+// ReportScope is who is asking, and how widely they asked to look.
+//
+// The registers were scoped to a department but the reports over them were
+// not, so CID asking for crime statistics was handed Kolkata Police's figures.
+// An aggregate leaks as surely as a list: "53 crimes this month" tells you
+// about another force's month whether or not you can open the records.
+type ReportScope struct {
+	// ViewerID bounds the figures to that officer's force family. Zero means
+	// unbounded, which is only right for a background job.
+	ViewerID uuid.UUID
+	// AcrossForces lifts the boundary, for a senior officer who has asked to
+	// compare departments. It is an explicit act, never the default.
+	AcrossForces bool
+	StationID    *uuid.UUID
+	DistrictID   *uuid.UUID
+}
+
+// firScope builds the conditions every report shares. Conditions are written
+// against the alias firs is given, because cases carry no station of their own
+// and have to reach one through the FIR.
+func firScope(alias string, scope ReportScope, args []interface{}) (string, []interface{}) {
 	var clauses []string
+
+	if scope.ViewerID != uuid.Nil && !scope.AcrossForces {
+		args = append(args, scope.ViewerID)
+		clauses = append(clauses, " AND "+ForceScopeSQL(alias+".station_id", len(args)))
+	}
+
+	stationID, districtID := scope.StationID, scope.DistrictID
 	if stationID != nil {
 		args = append(args, *stationID)
 		clauses = append(clauses, fmt.Sprintf(" AND %s.station_id = $%d", alias, len(args)))
@@ -80,14 +104,16 @@ type StationStats struct {
 }
 
 // GetDailyCrimeSummary returns daily crime summary
-func (r *ReportsRepository) GetDailyCrimeSummary(ctx context.Context, date time.Time, stationID, districtID *uuid.UUID) (*DailyCrimeSummary, error) {
+func (r *ReportsRepository) GetDailyCrimeSummary(ctx context.Context, date time.Time, reportScope ReportScope) (*DailyCrimeSummary, error) {
+	stationID, districtID := reportScope.StationID, reportScope.DistrictID
+	_ = districtID
 	summary := &DailyCrimeSummary{
 		Date:             date.Format("2006-01-02"),
 		CrimesByCategory: make(map[string]int64),
 	}
 
 	args := []interface{}{date.Format("2006-01-02")}
-	scope, args := firScope("f", stationID, districtID, args)
+	scope, args := firScope("f", reportScope, args)
 
 	firQuery := `
 		SELECT COUNT(*)
@@ -229,14 +255,15 @@ type DailyCount struct {
 }
 
 // GetFIRStatusReport returns FIR status report
-func (r *ReportsRepository) GetFIRStatusReport(ctx context.Context, fromDate, toDate time.Time, stationID *uuid.UUID) (*FIRStatusReport, error) {
+func (r *ReportsRepository) GetFIRStatusReport(ctx context.Context, fromDate, toDate time.Time, reportScope ReportScope) (*FIRStatusReport, error) {
+
 	report := &FIRStatusReport{
 		ByStatus:   make(map[string]int64),
 		ByCategory: make(map[string]int64),
 	}
 
 	args := []interface{}{fromDate, toDate}
-	scope, args := firScope("f", stationID, nil, args)
+	scope, args := firScope("f", reportScope, args)
 	period := `WHERE f.created_at BETWEEN $1 AND $2` + scope
 
 	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM firs f `+period, args...).Scan(&report.TotalFIRs); err != nil {
@@ -354,10 +381,11 @@ type OldCase struct {
 }
 
 // GetPendingInvestigationReport returns pending investigation report
-func (r *ReportsRepository) GetPendingInvestigationReport(ctx context.Context, stationID *uuid.UUID) (*PendingInvestigationReport, error) {
+func (r *ReportsRepository) GetPendingInvestigationReport(ctx context.Context, reportScope ReportScope) (*PendingInvestigationReport, error) {
+
 	report := &PendingInvestigationReport{}
 
-	scope, args := firScope("f", stationID, nil, nil)
+	scope, args := firScope("f", reportScope, nil)
 	pending := `
 		FROM cases c
 		JOIN firs f ON f.id = c.fir_id
@@ -493,11 +521,12 @@ type ComparisonStats struct {
 }
 
 // GetCrimeStatisticsReport returns detailed crime statistics
-func (r *ReportsRepository) GetCrimeStatisticsReport(ctx context.Context, fromDate, toDate time.Time, stationID *uuid.UUID) (*CrimeStatisticsReport, error) {
+func (r *ReportsRepository) GetCrimeStatisticsReport(ctx context.Context, fromDate, toDate time.Time, reportScope ReportScope) (*CrimeStatisticsReport, error) {
+
 	report := &CrimeStatisticsReport{}
 
 	args := []interface{}{fromDate, toDate}
-	scope, args := firScope("f", stationID, nil, args)
+	scope, args := firScope("f", reportScope, args)
 	period := `WHERE f.created_at BETWEEN $1 AND $2` + scope
 
 	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM firs f `+period, args...).Scan(&report.TotalCrimes); err != nil {
@@ -606,14 +635,25 @@ type OfficerDetailedWorkload struct {
 }
 
 // GetOfficerWorkloadReport returns officer workload report
-func (r *ReportsRepository) GetOfficerWorkloadReport(ctx context.Context, stationID *uuid.UUID) (*OfficerWorkloadReport, error) {
+func (r *ReportsRepository) GetOfficerWorkloadReport(ctx context.Context, reportScope ReportScope) (*OfficerWorkloadReport, error) {
+	stationID := reportScope.StationID
 	report := &OfficerWorkloadReport{}
 
-	stationFilter := ""
+	// This report counts officers rather than FIRs, so it is bounded by the
+	// officers' own postings rather than through firScope.
+	var conditions []string
 	var args []interface{}
+	if reportScope.ViewerID != uuid.Nil && !reportScope.AcrossForces {
+		args = append(args, reportScope.ViewerID)
+		conditions = append(conditions, ForceScopeSQL("u.station_id", len(args)))
+	}
 	if stationID != nil {
 		args = append(args, *stationID)
-		stationFilter = " WHERE u.station_id = $1"
+		conditions = append(conditions, fmt.Sprintf("u.station_id = $%d", len(args)))
+	}
+	stationFilter := ""
+	if len(conditions) > 0 {
+		stationFilter = " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	// Cases and FIRs join independently, so every case row is paired with
