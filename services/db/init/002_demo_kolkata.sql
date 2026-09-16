@@ -13,9 +13,13 @@ BEGIN;
 
 -- ----------------------------------------------------------------- stations --
 -- `district` carries the Kolkata Police division, which the workload rollups
--- group by.
-INSERT INTO stations (id, name, code, address, district, state, phone, latitude, longitude)
-SELECT COALESCE(s.id, v.id::uuid), v.name, v.code, v.address, v.division, 'West Bengal', v.phone, v.lat, v.lng
+-- group by. `force_id` is Kolkata Police for every station here, and has to be
+-- stated: migration 000082 made the column NOT NULL, which stopped this file
+-- loading on a fresh database until it said which force these belong to. The
+-- other three forces are loaded by scripts/seed-departments-demo.py.
+INSERT INTO stations (id, name, code, address, district, state, phone, latitude, longitude, force_id)
+SELECT COALESCE(s.id, v.id::uuid), v.name, v.code, v.address, v.division, 'West Bengal', v.phone, v.lat, v.lng,
+       (SELECT id FROM forces WHERE code = 'KP')
 FROM (VALUES
   ('3f1b2c84-6d0e-4b8a-9a31-0b5e7c1d2a01', 'Lalbazar (Kolkata Police Headquarters)', 'LBZ', '18 Lalbazar Street, Kolkata 700001',               'Central Division',          '033-2214-5000', 22.5697, 88.3506),
   ('550e8400-e29b-41d4-a716-446655440001', 'Bhowanipore Police Station',             'BHW', 'Harish Mukherjee Road, Bhowanipore, Kolkata 700025', 'South Division',            '033-2223-5210', 22.5301, 88.3421),
@@ -45,10 +49,11 @@ SET name = EXCLUDED.name, address = EXCLUDED.address, district = EXCLUDED.distri
 -- Password for every account below: Demo@123 (bcrypt cost 10).
 -- The nine short usernames are the documented demo roles; the dotted ones are
 -- additional FICTIONAL officers so other stations have staff.
-INSERT INTO users (id, username, email, password_hash, name, role, badge_number, station_id, phone, is_active)
+INSERT INTO users (id, username, email, password_hash, name, role, badge_number, station_id, phone, is_active, force_id)
 SELECT v.id::uuid, v.username, v.username || '@kolkatapolice.gov.in',
        '$2a$10$V/BKpV1pqxSJGl2RsrTMnO9uhyPjQA9ZMEFBllxhbbnWrbmNq.pTu',
-       v.name, v.role::user_role, v.badge, st.id, v.phone, true
+       v.name, v.role::user_role, v.badge, st.id, v.phone, true,
+       (SELECT id FROM forces WHERE code = 'KP')
 FROM (VALUES
   ('550e8400-e29b-41d4-a716-446655440009', 'admin',     'System Administrator',  'DGP',            'KP-ADMIN-001', 'LBZ', '9830000001'),
   ('550e8400-e29b-41d4-a716-446655440017', 'sp',        'Paromita Banerjee',     'SP',             'KP-DC-0187',   'LBZ', '9830000002'),
