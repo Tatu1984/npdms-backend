@@ -39,13 +39,28 @@ POSTGRES_PRISMA_URL=postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST>/neondb?sslmod
 POSTGRES_URL_NON_POOLING=postgresql://<DB_USER>:<DB_PASSWORD>@<DB_HOST_DIRECT>/neondb?sslmode=require
 
 # ========================================
-# AI SERVICES (Future)
+# AI MODEL SERVICES (on premises only)
 # ========================================
-OPENAI_API_KEY=<your-openai-api-key>
-# OR
-AZURE_OPENAI_API_KEY=<your-azure-openai-key>
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4
+# Models run on the platform's own hardware. No case data, audio, footage,
+# statement or personal detail goes to an outside AI provider, so there is no
+# API key for one here and there is not meant to be.
+#
+# The AI gateway reads one address per registered model, and the model registry
+# records which variable holds it (ai_model_configs.endpoint_env). Adding a
+# model is therefore a registry entry and a variable, not a code change:
+#
+#   <NAME>_URL                   the service address
+#   <NAME>_URL_TOKEN             bearer token, if the service expects one
+#   <NAME>_URL_TIMEOUT_SECONDS   request timeout in seconds, default 30
+#
+# Where a model's variable is unset, that model is not connected on this
+# deployment and every screen says so. The staging API on Vercel runs no model
+# services at all.
+#
+# The two model services that exist today:
+FR_SERVICE_URL=                  # face recognition, missing persons only
+FR_SERVICE_TOKEN=
+ML_VEHICLE_DETECTION_URL=        # vehicle detection and ANPR
 
 # ========================================
 # ANALYTICS & MONITORING (Future)
@@ -135,7 +150,7 @@ BLOB_READ_WRITE_TOKEN=<your-vercel-blob-token>
 | API Hosting | Railway / Render / Fly.io | $5-20/mo |
 | Frontend | Vercel | Free tier / $20/mo |
 | Auth | Microsoft Entra ID | Free (included in M365) |
-| AI | Azure OpenAI / OpenAI | Pay per use |
+| AI | On-premises model services on the edge server | Hardware, not per use |
 | Monitoring | Sentry | Free tier |
 
 ---
