@@ -132,14 +132,27 @@ func (g *Gateway) ModelNames() []string {
 }
 
 // clientFor returns the client for a registry entry, building one from the
-// entry's service address if this is the first time the gateway has seen it.
+// entry's service address if the gateway has not seen that address before.
 //
 // Without this a model registered today would need the API restarted before
-// anything could call it, and the screens would say "no client is built in"
-// where the truth is that its address is simply not set here.
+// anything could call it. The cache is keyed on the address as well as the
+// name, so repointing a model at a different service takes effect at once
+// rather than at the next restart — the registry and the behaviour cannot
+// disagree.
 func (g *Gateway) clientFor(entry models.AIModelConfig) (Client, bool) {
+	key := entry.ModelName + "\x00" + entry.EndpointEnv
+
 	g.mu.RLock()
-	client, ok := g.clients[entry.ModelName]
+	client, ok := g.clients[key]
+	g.mu.RUnlock()
+	if ok {
+		return client, true
+	}
+
+	// A client registered by name alone — one built into the API rather than
+	// described by the registry — still answers for its model.
+	g.mu.RLock()
+	client, ok = g.clients[entry.ModelName]
 	g.mu.RUnlock()
 	if ok {
 		return client, true
@@ -151,11 +164,11 @@ func (g *Gateway) clientFor(entry models.AIModelConfig) (Client, bool) {
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if client, ok := g.clients[entry.ModelName]; ok {
+	if client, ok := g.clients[key]; ok {
 		return client, true
 	}
 	client = NewHTTPModel(entry.EndpointEnv)
-	g.clients[entry.ModelName] = client
+	g.clients[key] = client
 	return client, true
 }
 
@@ -273,9 +286,7 @@ func (g *Gateway) Statuses(ctx context.Context) ([]Status, error) {
 		client, ok := g.clientFor(entry)
 		status.HasClient = ok
 		switch {
-		case !ok:
-			status.Note = "No client is built into this API for this model."
-		case !client.Configured():
+		case !ok, !client.Configured():
 			status.Note = "Not connected on this deployment: " + endpointNote(entry)
 		default:
 			status.Connected = true

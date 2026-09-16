@@ -1096,8 +1096,14 @@ func main() {
 				aiReview.GET("/evaluations", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.ListEvaluations)
 				aiReview.POST("/evaluations", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.RecordEvaluation)
 
-				// The per-module off switches, one row per AI module.
+				aiReview.POST("/models/:modelName/retire", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.RetireModel)
+
+				// The per-module off switches, one row per AI module. Face
+				// recognition and vehicle detection keep their own screens and
+				// their own rules; this covers every other module, without
+				// which a measured model could never produce anything.
 				aiReview.GET("/modules", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.ListModuleSwitches)
+				aiReview.PUT("/modules/:module", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.SetModuleSwitch)
 
 				// The gateway's own state: every registered model and whether
 				// its service can be reached from this deployment.

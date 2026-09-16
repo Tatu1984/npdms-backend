@@ -150,11 +150,12 @@ Neither requires a token.
 
 ## Surface
 
-585 routes are registered, as of 16 September 2026. Those with a complete
+587 routes are registered, as of 16 September 2026. Those with a complete
 specification in `openapi.yaml` are the ones whose behaviour is settled:
 
 - `/auth/*` — sign-in, refresh, sign-out
 - `/investigation/*` — Phase 01, the investigation workspace
+- `/ai-review/*` — the AI gateway: registry, evaluations, module switches, acceptance rates and the review queue
 - `/intel/ip/{ip}` — server-side address resolution
 - `/health`, `/ready`
 

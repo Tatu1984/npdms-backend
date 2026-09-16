@@ -332,6 +332,7 @@ POST /api/v1/ai-review/decisions/:id/review
 POST /api/v1/ai-review/evaluations
 POST /api/v1/ai-review/expire
 POST /api/v1/ai-review/models
+POST /api/v1/ai-review/models/:modelName/retire
 POST /api/v1/alerts
 POST /api/v1/alerts/:id/acknowledge
 POST /api/v1/anpr/analyses
@@ -552,6 +553,7 @@ POST /api/v1/video/events/purge-expired
 POST /api/v1/video/events/search
 POST /api/v1/warrants
 PUT /api/v1/ai-review/models/:modelName
+PUT /api/v1/ai-review/modules/:module
 PUT /api/v1/alerts/:id
 PUT /api/v1/anpr/switch
 PUT /api/v1/bail/:id

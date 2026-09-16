@@ -689,8 +689,11 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: "#/components/schemas/AIModel" }
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIModel" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
       tags: [AI gateway]
@@ -797,6 +800,89 @@ paths:
                 error: model_not_measured
                 message: model complaint-category version v2 has not passed an evaluation and cannot be enabled
                 code: 409
+
+  /ai-review/models/{modelName}/retire:
+    post:
+      tags: [AI gateway]
+      summary: Withdraw a model from use
+      description: |
+        The model is switched off and stays in the registry: a suggestion an
+        officer acted on must keep naming the model that made it. A retired
+        model cannot be switched back on.
+
+        SP and above.
+      parameters:
+        - { name: modelName, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: The retired entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIModel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /ai-review/modules/{module}:
+    put:
+      tags: [AI gateway]
+      summary: Switch an AI module on or off
+      description: |
+        Face recognition and vehicle detection keep their own screens and their
+        own rules; this covers every other module. Without it a model could be
+        registered, measured and switched on and still produce nothing, because
+        its module was off and nobody could turn it on.
+
+        Switching face recognition on here is still refused unless an
+        authorisation covering it is in force — the database holds that rule.
+
+        SP and above.
+      parameters:
+        - { name: module, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                enabled: { type: boolean }
+                reason: { type: string, description: Why, recorded with the officer who did it }
+      responses:
+        "200":
+          description: The switch as saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  module: { type: string }
+                  enabled: { type: boolean }
+                  reason: { type: string }
+                  updatedByName: { type: string }
+                  updatedAt: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: There is no AI module by that name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: A rule refused it, and the message names the rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /ai-review/evaluations:
     get:
@@ -1097,6 +1183,10 @@ components:
       description: One entry in the model registry.
       properties:
         id: { type: string, format: uuid }
+        registrationId:
+          type: string
+          format: uuid
+          description: Identifies this registration. An evaluation measures a registration, so a pass does not survive the entry it was recorded against.
         modelName: { type: string }
         modelVersion: { type: string }
         decisionType: { type: string }

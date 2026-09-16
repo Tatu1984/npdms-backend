@@ -174,14 +174,14 @@ ALTER TABLE ai_module_switches ADD COLUMN IF NOT EXISTS note TEXT;
 DO $$
 BEGIN
     IF to_regclass('public.module_switches') IS NOT NULL THEN
+        -- DO NOTHING, not DO UPDATE: bootstrap-db.sh re-runs the whole chain,
+        -- and 000074 recreates module_switches with its off-at-installation
+        -- seed each time. Overwriting here would switch vehicle detection off
+        -- on every bootstrap and erase which officer had switched it on.
         INSERT INTO ai_module_switches (module, enabled, config, reason, note, updated_by, updated_at)
         SELECT module, enabled, '{}'::jsonb, note, note, updated_by, updated_at
           FROM module_switches
-        ON CONFLICT (module) DO UPDATE
-           SET enabled    = EXCLUDED.enabled,
-               note       = EXCLUDED.note,
-               updated_by = EXCLUDED.updated_by,
-               updated_at = EXCLUDED.updated_at;
+        ON CONFLICT (module) DO NOTHING;
         DROP TABLE module_switches;
     END IF;
 END $$;

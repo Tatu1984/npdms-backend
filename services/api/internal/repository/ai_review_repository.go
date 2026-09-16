@@ -20,60 +20,23 @@ func NewAIReviewRepository(db *pgxpool.Pool) *AIReviewRepository {
 	return &AIReviewRepository{db: db}
 }
 
-// CreateDecision creates a new AI decision
-func (r *AIReviewRepository) CreateDecision(ctx context.Context, decision *models.AIDecision) error {
-	query := `
-		INSERT INTO ai_decisions (
-			id, type, status, priority,
-			source_type, source_id, source_reference,
-			model_name, model_version, prediction, prediction_data,
-			confidence, confidence_threshold, alternatives,
-			requested_by, station_id, processing_time_ms,
-			created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
-		)
-	`
-
-	now := time.Now()
-	decision.CreatedAt = now
-	decision.UpdatedAt = now
-
-	_, err := r.db.Exec(ctx, query,
-		decision.ID,
-		decision.Type,
-		decision.Status,
-		decision.Priority,
-		decision.SourceType,
-		decision.SourceID,
-		decision.SourceReference,
-		decision.ModelName,
-		decision.ModelVersion,
-		decision.Prediction,
-		decision.PredictionData,
-		decision.Confidence,
-		decision.ConfidenceThreshold,
-		decision.Alternatives,
-		decision.RequestedBy,
-		decision.StationID,
-		decision.ProcessingTimeMs,
-		decision.CreatedAt,
-		decision.UpdatedAt,
-	)
-	return err
-}
-
 // decisionColumns is the one place the decision columns are listed. They were
 // repeated in six places before, which is how the list drifted.
+// Every nullable text column is COALESCEd: the Go model holds plain strings,
+// and an officer who reviews a suggestion without notes leaves NULLs behind.
+// Without this a decision became unreadable the moment it was decided — the
+// queue answered 500 and the record answered "not found".
 const decisionColumns = `
 		SELECT
 			id, type, status, priority, COALESCE(module, ''),
-			source_type, source_id, source_reference,
-			model_name, model_version, prediction, prediction_data,
-			confidence, confidence_threshold, COALESCE(language, ''), sources, alternatives,
-			reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
+			source_type, source_id, COALESCE(source_reference, ''),
+			model_name, COALESCE(model_version, ''), prediction, COALESCE(prediction_data::text, ''),
+			confidence, confidence_threshold, COALESCE(language, ''), sources,
+			COALESCE(alternatives::text, ''),
+			reviewed_by, reviewed_at, COALESCE(review_notes, ''),
+			COALESCE(human_decision, ''), COALESCE(override_reason, ''),
 			assigned_to, assigned_at, due_by,
-			requested_by, station_id, processing_time_ms,
+			requested_by, station_id, COALESCE(processing_time_ms, 0),
 			created_at, updated_at
 		FROM ai_decisions`
 
@@ -288,6 +251,9 @@ func (r *AIReviewRepository) GetFeedbackByDecision(ctx context.Context, decision
 		}
 		feedback = append(feedback, f)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return feedback, nil
 }
@@ -305,7 +271,7 @@ const modelColumns = `
 			m.review_timeout, m.max_queue_size, COALESCE(m.description, ''),
 			COALESCE(m.config_data::text, ''), m.registered_by, m.retired_at,
 			COALESCE(m.retired_reason, ''),
-			ai_model_is_measured(m.model_name, COALESCE(m.model_version, '')),
+			ai_model_is_measured(m.registration_id, COALESCE(m.model_version, '')),
 			COALESCE((SELECT s.enabled FROM ai_module_switches s WHERE s.module = m.module), FALSE),
 			m.created_at, m.updated_at
 		FROM ai_model_configs m`
@@ -559,6 +525,9 @@ func (r *AIReviewRepository) GetAssignmentsByReviewer(ctx context.Context, revie
 		}
 		assignments = append(assignments, a)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return assignments, nil
 }
@@ -592,12 +561,12 @@ func (r *AIReviewRepository) GetStats(ctx context.Context, startDate, endDate *t
 	argIndex := 1
 
 	if startDate != nil {
-		dateFilter += ` AND created_at >= $` + string(rune(argIndex+'0'))
+		dateFilter += fmt.Sprintf(" AND created_at >= $%d", argIndex)
 		args = append(args, startDate)
 		argIndex++
 	}
 	if endDate != nil {
-		dateFilter += ` AND created_at <= $` + string(rune(argIndex+'0'))
+		dateFilter += fmt.Sprintf(" AND created_at <= $%d", argIndex)
 		args = append(args, endDate)
 		argIndex++
 	}
@@ -633,6 +602,9 @@ func (r *AIReviewRepository) GetStats(ctx context.Context, startDate, endDate *t
 		}
 		byStatus[status] = count
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	stats["by_status"] = byStatus
 
 	// By type
@@ -656,6 +628,9 @@ func (r *AIReviewRepository) GetStats(ctx context.Context, startDate, endDate *t
 			return nil, err
 		}
 		byType[dtype] = count
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, err
 	}
 	stats["by_type"] = byType
 
@@ -775,27 +750,6 @@ func (r *AIReviewRepository) Acceptance(ctx context.Context, groupBy string, mod
 	}
 
 	return out, rows.Err()
-}
-
-// ExpireOldDecisions marks old pending decisions as expired
-func (r *AIReviewRepository) ExpireOldDecisions(ctx context.Context) (int64, error) {
-	query := `
-		UPDATE ai_decisions
-		SET status = 'EXPIRED', updated_at = $1
-		WHERE status = 'PENDING'
-		AND created_at < (
-			SELECT created_at - (review_timeout || ' hours')::interval
-			FROM ai_model_configs mc
-			WHERE mc.model_name = ai_decisions.model_name
-		)
-	`
-
-	result, err := r.db.Exec(ctx, query, time.Now())
-	if err != nil {
-		return 0, err
-	}
-
-	return result.RowsAffected(), nil
 }
 
 // GetDecisionHistory gets the history of a decision including feedback and assignments

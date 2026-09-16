@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/npdms/api/testutil"
@@ -240,4 +241,127 @@ func TestSuggestionsNeedTheirModuleSwitchedOn(t *testing.T) {
 	_, err = insertDecision(tdb, name, "v1", actor)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "module VEHICLE_DETECTION is switched off")
+}
+
+// A measurement belongs to the registration it measured. Removing a model and
+// registering the same name and version again — a different model entirely —
+// must not inherit the old pass.
+func TestAPassDoesNotOutliveTheRegistrationItMeasured(t *testing.T) {
+	tdb := testutil.NewTestDB(t)
+
+	ctx := context.Background()
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
+	registerModel(t, tdb, name, "v1", "")
+	actor := officer(t, tdb)
+
+	_, err := tdb.Pool.Exec(ctx, `
+		INSERT INTO ai_model_evaluations (model_name, model_version, dataset, dataset_size,
+		                                  metric, threshold, measured, passed, run_by)
+		VALUES ($1, 'v1', 'held-out set A', 200, 'accuracy', 0.80, 0.91, TRUE, $2)`, name, actor)
+	require.NoError(t, err)
+	_, err = tdb.Pool.Exec(ctx, `UPDATE ai_model_configs SET is_enabled = TRUE WHERE model_name = $1`, name)
+	require.NoError(t, err, "the measured model should switch on")
+
+	// The registry entry goes; the measurement cannot, because it is append-only.
+	_, err = tdb.Pool.Exec(ctx, `DELETE FROM ai_model_configs WHERE model_name = $1`, name)
+	require.NoError(t, err)
+
+	// Somebody registers the same name and version for a different model.
+	registerModel(t, tdb, name, "v1", "")
+
+	_, err = tdb.Pool.Exec(ctx, `UPDATE ai_model_configs SET is_enabled = TRUE WHERE model_name = $1`, name)
+	require.Error(t, err, "a new registration must be measured on its own account")
+	require.Contains(t, err.Error(), "has not passed an evaluation")
+}
+
+// What a model said, and what it relied on, is settled when it is recorded.
+func TestASuggestionCannotBeRewrittenAfterwards(t *testing.T) {
+	tdb := testutil.NewTestDB(t)
+
+	ctx := context.Background()
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
+	registerModel(t, tdb, name, "v1", "")
+	actor := officer(t, tdb)
+
+	_, err := tdb.Pool.Exec(ctx, `
+		INSERT INTO ai_model_evaluations (model_name, model_version, dataset, dataset_size,
+		                                  metric, threshold, measured, passed, run_by)
+		VALUES ($1, 'v1', 'held-out set A', 200, 'accuracy', 0.80, 0.84, TRUE, $2)`, name, actor)
+	require.NoError(t, err)
+	_, err = tdb.Pool.Exec(ctx, `UPDATE ai_model_configs SET is_enabled = TRUE WHERE model_name = $1`, name)
+	require.NoError(t, err)
+
+	// Insert with sources, so that clearing them is a real change.
+	id := uuid.New()
+	_, err = tdb.Pool.Exec(ctx, `
+		INSERT INTO ai_decisions (id, type, status, priority, source_type, source_id,
+		                          model_name, model_version, prediction, confidence,
+		                          confidence_threshold, requested_by, sources)
+		VALUES ($1, 'COMPLAINT_CATEGORY', 'PENDING', 'MEDIUM', 'COMPLAINT', gen_random_uuid(),
+		        $2, 'v1', 'CYBER_FRAUD', 0.91, 0.70, $3,
+		        '[{"recordType":"COMPLAINT","excerpt":"money was taken by UPI"}]'::jsonb)`,
+		id, name, actor)
+	require.NoError(t, err)
+
+	for _, change := range []string{
+		`prediction = 'ARMS ACT s.25'`,
+		`confidence = 0.99`,
+		`model_version = 'v9'`,
+		`sources = '[]'::jsonb`,
+		`requested_by = NULL`,
+	} {
+		_, err = tdb.Pool.Exec(ctx, `UPDATE ai_decisions SET `+change+` WHERE id = $1`, id)
+		require.Error(t, err, "changing %s should be refused", change)
+		require.Contains(t, err.Error(), "cannot be changed afterwards")
+	}
+
+	// A review stands: it is not undone by writing PENDING over it.
+	_, err = tdb.Pool.Exec(ctx, `
+		UPDATE ai_decisions SET status = 'APPROVED', reviewed_by = $2 WHERE id = $1`, id, actor)
+	require.NoError(t, err)
+
+	_, err = tdb.Pool.Exec(ctx, `
+		UPDATE ai_decisions SET status = 'PENDING', reviewed_by = NULL WHERE id = $1`, id)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be returned to the queue")
+}
+
+// A suggestion can name the station it came from. The column used to reference
+// an empty table, so every suggestion that carried one was refused outright.
+func TestASuggestionCanNameItsStation(t *testing.T) {
+	tdb := testutil.NewTestDB(t)
+
+	ctx := context.Background()
+	name := "PROBE-test-model-" + uuid.NewString()[:8]
+	registerModel(t, tdb, name, "v1", "")
+	actor := officer(t, tdb)
+
+	_, err := tdb.Pool.Exec(ctx, `
+		INSERT INTO ai_model_evaluations (model_name, model_version, dataset, dataset_size,
+		                                  metric, threshold, measured, passed, run_by)
+		VALUES ($1, 'v1', 'held-out set A', 200, 'accuracy', 0.80, 0.84, TRUE, $2)`, name, actor)
+	require.NoError(t, err)
+	_, err = tdb.Pool.Exec(ctx, `UPDATE ai_model_configs SET is_enabled = TRUE WHERE model_name = $1`, name)
+	require.NoError(t, err)
+
+	var stationID uuid.UUID
+	require.NoError(t, tdb.Pool.QueryRow(ctx, `SELECT id FROM stations ORDER BY code LIMIT 1`).Scan(&stationID))
+
+	id := uuid.New()
+	_, err = tdb.Pool.Exec(ctx, `
+		INSERT INTO ai_decisions (id, type, status, priority, source_type, source_id,
+		                          model_name, model_version, prediction, confidence,
+		                          confidence_threshold, requested_by, station_id)
+		VALUES ($1, 'COMPLAINT_CATEGORY', 'PENDING', 'MEDIUM', 'COMPLAINT', gen_random_uuid(),
+		        $2, 'v1', 'CYBER_FRAUD', 0.91, 0.70, $3, $4)`, id, name, actor, stationID)
+	require.NoError(t, err, "a suggestion must be able to name the station it came from")
+
+	// And the station shows up in the acceptance figures, which is the whole
+	// point of recording it.
+	rows, err := NewAIReviewRepository(tdb.Pool).Acceptance(ctx, "station", name,
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, stationID.String(), rows[0].StationID)
+	require.NotEmpty(t, rows[0].StationName)
 }

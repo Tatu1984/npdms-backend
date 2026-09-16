@@ -244,20 +244,29 @@ func (s *AIReviewService) ReviewDecision(ctx context.Context, id uuid.UUID, req 
 		SET status = $1, human_decision = $2, override_reason = NULLIF($3, ''), review_notes = $4,
 			reviewed_by = $5, reviewed_at = $6, updated_at = NOW()
 		WHERE id = $7 AND status = 'PENDING'
-		RETURNING id, type, status, prediction, confidence, human_decision
+		RETURNING id
 	`
 
-	var decision models.AIDecision
+	var reviewedID uuid.UUID
 	err := s.db.QueryRow(ctx, query,
 		req.Status, req.HumanDecision, req.OverrideReason, req.Notes,
 		reviewerID, now, id,
-	).Scan(&decision.ID, &decision.Type, &decision.Status, &decision.Prediction, &decision.Confidence, &decision.HumanDecision)
+	).Scan(&reviewedID)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrAlreadyReviewed
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to review AI decision: %w", err)
+	}
+
+	// Read the record back whole rather than returning the few columns the
+	// update happened to name. Returning a part-filled record gave the caller
+	// a decision with no reviewer, no model version and null sources — on the
+	// one endpoint whose whole subject is who decided what.
+	decision, err := s.repo().GetDecision(ctx, reviewedID)
+	if err != nil {
+		return nil, fmt.Errorf("the review was saved but could not be read back: %w", err)
 	}
 
 	// Audit log
@@ -270,7 +279,7 @@ func (s *AIReviewService) ReviewDecision(ctx context.Context, id uuid.UUID, req 
 		Success:      true,
 	})
 
-	return &decision, nil
+	return decision, nil
 }
 
 // GetReviewQueue retrieves the review queue
@@ -360,7 +369,7 @@ func (s *AIReviewService) SubmitFeedback(ctx context.Context, decisionID uuid.UU
 	}
 
 	query := `
-		INSERT INTO ai_decision_feedbacks (id, decision_id, feedback_type, feedback_by, correct_value, comments, created_at)
+		INSERT INTO ai_decision_feedback (id, decision_id, feedback_type, feedback_by, correct_value, comments, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 	`
 
@@ -479,6 +488,84 @@ func (s *AIReviewService) RecordEvaluation(ctx context.Context, e *models.AIMode
 // ListEvaluations returns the measurements recorded for a model.
 func (s *AIReviewService) ListEvaluations(ctx context.Context, modelName string) ([]models.AIModelEvaluation, error) {
 	return s.repo().ListEvaluations(ctx, modelName)
+}
+
+// ErrUnknownModule is returned for a module that has no switch.
+var ErrUnknownModule = errors.New("no such AI module")
+
+// SetModuleSwitch switches one AI module on or off, with a reason.
+//
+// Face recognition and vehicle detection have their own screens and their own
+// rules, and keep them. This is for every other module: without it a model can
+// be registered, measured and switched on and still produce nothing, because
+// nobody can switch on the module it belongs to.
+func (s *AIReviewService) SetModuleSwitch(ctx context.Context, module string, enabled bool, reason string, actor uuid.UUID) (*models.AIModuleSwitch, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, errors.New("switching a module on or off needs a reason")
+	}
+
+	tag, err := s.db.Exec(ctx, `
+		UPDATE ai_module_switches
+		   SET enabled = $2, reason = $3, note = $3, updated_by = $4, updated_at = NOW()
+		 WHERE module = $1`, module, enabled, reason, actor)
+	if err != nil {
+		s.auditRepo.Log(ctx, &repository.AuditLog{
+			UserID:        &actor,
+			Action:        "ai_module_switch_refused",
+			ResourceType:  "ai_module_switch",
+			Description:   ptr(fmt.Sprintf("Refused to switch module %s %s", module, enabledWord(enabled))),
+			Success:       false,
+			FailureReason: ptr(err.Error()),
+		})
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownModule, module)
+	}
+
+	s.auditRepo.Log(ctx, &repository.AuditLog{
+		UserID:       &actor,
+		Action:       "ai_module_switched",
+		ResourceType: "ai_module_switch",
+		Description:  ptr(fmt.Sprintf("Module %s %s: %s", module, enabledWord(enabled), reason)),
+		Success:      true,
+	})
+
+	switches, err := s.ModuleSwitches(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range switches {
+		if switches[i].Module == module {
+			return &switches[i], nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %s", ErrUnknownModule, module)
+}
+
+// RetireModel withdraws a model. It stays in the registry, switched off: a
+// suggestion an officer acted on must keep naming the model that made it.
+func (s *AIReviewService) RetireModel(ctx context.Context, modelName, reason string, actor uuid.UUID) (*models.AIModelConfig, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, errors.New("retiring a model needs a reason")
+	}
+	if _, err := s.GetModelConfig(ctx, modelName); err != nil {
+		return nil, err
+	}
+
+	if err := s.repo().RetireModel(ctx, modelName, reason); err != nil {
+		return nil, fmt.Errorf("failed to retire the model: %w", err)
+	}
+
+	s.auditRepo.Log(ctx, &repository.AuditLog{
+		UserID:       &actor,
+		Action:       "ai_model_retired",
+		ResourceType: "ai_model_config",
+		Description:  ptr(fmt.Sprintf("Retired model %s: %s", modelName, reason)),
+		Success:      true,
+	})
+
+	return s.GetModelConfig(ctx, modelName)
 }
 
 // Acceptance reports what officers did with each model's suggestions.

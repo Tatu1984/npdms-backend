@@ -82,17 +82,13 @@ CREATE TABLE IF NOT EXISTS ai_model_configs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert default model configurations
-INSERT INTO ai_model_configs (model_name, decision_type, confidence_threshold, auto_approve_threshold, description) VALUES
-    ('ipc_classifier_v1', 'IPC_CLASSIFICATION', 0.85, 0.95, 'IPC Section Classification Model'),
-    ('crime_category_v1', 'CRIME_CATEGORY', 0.80, 0.92, 'Crime Category Detection Model'),
-    ('priority_assigner_v1', 'PRIORITY_ASSIGNMENT', 0.75, 0.90, 'Case Priority Assignment Model'),
-    ('suspect_matcher_v1', 'SUSPECT_MATCH', 0.90, 0.98, 'Suspect Matching Model'),
-    ('fraud_detector_v1', 'FRAUD_DETECTION', 0.88, 0.96, 'Fraud Detection Model'),
-    ('document_classifier_v1', 'DOCUMENT_CLASSIFICATION', 0.82, 0.94, 'Document Classification Model'),
-    ('entity_extractor_v1', 'ENTITY_EXTRACTION', 0.78, 0.91, 'Named Entity Extraction Model'),
-    ('sentiment_analyzer_v1', 'SENTIMENT_ANALYSIS', 0.80, 0.93, 'Sentiment Analysis Model')
-ON CONFLICT (model_name) DO NOTHING;
+-- No models are seeded here. The eight that used to be listed
+-- (ipc_classifier_v1 and the rest) were never built, and were written around
+-- the IPC rather than the BNS; migration 000076 deletes them and drops the
+-- auto_approve_threshold column this statement set, so on any database built
+-- before that migration this insert failed and the bootstrap reported an
+-- error on every run. A model is registered by an officer of SP rank or above
+-- once it exists and has been measured.
 
 -- AI Performance Metrics
 CREATE TABLE IF NOT EXISTS ai_performance_metrics (

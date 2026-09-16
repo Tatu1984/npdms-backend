@@ -162,10 +162,34 @@ def main():
     status, _ = call("GET", "/ai-review/acceptance", si)
     check("SI cannot read acceptance rates", status == 403, f"got {status}")
 
+    print("\nRetirement and module switches")
+    status, body = call("PUT", "/ai-review/modules/NO_SUCH_MODULE", admin, {"enabled": True, "reason": "probe"})
+    check("an unknown module is refused", status == 404, f"got {status}")
+    status, body = call("PUT", "/ai-review/modules/FACE_RECOGNITION", admin, {"enabled": True, "reason": "probe run"})
+    check("face recognition still needs an authorisation", status == 409, f"{status} {body}")
+    status, body = call("PUT", "/ai-review/modules/VEHICLE_DETECTION", dsp, {"enabled": True, "reason": "probe run"})
+    check("DSP cannot switch a module on here", status == 403, f"got {status}")
+    status, body = call("PUT", "/ai-review/modules/VEHICLE_DETECTION", admin, {"enabled": False})
+    check("switching a module needs a reason", status == 400, f"got {status}")
+
+    print("\nChanging the service a measured model calls")
+    status, body = call("PUT", f"/ai-review/models/{model}", admin, {"endpointEnv": "PROBE_OTHER_URL"})
+    check("a switched-on model cannot be repointed", status == 409, f"{status} {body}")
+
     print("\nQueue")
     status, body = call("GET", "/ai-review/queue", si)
     check("an officer can read the review queue", status == 200, f"{status} {body}")
     check("the queue is a list, not a null", isinstance(body.get("decisions"), list), str(type(body.get("decisions"))))
+
+    status, body = call("POST", f"/ai-review/models/{model}/retire", dsp, {"reason": "probe"})
+    check("DSP cannot retire a model", status == 403, f"got {status}")
+    status, body = call("POST", f"/ai-review/models/{model}/retire", admin, {"reason": "probe run finished"})
+    check("a model can be retired", status == 200, f"{status} {body}")
+    check("retiring switches it off", body.get("isEnabled") is False, str(body.get("isEnabled")))
+    check("the reason is kept", "probe run finished" in (body.get("retiredReason") or ""), str(body.get("retiredReason")))
+
+    status, body = call("PUT", f"/ai-review/models/{model}", admin, {"isEnabled": True})
+    check("a retired model cannot be switched back on", status == 409, f"{status} {body}")
 
     print("\nTidying up")
     print(f"  the probe model {model} is left registered; remove it with:")

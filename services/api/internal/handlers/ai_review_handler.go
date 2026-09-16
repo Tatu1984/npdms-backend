@@ -170,6 +170,14 @@ func (h *AIReviewHandler) ReviewDecision(c *gin.Context) {
 	}
 
 	decision, err := h.service.ReviewDecision(c.Request.Context(), id, review, uid)
+	if err != nil && strings.Contains(err.Error(), "needs a reason") {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "override_reason_required",
+			Message: "Overriding a suggestion needs a reason.",
+			Code:    400,
+		})
+		return
+	}
 	if errors.Is(err, services.ErrAlreadyReviewed) {
 		// Two officers can open the same queue. The second one is told what
 		// happened rather than silently overwriting the first one's decision.
@@ -355,7 +363,7 @@ func (h *AIReviewHandler) GetModelConfigs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"configs": configs,
+		"data": configs,
 	})
 }
 
@@ -596,6 +604,81 @@ func (h *AIReviewHandler) ListModuleSwitches(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": switches})
 }
 
+// SetModuleSwitch switches one AI module on or off.
+func (h *AIReviewHandler) SetModuleSwitch(c *gin.Context) {
+	module := c.Param("module")
+
+	var req struct {
+		Enabled bool   `json:"enabled"`
+		Reason  string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_input",
+			Message: "Switching a module on or off needs a reason.",
+			Code:    400,
+		})
+		return
+	}
+
+	actorID, _ := c.Get("userID")
+	actor, _ := actorID.(uuid.UUID)
+
+	saved, err := h.service.SetModuleSwitch(c.Request.Context(), module, req.Enabled, req.Reason, actor)
+	if errors.Is(err, services.ErrUnknownModule) {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "unknown_module",
+			Message: "There is no AI module by that name.",
+			Code:    404,
+		})
+		return
+	}
+	if err != nil {
+		// Face recognition cannot be switched on without an authorisation, and
+		// the database says so. That is a rule, not a fault.
+		c.JSON(http.StatusConflict, models.ErrorResponse{
+			Error:   "switch_refused",
+			Message: refusalMessage(err),
+			Code:    409,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, saved)
+}
+
+// RetireModel withdraws a model from use.
+func (h *AIReviewHandler) RetireModel(c *gin.Context) {
+	modelName := c.Param("modelName")
+
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error:   "invalid_input",
+			Message: "Retiring a model needs a reason.",
+			Code:    400,
+		})
+		return
+	}
+
+	actorID, _ := c.Get("userID")
+	actor, _ := actorID.(uuid.UUID)
+
+	saved, err := h.service.RetireModel(c.Request.Context(), modelName, req.Reason, actor)
+	if err != nil {
+		c.JSON(http.StatusNotFound, models.ErrorResponse{
+			Error:   "not_found",
+			Message: "Model configuration not found",
+			Code:    404,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, saved)
+}
+
 // isRuleRefusal reports whether the database turned the write down because of
 // a stated rule rather than failing.
 func isRuleRefusal(err error) bool {
@@ -609,7 +692,8 @@ func isRuleRefusal(err error) bool {
 		"is retired and cannot be enabled",
 		"is not in the registry",
 		"is switched off",
-		"module",
+		"before changing the service it calls",
+		"cannot be evaluated",
 	} {
 		if strings.Contains(text, marker) {
 			return true
