@@ -171,6 +171,9 @@ func addUpdate(ctx context.Context, tx pgx.Tx, complaintID uuid.UUID, status mod
 }
 
 type ComplaintFilter struct {
+	// ViewerID scopes the register to the viewer's own force, plus anything
+	// referred to it. Zero means no scoping, for a background job.
+	ViewerID  uuid.UUID
 	Search    string
 	Status    string
 	Category  string
@@ -211,6 +214,13 @@ func (r *ComplaintRepository) List(ctx context.Context, f ComplaintFilter) ([]mo
 		args = append(args, v)
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
+
+	// A complaint belongs to the department that took it.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeOrReferredSQL("c.station_id", "c.id", "COMPLAINT", len(args)))
+	}
+
 	if s := strings.TrimSpace(f.Search); s != "" {
 		digits := strings.Map(func(r rune) rune {
 			if r >= '0' && r <= '9' {

@@ -129,6 +129,12 @@ func (h *ComplaintHandler) List(c *gin.Context) {
 		Unrouted: c.Query("unrouted") == "true", Overdue: c.Query("overdue") == "true",
 		OpenOnly: c.Query("open") == "true", Page: page, PageSize: size,
 	}
+	// The register is the viewer's own department's, plus anything referred.
+	if userID, ok := c.Get("userID"); ok {
+		if id, ok := userID.(uuid.UUID); ok {
+			f.ViewerID = id
+		}
+	}
 	if v := c.Query("stationId"); v != "" {
 		id, err := uuid.Parse(v)
 		if err != nil {

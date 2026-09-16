@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/npdms/api/internal/middleware"
@@ -47,6 +47,12 @@ func (h *TrafficChallanHandler) List(c *gin.Context) {
 	params := models.ChallanSearchParams{
 		Page:     page,
 		PageSize: pageSize,
+	}
+	// The register is the viewer's own department's.
+	if userID, ok := c.Get("userID"); ok {
+		if id, ok := userID.(uuid.UUID); ok {
+			params.ViewerID = id
+		}
 	}
 
 	if vehicleNumber := c.Query("vehicleNumber"); vehicleNumber != "" {

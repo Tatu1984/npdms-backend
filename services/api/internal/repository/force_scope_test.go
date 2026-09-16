@@ -162,6 +162,31 @@ func TestAReferralIsWhatLetsARecordCross(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, firIDs(view)[f.kpFIR], "an accepted referral did not bring the record across")
 
+	// A referral grants sight to the department named on it and no wider. CID
+	// is a wing of West Bengal Police, and a case referred to CID is not
+	// thereby every West Bengal Police officer's to read — CID exists to take
+	// work away from the local force, sometimes because it is too close to it.
+	var cidForce uuid.UUID
+	require.NoError(t, tdb.Pool.QueryRow(ctx, `SELECT id FROM forces WHERE code = 'CID'`).Scan(&cidForce))
+
+	toCID := uuid.New()
+	_, err = tdb.Pool.Exec(ctx, `
+		INSERT INTO case_referrals (id, record_type, record_id, from_force_id, to_force_id, reason, referred_by, status, decided_by)
+		VALUES ($1, 'FIR', $2, $3, $4, 'PROBE-test: referred to CID alone', $5, 'ACCEPTED', $6)`,
+		toCID, f.wbpFIR, wbpForce, cidForce, f.wbpOfficer, f.wbpOfficer)
+	if err == nil {
+		t.Cleanup(func() { tdb.Pool.Exec(ctx, `DELETE FROM case_referrals WHERE id = $1`, toCID) })
+
+		var wbpSees, cidSees bool
+		require.NoError(t, tdb.Pool.QueryRow(ctx,
+			`SELECT record_referred_to_force('FIR', $1, $2)`, f.wbpFIR, wbpForce).Scan(&wbpSees))
+		require.NoError(t, tdb.Pool.QueryRow(ctx,
+			`SELECT record_referred_to_force('FIR', $1, $2)`, f.wbpFIR, cidForce).Scan(&cidSees))
+
+		require.True(t, cidSees, "the department the record was referred to cannot see it")
+		require.False(t, wbpSees, "a referral to CID was visible to all of West Bengal Police")
+	}
+
 	// And it is decided once.
 	_, err = tdb.Pool.Exec(ctx, `
 		UPDATE case_referrals SET status = 'DECLINED', decided_by = $2 WHERE id = $1`,

@@ -83,6 +83,8 @@ func scanComplaint(row pgx.Row) (*models.CyberComplaint, error) {
 }
 
 type CyberComplaintFilter struct {
+	// ViewerID scopes the register to the viewer's own force.
+	ViewerID uuid.UUID
 	Search   string
 	Status   string
 	Type     string
@@ -93,6 +95,13 @@ type CyberComplaintFilter struct {
 func (r *CyberFraudRepository) ListComplaints(ctx context.Context, f CyberComplaintFilter) ([]models.CyberComplaint, int64, error) {
 	where := []string{"1=1"}
 	args := []interface{}{}
+
+	// A cyber-fraud complaint belongs to the department that registered it.
+	if f.ViewerID != uuid.Nil {
+		args = append(args, f.ViewerID)
+		where = append(where, ForceScopeSQL("c.station_id", len(args)))
+	}
+
 	if f.Search != "" {
 		args = append(args, "%"+f.Search+"%")
 		n := len(args)

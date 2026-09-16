@@ -29,16 +29,16 @@ type TrafficViolationType struct {
 type ViolationCategory string
 
 const (
-	ViolationCategorySpeeding        ViolationCategory = "SPEEDING"
-	ViolationCategorySignalViolation ViolationCategory = "SIGNAL_VIOLATION"
+	ViolationCategorySpeeding          ViolationCategory = "SPEEDING"
+	ViolationCategorySignalViolation   ViolationCategory = "SIGNAL_VIOLATION"
 	ViolationCategoryDocumentViolation ViolationCategory = "DOCUMENT_VIOLATION"
-	ViolationCategorySafetyViolation ViolationCategory = "SAFETY_VIOLATION"
-	ViolationCategoryParkingViolation ViolationCategory = "PARKING_VIOLATION"
-	ViolationCategoryDrunkDriving    ViolationCategory = "DRUNK_DRIVING"
-	ViolationCategoryDangerousDriving ViolationCategory = "DANGEROUS_DRIVING"
+	ViolationCategorySafetyViolation   ViolationCategory = "SAFETY_VIOLATION"
+	ViolationCategoryParkingViolation  ViolationCategory = "PARKING_VIOLATION"
+	ViolationCategoryDrunkDriving      ViolationCategory = "DRUNK_DRIVING"
+	ViolationCategoryDangerousDriving  ViolationCategory = "DANGEROUS_DRIVING"
 	ViolationCategoryEmissionViolation ViolationCategory = "EMISSION_VIOLATION"
-	ViolationCategoryOverloading     ViolationCategory = "OVERLOADING"
-	ViolationCategoryOther           ViolationCategory = "OTHER"
+	ViolationCategoryOverloading       ViolationCategory = "OVERLOADING"
+	ViolationCategoryOther             ViolationCategory = "OTHER"
 )
 
 // ViolationSeverity enum
@@ -53,97 +53,97 @@ const (
 
 // TrafficChallan represents a traffic challan/ticket
 type TrafficChallan struct {
-	ID                   uuid.UUID  `json:"id" db:"id"`
-	ChallanNumber        string     `json:"challan_number" db:"challan_number"`
+	ID            uuid.UUID `json:"id" db:"id"`
+	ChallanNumber string    `json:"challan_number" db:"challan_number"`
 
 	// Violation details
-	ViolationTypeID      uuid.UUID  `json:"violation_type_id" db:"violation_type_id"`
+	ViolationTypeID      uuid.UUID             `json:"violation_type_id" db:"violation_type_id"`
 	ViolationType        *TrafficViolationType `json:"violation_type,omitempty"`
-	ViolationDate        time.Time  `json:"violation_date" db:"violation_date"`
-	ViolationLocation    string     `json:"violation_location" db:"violation_location"`
-	ViolationLatitude    *float64   `json:"violation_latitude,omitempty" db:"violation_latitude"`
-	ViolationLongitude   *float64   `json:"violation_longitude,omitempty" db:"violation_longitude"`
-	ViolationDescription *string    `json:"violation_description,omitempty" db:"violation_description"`
+	ViolationDate        time.Time             `json:"violation_date" db:"violation_date"`
+	ViolationLocation    string                `json:"violation_location" db:"violation_location"`
+	ViolationLatitude    *float64              `json:"violation_latitude,omitempty" db:"violation_latitude"`
+	ViolationLongitude   *float64              `json:"violation_longitude,omitempty" db:"violation_longitude"`
+	ViolationDescription *string               `json:"violation_description,omitempty" db:"violation_description"`
 
 	// Vehicle details
-	VehicleNumber        string     `json:"vehicle_number" db:"vehicle_number"`
-	VehicleType          string     `json:"vehicle_type" db:"vehicle_type"`
-	VehicleMake          *string    `json:"vehicle_make,omitempty" db:"vehicle_make"`
-	VehicleModel         *string    `json:"vehicle_model,omitempty" db:"vehicle_model"`
-	VehicleColor         *string    `json:"vehicle_color,omitempty" db:"vehicle_color"`
-	ChassisNumber        *string    `json:"chassis_number,omitempty" db:"chassis_number"`
-	EngineNumber         *string    `json:"engine_number,omitempty" db:"engine_number"`
+	VehicleNumber string  `json:"vehicle_number" db:"vehicle_number"`
+	VehicleType   string  `json:"vehicle_type" db:"vehicle_type"`
+	VehicleMake   *string `json:"vehicle_make,omitempty" db:"vehicle_make"`
+	VehicleModel  *string `json:"vehicle_model,omitempty" db:"vehicle_model"`
+	VehicleColor  *string `json:"vehicle_color,omitempty" db:"vehicle_color"`
+	ChassisNumber *string `json:"chassis_number,omitempty" db:"chassis_number"`
+	EngineNumber  *string `json:"engine_number,omitempty" db:"engine_number"`
 
 	// Owner/Driver details
-	OwnerName            *string    `json:"owner_name,omitempty" db:"owner_name"`
-	OwnerAddress         *string    `json:"owner_address,omitempty" db:"owner_address"`
-	OwnerPhone           *string    `json:"owner_phone,omitempty" db:"owner_phone"`
-	DriverName           *string    `json:"driver_name,omitempty" db:"driver_name"`
-	DriverLicenseNumber  *string    `json:"driver_license_number,omitempty" db:"driver_license_number"`
-	DriverLicenseState   *string    `json:"driver_license_state,omitempty" db:"driver_license_state"`
+	OwnerName               *string    `json:"owner_name,omitempty" db:"owner_name"`
+	OwnerAddress            *string    `json:"owner_address,omitempty" db:"owner_address"`
+	OwnerPhone              *string    `json:"owner_phone,omitempty" db:"owner_phone"`
+	DriverName              *string    `json:"driver_name,omitempty" db:"driver_name"`
+	DriverLicenseNumber     *string    `json:"driver_license_number,omitempty" db:"driver_license_number"`
+	DriverLicenseState      *string    `json:"driver_license_state,omitempty" db:"driver_license_state"`
 	DriverLicenseValidUntil *time.Time `json:"driver_license_valid_until,omitempty" db:"driver_license_valid_until"`
-	DriverPhone          *string    `json:"driver_phone,omitempty" db:"driver_phone"`
-	DriverAddress        *string    `json:"driver_address,omitempty" db:"driver_address"`
+	DriverPhone             *string    `json:"driver_phone,omitempty" db:"driver_phone"`
+	DriverAddress           *string    `json:"driver_address,omitempty" db:"driver_address"`
 
 	// Issuing officer
-	IssuingOfficerID     *uuid.UUID `json:"issuing_officer_id,omitempty" db:"issuing_officer_id"`
-	IssuingStationID     uuid.UUID  `json:"issuing_station_id" db:"issuing_station_id"`
-	IssuingOfficerName   *string    `json:"issuing_officer_name,omitempty" db:"issuing_officer_name"`
-	IssuingOfficerBadge  *string    `json:"issuing_officer_badge,omitempty" db:"issuing_officer_badge"`
+	IssuingOfficerID    *uuid.UUID `json:"issuing_officer_id,omitempty" db:"issuing_officer_id"`
+	IssuingStationID    uuid.UUID  `json:"issuing_station_id" db:"issuing_station_id"`
+	IssuingOfficerName  *string    `json:"issuing_officer_name,omitempty" db:"issuing_officer_name"`
+	IssuingOfficerBadge *string    `json:"issuing_officer_badge,omitempty" db:"issuing_officer_badge"`
 
 	// Documents verified
-	RCVerified           bool       `json:"rc_verified" db:"rc_verified"`
-	LicenseVerified      bool       `json:"license_verified" db:"license_verified"`
-	InsuranceVerified    bool       `json:"insurance_verified" db:"insurance_verified"`
-	PUCVerified          bool       `json:"puc_verified" db:"puc_verified"`
+	RCVerified        bool `json:"rc_verified" db:"rc_verified"`
+	LicenseVerified   bool `json:"license_verified" db:"license_verified"`
+	InsuranceVerified bool `json:"insurance_verified" db:"insurance_verified"`
+	PUCVerified       bool `json:"puc_verified" db:"puc_verified"`
 
 	// Fine details
-	OriginalFineAmount   int64      `json:"original_fine_amount" db:"original_fine_amount"`
-	DiscountAmount       int64      `json:"discount_amount" db:"discount_amount"`
-	PenaltyAmount        int64      `json:"penalty_amount" db:"penalty_amount"`
-	FinalAmount          int64      `json:"final_amount" db:"final_amount"`
-	PaymentDueDate       time.Time  `json:"payment_due_date" db:"payment_due_date"`
+	OriginalFineAmount int64     `json:"original_fine_amount" db:"original_fine_amount"`
+	DiscountAmount     int64     `json:"discount_amount" db:"discount_amount"`
+	PenaltyAmount      int64     `json:"penalty_amount" db:"penalty_amount"`
+	FinalAmount        int64     `json:"final_amount" db:"final_amount"`
+	PaymentDueDate     time.Time `json:"payment_due_date" db:"payment_due_date"`
 
 	// Status
-	Status               string     `json:"status" db:"status"`
+	Status string `json:"status" db:"status"`
 
 	// Payment details
-	PaymentDate          *time.Time `json:"payment_date,omitempty" db:"payment_date"`
-	PaymentMethod        *string    `json:"payment_method,omitempty" db:"payment_method"`
-	PaymentReference     *string    `json:"payment_reference,omitempty" db:"payment_reference"`
-	PaymentGateway       *string    `json:"payment_gateway,omitempty" db:"payment_gateway"`
+	PaymentDate      *time.Time `json:"payment_date,omitempty" db:"payment_date"`
+	PaymentMethod    *string    `json:"payment_method,omitempty" db:"payment_method"`
+	PaymentReference *string    `json:"payment_reference,omitempty" db:"payment_reference"`
+	PaymentGateway   *string    `json:"payment_gateway,omitempty" db:"payment_gateway"`
 
 	// Court details
-	CourtDate            *time.Time `json:"court_date,omitempty" db:"court_date"`
-	CourtName            *string    `json:"court_name,omitempty" db:"court_name"`
-	CourtOrderNumber     *string    `json:"court_order_number,omitempty" db:"court_order_number"`
-	CourtDecision        *string    `json:"court_decision,omitempty" db:"court_decision"`
+	CourtDate        *time.Time `json:"court_date,omitempty" db:"court_date"`
+	CourtName        *string    `json:"court_name,omitempty" db:"court_name"`
+	CourtOrderNumber *string    `json:"court_order_number,omitempty" db:"court_order_number"`
+	CourtDecision    *string    `json:"court_decision,omitempty" db:"court_decision"`
 
 	// Evidence
-	EvidencePhotos       []string   `json:"evidence_photos,omitempty" db:"evidence_photos"`
-	EvidenceVideos       []string   `json:"evidence_videos,omitempty" db:"evidence_videos"`
-	SpeedReading         *float64   `json:"speed_reading,omitempty" db:"speed_reading"`
-	BreathAnalyzerReading *float64  `json:"breath_analyzer_reading,omitempty" db:"breath_analyzer_reading"`
+	EvidencePhotos        []string `json:"evidence_photos,omitempty" db:"evidence_photos"`
+	EvidenceVideos        []string `json:"evidence_videos,omitempty" db:"evidence_videos"`
+	SpeedReading          *float64 `json:"speed_reading,omitempty" db:"speed_reading"`
+	BreathAnalyzerReading *float64 `json:"breath_analyzer_reading,omitempty" db:"breath_analyzer_reading"`
 
 	// Additional actions
-	LicenseSeized        bool       `json:"license_seized" db:"license_seized"`
-	VehicleSeized        bool       `json:"vehicle_seized" db:"vehicle_seized"`
-	TowingRequired       bool       `json:"towing_required" db:"towing_required"`
-	TowingReference      *string    `json:"towing_reference,omitempty" db:"towing_reference"`
+	LicenseSeized   bool    `json:"license_seized" db:"license_seized"`
+	VehicleSeized   bool    `json:"vehicle_seized" db:"vehicle_seized"`
+	TowingRequired  bool    `json:"towing_required" db:"towing_required"`
+	TowingReference *string `json:"towing_reference,omitempty" db:"towing_reference"`
 
 	// Disputes
-	DisputeFiled         bool       `json:"dispute_filed" db:"dispute_filed"`
-	DisputeDate          *time.Time `json:"dispute_date,omitempty" db:"dispute_date"`
-	DisputeReason        *string    `json:"dispute_reason,omitempty" db:"dispute_reason"`
-	DisputeStatus        *string    `json:"dispute_status,omitempty" db:"dispute_status"`
-	DisputeResolution    *string    `json:"dispute_resolution,omitempty" db:"dispute_resolution"`
+	DisputeFiled      bool       `json:"dispute_filed" db:"dispute_filed"`
+	DisputeDate       *time.Time `json:"dispute_date,omitempty" db:"dispute_date"`
+	DisputeReason     *string    `json:"dispute_reason,omitempty" db:"dispute_reason"`
+	DisputeStatus     *string    `json:"dispute_status,omitempty" db:"dispute_status"`
+	DisputeResolution *string    `json:"dispute_resolution,omitempty" db:"dispute_resolution"`
 
 	// Sync metadata
-	SyncStatus           string     `json:"sync_status" db:"sync_status"`
-	SyncedToCentral      bool       `json:"synced_to_central" db:"synced_to_central"`
+	SyncStatus      string `json:"sync_status" db:"sync_status"`
+	SyncedToCentral bool   `json:"synced_to_central" db:"synced_to_central"`
 
-	CreatedAt            time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at" db:"updated_at"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // ChallanStatus enum
@@ -164,13 +164,13 @@ const (
 type VehicleType string
 
 const (
-	VehicleTypeTwoWheeler    VehicleType = "TWO_WHEELER"
-	VehicleTypeThreeWheeler  VehicleType = "THREE_WHEELER"
-	VehicleTypeFourWheeler   VehicleType = "FOUR_WHEELER"
-	VehicleTypeCommercial    VehicleType = "COMMERCIAL"
-	VehicleTypeHeavyVehicle  VehicleType = "HEAVY_VEHICLE"
-	VehicleTypeTransport     VehicleType = "TRANSPORT"
-	VehicleTypeOther         VehicleType = "OTHER"
+	VehicleTypeTwoWheeler   VehicleType = "TWO_WHEELER"
+	VehicleTypeThreeWheeler VehicleType = "THREE_WHEELER"
+	VehicleTypeFourWheeler  VehicleType = "FOUR_WHEELER"
+	VehicleTypeCommercial   VehicleType = "COMMERCIAL"
+	VehicleTypeHeavyVehicle VehicleType = "HEAVY_VEHICLE"
+	VehicleTypeTransport    VehicleType = "TRANSPORT"
+	VehicleTypeOther        VehicleType = "OTHER"
 )
 
 // ChallanPayment represents a payment transaction for a challan
@@ -238,20 +238,20 @@ type ChallanDefaulter struct {
 
 // ChallanHotspot represents a location with high challan frequency
 type ChallanHotspot struct {
-	ID                    uuid.UUID  `json:"id" db:"id"`
-	LocationName          string     `json:"location_name" db:"location_name"`
-	Latitude              float64    `json:"latitude" db:"latitude"`
-	Longitude             float64    `json:"longitude" db:"longitude"`
-	RadiusMeters          int        `json:"radius_meters" db:"radius_meters"`
-	TotalChallans         int        `json:"total_challans" db:"total_challans"`
-	ChallansLast30Days    int        `json:"challans_last_30_days" db:"challans_last_30_days"`
-	MostCommonViolation   *string    `json:"most_common_violation,omitempty" db:"most_common_violation"`
-	PeakHours             []string   `json:"peak_hours,omitempty" db:"peak_hours"`
-	RequiresSignal        bool       `json:"requires_signal" db:"requires_signal"`
-	RequiresSpeedBreaker  bool       `json:"requires_speed_breaker" db:"requires_speed_breaker"`
-	RequiresPatrol        bool       `json:"requires_patrol" db:"requires_patrol"`
-	RecommendationNotes   *string    `json:"recommendation_notes,omitempty" db:"recommendation_notes"`
-	UpdatedAt             time.Time  `json:"updated_at" db:"updated_at"`
+	ID                   uuid.UUID `json:"id" db:"id"`
+	LocationName         string    `json:"location_name" db:"location_name"`
+	Latitude             float64   `json:"latitude" db:"latitude"`
+	Longitude            float64   `json:"longitude" db:"longitude"`
+	RadiusMeters         int       `json:"radius_meters" db:"radius_meters"`
+	TotalChallans        int       `json:"total_challans" db:"total_challans"`
+	ChallansLast30Days   int       `json:"challans_last_30_days" db:"challans_last_30_days"`
+	MostCommonViolation  *string   `json:"most_common_violation,omitempty" db:"most_common_violation"`
+	PeakHours            []string  `json:"peak_hours,omitempty" db:"peak_hours"`
+	RequiresSignal       bool      `json:"requires_signal" db:"requires_signal"`
+	RequiresSpeedBreaker bool      `json:"requires_speed_breaker" db:"requires_speed_breaker"`
+	RequiresPatrol       bool      `json:"requires_patrol" db:"requires_patrol"`
+	RecommendationNotes  *string   `json:"recommendation_notes,omitempty" db:"recommendation_notes"`
+	UpdatedAt            time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // CreateChallanRequest for creating a new challan
@@ -263,49 +263,52 @@ type CreateChallanRequest struct {
 	ViolationLongitude   *float64  `json:"violation_longitude"`
 	ViolationDescription *string   `json:"violation_description"`
 
-	VehicleNumber        string    `json:"vehicle_number" binding:"required"`
-	VehicleType          string    `json:"vehicle_type" binding:"required"`
-	VehicleMake          *string   `json:"vehicle_make"`
-	VehicleModel         *string   `json:"vehicle_model"`
-	VehicleColor         *string   `json:"vehicle_color"`
+	VehicleNumber string  `json:"vehicle_number" binding:"required"`
+	VehicleType   string  `json:"vehicle_type" binding:"required"`
+	VehicleMake   *string `json:"vehicle_make"`
+	VehicleModel  *string `json:"vehicle_model"`
+	VehicleColor  *string `json:"vehicle_color"`
 
-	OwnerName            *string   `json:"owner_name"`
-	OwnerPhone           *string   `json:"owner_phone"`
-	DriverName           *string   `json:"driver_name"`
-	DriverLicenseNumber  *string   `json:"driver_license_number"`
-	DriverPhone          *string   `json:"driver_phone"`
+	OwnerName           *string `json:"owner_name"`
+	OwnerPhone          *string `json:"owner_phone"`
+	DriverName          *string `json:"driver_name"`
+	DriverLicenseNumber *string `json:"driver_license_number"`
+	DriverPhone         *string `json:"driver_phone"`
 
-	EvidencePhotos       []string  `json:"evidence_photos"`
-	SpeedReading         *float64  `json:"speed_reading"`
+	EvidencePhotos        []string `json:"evidence_photos"`
+	SpeedReading          *float64 `json:"speed_reading"`
 	BreathAnalyzerReading *float64 `json:"breath_analyzer_reading"`
 }
 
 // ChallanSearchParams for searching challans
 type ChallanSearchParams struct {
-	VehicleNumber   *string    `form:"vehicle_number"`
-	Status          *string    `form:"status"`
-	ViolationType   *uuid.UUID `form:"violation_type"`
-	IssuingStation  *uuid.UUID `form:"issuing_station"`
-	IssuingOfficer  *uuid.UUID `form:"issuing_officer"`
-	FromDate        *time.Time `form:"from_date"`
-	ToDate          *time.Time `form:"to_date"`
-	MinAmount       *int64     `form:"min_amount"`
-	MaxAmount       *int64     `form:"max_amount"`
-	Page            int        `form:"page"`
-	PageSize        int        `form:"page_size"`
+	// ViewerID scopes the register to the viewer's own force. It is not read
+	// from the query string: a boundary the client can set is not a boundary.
+	ViewerID       uuid.UUID  `form:"-"`
+	VehicleNumber  *string    `form:"vehicle_number"`
+	Status         *string    `form:"status"`
+	ViolationType  *uuid.UUID `form:"violation_type"`
+	IssuingStation *uuid.UUID `form:"issuing_station"`
+	IssuingOfficer *uuid.UUID `form:"issuing_officer"`
+	FromDate       *time.Time `form:"from_date"`
+	ToDate         *time.Time `form:"to_date"`
+	MinAmount      *int64     `form:"min_amount"`
+	MaxAmount      *int64     `form:"max_amount"`
+	Page           int        `form:"page"`
+	PageSize       int        `form:"page_size"`
 }
 
 // ChallanStats represents aggregated challan statistics
 type ChallanStats struct {
-	TotalChallans      int64              `json:"total_challans"`
-	TotalAmount        int64              `json:"total_amount"`
-	CollectedAmount    int64              `json:"collected_amount"`
-	PendingAmount      int64              `json:"pending_amount"`
-	ByStatus           map[string]int64   `json:"by_status"`
-	ByViolationType    map[string]int64   `json:"by_violation_type"`
-	ByVehicleType      map[string]int64   `json:"by_vehicle_type"`
-	TopViolations      []ViolationCount   `json:"top_violations"`
-	DailyTrend         []DailyChallanStat `json:"daily_trend"`
+	TotalChallans   int64              `json:"total_challans"`
+	TotalAmount     int64              `json:"total_amount"`
+	CollectedAmount int64              `json:"collected_amount"`
+	PendingAmount   int64              `json:"pending_amount"`
+	ByStatus        map[string]int64   `json:"by_status"`
+	ByViolationType map[string]int64   `json:"by_violation_type"`
+	ByVehicleType   map[string]int64   `json:"by_vehicle_type"`
+	TopViolations   []ViolationCount   `json:"top_violations"`
+	DailyTrend      []DailyChallanStat `json:"daily_trend"`
 }
 
 // ViolationCount for top violations
@@ -317,10 +320,10 @@ type ViolationCount struct {
 
 // DailyChallanStat for daily trends
 type DailyChallanStat struct {
-	Date       string `json:"date"`
-	Count      int64  `json:"count"`
-	Amount     int64  `json:"amount"`
-	Collected  int64  `json:"collected"`
+	Date      string `json:"date"`
+	Count     int64  `json:"count"`
+	Amount    int64  `json:"amount"`
+	Collected int64  `json:"collected"`
 }
 
 // InitiatePaymentRequest for starting a payment

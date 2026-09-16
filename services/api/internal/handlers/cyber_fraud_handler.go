@@ -72,8 +72,15 @@ func bind(c *gin.Context, dst interface{}) bool {
 
 func (h *CyberFraudHandler) List(c *gin.Context) {
 	page, size := pageParams(c)
+	viewer := uuid.Nil
+	if userID, ok := c.Get("userID"); ok {
+		if id, ok := userID.(uuid.UUID); ok {
+			viewer = id
+		}
+	}
 	list, total, err := h.service.List(c.Request.Context(), repository.CyberComplaintFilter{
-		Search: c.Query("search"), Status: c.Query("status"), Type: c.Query("type"), Page: page, PageSize: size,
+		ViewerID: viewer,
+		Search:   c.Query("search"), Status: c.Query("status"), Type: c.Query("type"), Page: page, PageSize: size,
 	})
 	if err != nil {
 		fraudError(c, "list complaints", err)

@@ -188,6 +188,13 @@ func (r *TrafficChallanRepository) SearchChallans(ctx context.Context, params mo
 		argNum++
 	}
 
+	// A challan belongs to the department whose officer issued it.
+	if params.ViewerID != uuid.Nil {
+		conditions = append(conditions, ForceScopeSQL("tc.issuing_station_id", argNum))
+		args = append(args, params.ViewerID)
+		argNum++
+	}
+
 	if params.IssuingStation != nil {
 		conditions = append(conditions, fmt.Sprintf("tc.issuing_station_id = $%d", argNum))
 		args = append(args, *params.IssuingStation)
