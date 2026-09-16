@@ -341,6 +341,9 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 	Code    int    `json:"code"`
+	// Force names the department that holds a record the officer may not see,
+	// so the screen can say who to ask rather than only that they cannot look.
+	Force string `json:"force,omitempty"`
 }
 
 type PaginatedResponse struct {

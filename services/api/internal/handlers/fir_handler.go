@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
@@ -14,10 +15,13 @@ import (
 
 type FIRHandler struct {
 	firService *services.FIRService
+	// db is used only to establish which department holds a record, so that a
+	// cross-force read is refused by name rather than answered "not found".
+	db *pgxpool.Pool
 }
 
-func NewFIRHandler(firService *services.FIRService) *FIRHandler {
-	return &FIRHandler{firService: firService}
+func NewFIRHandler(firService *services.FIRService, db *pgxpool.Pool) *FIRHandler {
+	return &FIRHandler{firService: firService, db: db}
 }
 
 func (h *FIRHandler) List(c *gin.Context) {
@@ -69,6 +73,12 @@ func (h *FIRHandler) Get(c *gin.Context) {
 			Message: "Invalid FIR ID",
 			Code:    400,
 		})
+		return
+	}
+
+	// An FIR of another department is refused by name, not answered with
+	// "not found": the officer should know who holds it.
+	if RefuseIfAnotherForces(c, h.db, "FIR", id) {
 		return
 	}
 

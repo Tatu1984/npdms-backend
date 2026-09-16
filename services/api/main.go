@@ -204,7 +204,7 @@ func main() {
 	go faceRecognitionService.RunAutoEnrolment(dispatchCtx, 2*time.Minute)
 	riskHandler := handlers.NewRiskHandler(services.NewRiskService(riskRepo, auditRepo))
 	malkhanaHandler := handlers.NewMalkhanaHandler(services.NewMalkhanaService(repository.NewMalkhanaRepository(db), alertRepo, auditRepo))
-	firHandler := handlers.NewFIRHandler(firService)
+	firHandler := handlers.NewFIRHandler(firService, db)
 	caseHandler := handlers.NewCaseHandler(caseService)
 	evidenceHandler := handlers.NewEvidenceHandler(evidenceService)
 	warrantHandler := handlers.NewWarrantHandler(warrantService)
