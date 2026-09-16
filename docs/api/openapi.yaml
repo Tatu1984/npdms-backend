@@ -32,6 +32,12 @@ tags:
     description: Phase 01 — the investigation workspace
   - name: Intelligence
     description: Server-side lookups, audited and centrally controlled
+  - name: AI gateway
+    description: |
+      Layer A0. One route from the platform to any model, a registry that will
+      not enable a model until a held-out evaluation of that exact version has
+      passed, and the officer's review queue. Nothing here approves anything:
+      a suggestion is PENDING until an officer decides it.
   - name: Operations
 
 security:
@@ -644,6 +650,361 @@ paths:
               schema: { $ref: "#/components/schemas/IPIntel" }
         "400": { $ref: "#/components/responses/BadRequest" }
 
+  /ai-review/gateway:
+    get:
+      tags: [AI gateway]
+      summary: Every registered model and whether its service is reachable here
+      description: |
+        A deployment with no model services — the staging API, or a station
+        before the AI server arrives — reports every model as not connected,
+        and says so in `note`. An empty registry says that too: an empty list
+        and a broken one look alike on a screen that only draws rows.
+
+        DSP and above.
+      responses:
+        "200":
+          description: The state of the AI layer on this deployment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIModelStatus" }
+                  models: { type: integer }
+                  enabled: { type: integer, description: How many models are switched on }
+                  connected: { type: integer, description: How many have a reachable service }
+                  note: { type: string, description: Plain-English state when nothing is registered or connected }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /ai-review/models:
+    get:
+      tags: [AI gateway]
+      summary: The model registry
+      description: DSP and above.
+      responses:
+        "200":
+          description: Every registered model, retired ones last
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AIModel" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [AI gateway]
+      summary: Register a model
+      description: |
+        The model is registered switched off. It cannot be switched on until an
+        evaluation of this exact version passes its threshold.
+
+        SP and above.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelName, modelVersion, decisionType, confidenceThreshold]
+              properties:
+                modelName: { type: string }
+                modelVersion: { type: string }
+                decisionType: { type: string, example: COMPLAINT_CATEGORY }
+                module: { type: string, description: The module switch this model answers to }
+                task: { type: string }
+                endpointEnv:
+                  type: string
+                  description: Environment variable holding this model's service address
+                  example: ML_COMPLAINT_CATEGORY_URL
+                licence: { type: string }
+                sourceUrl: { type: string }
+                confidenceThreshold: { type: number, format: double, minimum: 0, maximum: 1 }
+                reviewTimeout: { type: integer, description: Hours before an unreviewed suggestion expires }
+                maxQueueSize: { type: integer }
+                description: { type: string }
+      responses:
+        "201":
+          description: Registered, switched off
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIModel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: The registry refused it — for example a name already in use
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /ai-review/models/{modelName}:
+    get:
+      tags: [AI gateway]
+      summary: One registry entry
+      description: DSP and above.
+      parameters:
+        - { name: modelName, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The registry entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIModel" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [AI gateway]
+      summary: Change a registry entry, or switch the model on or off
+      description: |
+        Switching a model on is refused with 409 unless an evaluation of the
+        version it runs has passed. Changing the version to one nobody has
+        measured is refused the same way. There is no setting that switches
+        review off.
+
+        SP and above.
+      parameters:
+        - { name: modelName, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confidenceThreshold: { type: number, format: double, minimum: 0, maximum: 1 }
+                isEnabled: { type: boolean }
+                modelVersion: { type: string }
+                endpointEnv: { type: string }
+                licence: { type: string }
+                sourceUrl: { type: string }
+                reviewTimeout: { type: integer }
+                maxQueueSize: { type: integer }
+                description: { type: string }
+      responses:
+        "200":
+          description: The saved entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIModel" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Refused by a stated rule, which the message names
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                error: model_not_measured
+                message: model complaint-category version v2 has not passed an evaluation and cannot be enabled
+                code: 409
+
+  /ai-review/evaluations:
+    get:
+      tags: [AI gateway]
+      summary: Measurements recorded for a model
+      description: DSP and above.
+      parameters:
+        - { name: model_name, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Measurements, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIModelEvaluation" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [AI gateway]
+      summary: Record a measurement against a held-out set
+      description: |
+        Append-only: a measurement is recorded, never rewritten. The verdict is
+        not supplied by the caller — it is `measured >= threshold`, and the
+        database refuses a row where the two disagree.
+
+        SP and above.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [modelName, modelVersion, dataset, datasetSize, metric, threshold]
+              properties:
+                modelName: { type: string }
+                modelVersion: { type: string }
+                dataset: { type: string, description: The held-out set, named so the claim can be checked later }
+                datasetSize: { type: integer, minimum: 1 }
+                datasetSha256: { type: string }
+                metric: { type: string, example: accuracy }
+                threshold: { type: number, format: double, minimum: 0, maximum: 1 }
+                measured: { type: number, format: double, minimum: 0, maximum: 1 }
+                limitations: { type: string, description: What the measurement did not cover }
+                notes: { type: string }
+      responses:
+        "201":
+          description: The recorded measurement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIModelEvaluation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Refused — for example a model that is not registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /ai-review/modules:
+    get:
+      tags: [AI gateway]
+      summary: The per-module off switches
+      description: One row per AI module, off at installation. DSP and above.
+      responses:
+        "200":
+          description: Every module and whether it is on
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        module: { type: string, example: FACE_RECOGNITION }
+                        enabled: { type: boolean }
+                        config: { type: string, description: JSON held for the module, thresholds included }
+                        reason: { type: string }
+                        note: { type: string }
+                        updatedByName: { type: string }
+                        updatedAt: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /ai-review/acceptance:
+    get:
+      tags: [AI gateway]
+      summary: What officers did with each model's suggestions
+      description: |
+        Counted from the suggestions themselves rather than kept in a summary
+        table, so the figures cannot disagree with the decisions they describe.
+        Rates are over reviewed suggestions only: counting pending ones as
+        rejections would make a model look worse the busier the station is.
+
+        DSP and above.
+      parameters:
+        - name: group_by
+          in: query
+          schema: { type: string, enum: [station, language, type, model], default: station }
+        - { name: model_name, in: query, schema: { type: string } }
+        - { name: start_date, in: query, schema: { type: string, format: date } }
+        - { name: end_date, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Acceptance and override rates for the period
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIAcceptance" }
+                  groupBy: { type: string }
+                  start: { type: string, format: date }
+                  end: { type: string, format: date }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /ai-review/queue:
+    get:
+      tags: [AI gateway]
+      summary: Suggestions awaiting an officer
+      description: |
+        Most pressing first, and oldest first within a priority so nothing rots
+        at the bottom. Open to any signed-in officer.
+      parameters:
+        - { name: type, in: query, schema: { type: string } }
+        - { name: priority, in: query, schema: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] } }
+        - { name: assigned_to, in: query, schema: { type: string, format: uuid } }
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: The queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decisions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AIDecision" }
+                  pagination:
+                    type: object
+                    properties:
+                      page: { type: integer }
+                      page_size: { type: integer }
+                      total: { type: integer }
+                      total_pages: { type: integer }
+
+  /ai-review/decisions/{id}:
+    get:
+      tags: [AI gateway]
+      summary: One suggestion, with its sources
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The suggestion
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIDecision" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /ai-review/decisions/{id}/review:
+    post:
+      tags: [AI gateway]
+      summary: An officer decides a suggestion
+      description: |
+        A suggestion is reviewed once. A second officer acting on the same row
+        is told so rather than silently overwriting the first decision.
+        Overriding requires a reason.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [APPROVED, REJECTED, OVERRIDDEN] }
+                humanDecision: { type: string, description: What the officer recorded instead }
+                reviewNotes: { type: string }
+                overrideReason: { type: string, description: Required when overriding }
+      responses:
+        "200":
+          description: The decided suggestion
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AIDecision" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Already reviewed by another officer
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                error: already_reviewed
+                message: This suggestion has already been reviewed by another officer.
+                code: 409
+
   /health:
     get:
       tags: [Operations]
@@ -708,6 +1069,11 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The officer's rank does not carry this
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: No such record, or not visible to this officer
       content:
@@ -725,6 +1091,149 @@ components:
           example: validation_error
         message: { type: string, description: For a person; may be reworded at any time }
         code: { type: integer, example: 400 }
+
+    AIModel:
+      type: object
+      description: One entry in the model registry.
+      properties:
+        id: { type: string, format: uuid }
+        modelName: { type: string }
+        modelVersion: { type: string }
+        decisionType: { type: string }
+        module: { type: string }
+        task: { type: string }
+        endpointEnv: { type: string, description: Environment variable holding the service address }
+        licence: { type: string }
+        sourceUrl: { type: string }
+        confidenceThreshold:
+          type: number
+          format: double
+          description: Below this, the model says nothing rather than filling a queue with answers it does not stand by
+        isEnabled: { type: boolean, description: Off until an evaluation of this version has passed }
+        requiresReview:
+          type: boolean
+          description: Always true. There is no setting that lets a model decide.
+        reviewTimeout: { type: integer, description: Hours before an unreviewed suggestion expires }
+        maxQueueSize: { type: integer }
+        description: { type: string }
+        registeredBy: { type: string, format: uuid }
+        retiredAt: { type: string, format: date-time, nullable: true }
+        retiredReason: { type: string }
+        measured: { type: boolean, description: Derived — has this exact version passed an evaluation }
+        moduleOn: { type: boolean, description: Derived — is this model's module switched on }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AIModelStatus:
+      allOf:
+        - $ref: "#/components/schemas/AIModel"
+        - type: object
+          properties:
+            hasClient: { type: boolean }
+            connected: { type: boolean, description: A service address is set on this deployment }
+            reachable: { type: boolean, nullable: true, description: The service answered }
+            reports:
+              type: object
+              nullable: true
+              description: What the service says it is running
+              properties:
+                service: { type: string }
+                modelName: { type: string }
+                modelVersion: { type: string }
+                licence: { type: string }
+                ready: { type: boolean }
+            note:
+              type: string
+              description: Why it is not connected, or that the running version differs from the registry
+
+    AIModelEvaluation:
+      type: object
+      description: One measurement of one model version against a named held-out set. Append-only.
+      properties:
+        id: { type: string, format: uuid }
+        modelName: { type: string }
+        modelVersion: { type: string }
+        dataset: { type: string }
+        datasetSize: { type: integer }
+        datasetSha256: { type: string }
+        metric: { type: string }
+        threshold: { type: number, format: double }
+        measured: { type: number, format: double }
+        passed: { type: boolean, description: measured >= threshold, enforced by the database }
+        limitations: { type: string }
+        notes: { type: string }
+        runBy: { type: string, format: uuid }
+        runByName: { type: string }
+        runAt: { type: string, format: date-time }
+
+    AISource:
+      type: object
+      description: A record, and the text within it, that a suggestion relied on.
+      properties:
+        recordType: { type: string, example: COMPLAINT }
+        recordId: { type: string }
+        reference: { type: string, example: MIS/2026/00001 }
+        excerpt: { type: string }
+
+    AIDecision:
+      type: object
+      description: |
+        One suggestion from one model. It is PENDING until an officer approves,
+        rejects or overrides it, or it expires unreviewed. There is no status
+        for a suggestion the machine accepted.
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED, OVERRIDDEN, EXPIRED] }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        module: { type: string }
+        sourceType: { type: string }
+        sourceId: { type: string, format: uuid }
+        sourceReference: { type: string }
+        modelName: { type: string }
+        modelVersion: { type: string, description: Taken from the registry, not from the caller }
+        prediction: { type: string }
+        predictionData: { type: string, description: JSON detail from the model }
+        confidence: { type: number, format: double }
+        confidenceThreshold: { type: number, format: double }
+        language: { type: string, enum: [en, bn, mixed, unknown] }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/AISource" }
+        alternatives: { type: string }
+        reviewedBy: { type: string, format: uuid, nullable: true }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        reviewNotes: { type: string }
+        humanDecision: { type: string }
+        overrideReason: { type: string, description: Required when overriding }
+        assignedTo: { type: string, format: uuid, nullable: true }
+        dueBy: { type: string, format: date-time, nullable: true }
+        requestedBy: { type: string, format: uuid }
+        stationId: { type: string, format: uuid, nullable: true }
+        processingTimeMs: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AIAcceptance:
+      type: object
+      description: What officers did with one model's suggestions, over a period.
+      properties:
+        modelName: { type: string }
+        module: { type: string }
+        type: { type: string }
+        stationId: { type: string }
+        stationName: { type: string }
+        language: { type: string }
+        total: { type: integer }
+        pending: { type: integer }
+        approved: { type: integer }
+        rejected: { type: integer }
+        overridden: { type: integer }
+        expired: { type: integer }
+        reviewed: { type: integer }
+        acceptedRate: { type: number, format: double, nullable: true, description: Over reviewed suggestions only }
+        overrideRate: { type: number, format: double, nullable: true }
+        avgConfidence: { type: number, format: double, nullable: true }
 
     Page:
       type: object
