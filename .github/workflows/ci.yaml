@@ -41,6 +41,30 @@ jobs:
   build-api:
     needs: security-preflight
     runs-on: ubuntu-latest
+
+    # The tests that matter here run against a real Postgres, because the
+    # defects they catch are schema mismatches — a query naming a column or a
+    # table that does not exist. Three of those reached production unnoticed
+    # (users.full_name, citizen_complaints.complaint_number, and joins against
+    # police_stations, a table with no rows) precisely because CI had no
+    # database and every database-backed test skipped in silence. The force
+    # boundary between departments is enforced in SQL and is a disclosure risk
+    # if it breaks; it is not protection if its tests never run.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: npdms
+          POSTGRES_PASSWORD: npdms
+          POSTGRES_DB: npdms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -81,10 +105,39 @@ jobs:
           cd services/api
           go build -o bin/api ./...
 
+      - name: Build the test database
+        env:
+          DATABASE_URL: postgres://npdms:npdms@localhost:5432/npdms?sslmode=disable
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+          ./scripts/bootstrap-db.sh --with-demo-data
+
+      - name: Load the departments and their officers
+        env:
+          DATABASE_URL: postgres://npdms:npdms@localhost:5432/npdms?sslmode=disable
+          DEMO_SEED_CONFIRM: "yes"
+        run: python3 scripts/seed-departments-demo.py
+
       - name: Run tests with coverage
+        env:
+          # Without this the database-backed tests skip, which is how the
+          # schema mismatches above went unnoticed.
+          TEST_DATABASE_URL: postgres://npdms:npdms@localhost:5432/npdms?sslmode=disable
         run: |
           cd services/api
           go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Confirm the database tests actually ran
+        run: |
+          cd services/api
+          # A suite that skips everything is green and worthless. The force
+          # boundary is the one rule whose failure is a disclosure, so its
+          # tests passing is asserted here rather than assumed.
+          TEST_DATABASE_URL=postgres://npdms:npdms@localhost:5432/npdms?sslmode=disable \
+            go test ./internal/repository/ -run 'TestAnOfficerSeesOnlyTheirOwnForcesRegister|TestAReferralIsWhatLetsARecordCross' -v \
+            | tee boundary.log
+          grep -q -- '--- PASS: TestAnOfficerSeesOnlyTheirOwnForcesRegister' boundary.log
+          grep -q -- '--- PASS: TestAReferralIsWhatLetsARecordCross' boundary.log
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
