@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [fir_classifier, semantic_search, crime_prediction, ocr_service, nlp_extractor]
+        service: [fir_classifier, semantic_search, ocr_service, nlp_extractor]
     steps:
       - uses: actions/checkout@v4
 

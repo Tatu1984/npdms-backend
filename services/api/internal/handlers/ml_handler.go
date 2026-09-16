@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/npdms/api/internal/models"
@@ -87,85 +86,6 @@ func (h *MLHandler) SearchSimilar(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
-// GetPredictions gets crime predictions
-// GET /api/v1/ml/predictions
-func (h *MLHandler) GetPredictions(c *gin.Context) {
-	category := c.Query("category")
-	forecastDaysStr := c.DefaultQuery("forecast_days", "7")
-
-	forecastDays, err := strconv.Atoi(forecastDaysStr)
-	if err != nil || forecastDays < 1 || forecastDays > 90 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid_forecast_days",
-			Message: "forecast_days must be between 1 and 90",
-			Code:    400,
-		})
-		return
-	}
-
-	var categoryPtr *string
-	if category != "" {
-		categoryPtr = &category
-	}
-
-	result, err := services.GetCrimePredictions(c.Request.Context(), categoryPtr, forecastDays)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:   "prediction_failed",
-			Message: err.Error(),
-			Code:    500,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
-// GetHotspots gets crime hotspots
-// GET /api/v1/ml/hotspots
-func (h *MLHandler) GetHotspots(c *gin.Context) {
-	category := c.Query("category")
-	hoursStr := c.DefaultQuery("hours", "24")
-	topKStr := c.DefaultQuery("top_k", "10")
-
-	hours, err := strconv.Atoi(hoursStr)
-	if err != nil || hours < 1 || hours > 168 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid_hours",
-			Message: "hours must be between 1 and 168",
-			Code:    400,
-		})
-		return
-	}
-
-	topK, err := strconv.Atoi(topKStr)
-	if err != nil || topK < 1 || topK > 50 {
-		c.JSON(http.StatusBadRequest, models.ErrorResponse{
-			Error:   "invalid_top_k",
-			Message: "top_k must be between 1 and 50",
-			Code:    400,
-		})
-		return
-	}
-
-	var categoryPtr *string
-	if category != "" {
-		categoryPtr = &category
-	}
-
-	result, err := services.GetCrimeHotspots(c.Request.Context(), categoryPtr, hours, topK)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
-			Error:   "hotspot_failed",
-			Message: err.Error(),
-			Code:    500,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
 // ExtractText performs OCR on an uploaded image
 // POST /api/v1/ml/ocr
 func (h *MLHandler) ExtractText(c *gin.Context) {
@@ -225,10 +145,9 @@ func (h *MLHandler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "healthy",
 		"services": gin.H{
-			"fir_classifier":   services.MLFIRClassifierURL,
-			"semantic_search":  services.MLSemanticSearchURL,
-			"crime_prediction": services.MLCrimePredictionURL,
-			"ocr":              services.MLOCRURL,
+			"fir_classifier":  services.MLFIRClassifierURL,
+			"semantic_search": services.MLSemanticSearchURL,
+			"ocr":             services.MLOCRURL,
 		},
 	})
 }

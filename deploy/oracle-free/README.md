@@ -71,7 +71,7 @@ a working service appears unreachable.
 
 ## What this box will not do
 
-The ML services (Phase 03 video, OCR, transcription) need several GB and, for
+The ML services (Phase 03 video, OCR) need several GB and, for
 video, a GPU. They do not belong here. Neither does anything with a real chain
 of custody attached to it.
 

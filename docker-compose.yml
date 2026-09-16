@@ -153,7 +153,6 @@ services:
       - JWT_SECRET=${JWT_SECRET:-npdms_jwt_secret_key_change_in_production}
       - ML_FIR_CLASSIFIER_URL=http://ml-fir-classifier:8001
       - ML_SEMANTIC_SEARCH_URL=http://ml-semantic-search:8002
-      - ML_CRIME_PREDICTION_URL=http://ml-crime-prediction:8003
       - PORT=8080
       - ENV=development
     ports:
@@ -221,28 +220,6 @@ services:
       - ml
       - full
 
-  # ML Service: Crime Prediction
-  ml-crime-prediction:
-    build:
-      context: ./services/ml
-      dockerfile: Dockerfile
-      target: crime_prediction
-    container_name: npdms-ml-crime-prediction
-    restart: unless-stopped
-    ports:
-      - "8003:8003"
-    environment:
-      - PYTHONUNBUFFERED=1
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    profiles:
-      - ml
-      - full
-
   # ML Service: OCR (Evidence Photo Text Extraction)
   ml-ocr:
     build:
@@ -259,30 +236,6 @@ services:
       - ml_models_cache:/app/cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    profiles:
-      - ml
-      - full
-
-  # ML Service: Voice Transcription
-  ml-transcription:
-    build:
-      context: ./services/ml
-      dockerfile: Dockerfile
-      target: transcription
-    container_name: npdms-ml-transcription
-    restart: unless-stopped
-    ports:
-      - "8005:8005"
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ml_models_cache:/app/cache
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
       timeout: 10s
       retries: 3

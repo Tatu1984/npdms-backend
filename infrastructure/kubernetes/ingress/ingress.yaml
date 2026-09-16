@@ -122,8 +122,6 @@ spec:
         - protocol: TCP
           port: 8004
         - protocol: TCP
-          port: 8005
-        - protocol: TCP
           port: 8006
 ---
 apiVersion: networking.k8s.io/v1

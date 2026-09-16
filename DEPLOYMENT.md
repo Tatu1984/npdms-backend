@@ -73,7 +73,6 @@ JWT_SECRET=CHANGE_THIS_JWT_SECRET_MIN_32_CHARS
 # ML Services
 ML_FIR_CLASSIFIER_URL=http://ml-fir-classifier:8001
 ML_SEMANTIC_SEARCH_URL=http://ml-semantic-search:8002
-ML_CRIME_PREDICTION_URL=http://ml-crime-prediction:8003
 
 # Environment
 ENV=production
@@ -115,7 +114,6 @@ go run cmd/migrate/main.go up
 - **MinIO Console**: http://localhost:9001
 - **ML - FIR Classifier**: http://localhost:8001/docs
 - **ML - Semantic Search**: http://localhost:8002/docs
-- **ML - Crime Prediction**: http://localhost:8003/docs
 
 ---
 
@@ -177,11 +175,6 @@ python app.py
 cd semantic_search
 pip install -r requirements.txt
 python app.py
-
-# Crime Prediction
-cd crime_prediction
-pip install -r requirements.txt
-python app.py
 ```
 
 ---
@@ -209,7 +202,6 @@ docker build -t npdms-api:latest .
 cd ../ml
 docker build --target fir_classifier -t npdms-ml-fir-classifier:latest .
 docker build --target semantic_search -t npdms-ml-semantic-search:latest .
-docker build --target crime_prediction -t npdms-ml-crime-prediction:latest .
 
 # Build frontend
 cd ../../ui/web
@@ -248,7 +240,6 @@ docker-compose logs -f
 curl http://localhost:8080/health
 curl http://localhost:8001/health
 curl http://localhost:8002/health
-curl http://localhost:8003/health
 
 # Test API
 curl -X POST http://localhost:8080/api/v1/auth/login \
@@ -328,27 +319,6 @@ curl -X POST http://localhost:8002/index/add \
   }'
 ```
 
-### Crime Prediction
-
-**Purpose**: Predict crime patterns and identify hotspots
-
-**Endpoints**:
-- `POST /train` - Train model with historical data
-- `POST /predict` - Get predictions
-- `POST /hotspots` - Identify hotspots
-- `GET /stats` - Crime statistics
-
-**Usage**:
-```bash
-# Get predictions
-curl http://localhost:8003/predict?forecast_days=7
-
-# Get hotspots
-curl http://localhost:8003/hotspots?hours=24&top_k=10
-```
-
----
-
 ## Backup & Restore
 
 ### Database Backup
@@ -414,7 +384,6 @@ echo "Backup complete: $BACKUP_DIR.tar.gz"
 curl http://localhost:8080/health      # API
 curl http://localhost:8001/health      # FIR Classifier
 curl http://localhost:8002/health      # Semantic Search
-curl http://localhost:8003/health      # Crime Prediction
 
 # Database connection
 docker-compose exec postgres pg_isready -U npdms
@@ -501,8 +470,8 @@ docker-compose logs ml-fir-classifier
 # 3. Port conflict - change port in docker-compose.yml
 
 # Rebuild ML services
-docker-compose down ml-fir-classifier ml-semantic-search ml-crime-prediction
-docker-compose up -d --build ml-fir-classifier ml-semantic-search ml-crime-prediction
+docker-compose down ml-fir-classifier ml-semantic-search
+docker-compose up -d --build ml-fir-classifier ml-semantic-search
 ```
 
 ### PWA Not Working

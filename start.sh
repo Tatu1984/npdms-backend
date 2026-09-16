@@ -144,7 +144,6 @@ print_info "Creating directories..."
 mkdir -p services/api/migrations
 mkdir -p services/ml/fir_classifier
 mkdir -p services/ml/semantic_search
-mkdir -p services/ml/crime_prediction
 
 # Start infrastructure
 print_info "Starting infrastructure services (PostgreSQL, Redis, MinIO)..."
@@ -184,7 +183,7 @@ print_success "MinIO is ready"
 # Start additional services based on mode
 if [ "$MODE" == "ml" ] || [ "$MODE" == "full" ]; then
     print_info "Starting ML services..."
-    docker-compose --profile ml up -d ml-fir-classifier ml-semantic-search ml-crime-prediction ml-ocr
+    docker-compose --profile ml up -d ml-fir-classifier ml-semantic-search ml-ocr
 
     # Wait for ML services
     sleep 10
@@ -230,10 +229,6 @@ fi
 
 if docker-compose ps ml-semantic-search | grep -q Up; then
     echo "║  Semantic Search:      http://localhost:8002/docs            ║"
-fi
-
-if docker-compose ps ml-crime-prediction | grep -q Up; then
-    echo "║  Crime Prediction:     http://localhost:8003/docs            ║"
 fi
 
 if docker-compose ps ml-ocr | grep -q Up; then

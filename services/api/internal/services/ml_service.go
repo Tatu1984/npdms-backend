@@ -18,10 +18,9 @@ import (
 
 // ML Service URLs from environment
 var (
-	MLFIRClassifierURL   = getEnv("ML_FIR_CLASSIFIER_URL", "http://localhost:8001")
-	MLSemanticSearchURL  = getEnv("ML_SEMANTIC_SEARCH_URL", "http://localhost:8002")
-	MLCrimePredictionURL = getEnv("ML_CRIME_PREDICTION_URL", "http://localhost:8003")
-	MLOCRURL             = getEnv("ML_OCR_URL", "http://localhost:8004")
+	MLFIRClassifierURL  = getEnv("ML_FIR_CLASSIFIER_URL", "http://localhost:8001")
+	MLSemanticSearchURL = getEnv("ML_SEMANTIC_SEARCH_URL", "http://localhost:8002")
+	MLOCRURL            = getEnv("ML_OCR_URL", "http://localhost:8004")
 )
 
 func getEnv(key, fallback string) string {
@@ -216,141 +215,6 @@ func AddFIRToSearchIndex(ctx context.Context, fir *models.FIR) error {
 	}
 
 	return nil
-}
-
-// ============================================================================
-// CRIME PREDICTION
-// ============================================================================
-
-type CrimeEvent struct {
-	Date      string   `json:"date"`
-	Category  string   `json:"category"`
-	Location  string   `json:"location"`
-	Latitude  *float64 `json:"latitude,omitempty"`
-	Longitude *float64 `json:"longitude,omitempty"`
-	Hour      *int     `json:"hour,omitempty"`
-}
-
-type Prediction struct {
-	Date           string  `json:"date"`
-	Category       string  `json:"category"`
-	PredictedCount float64 `json:"predicted_count"`
-	LowerBound     float64 `json:"lower_bound"`
-	UpperBound     float64 `json:"upper_bound"`
-	Confidence     float64 `json:"confidence"`
-}
-
-type PredictionResponse struct {
-	Predictions    []Prediction `json:"predictions"`
-	TotalPredicted float64      `json:"total_predicted"`
-	ForecastDays   int          `json:"forecast_days"`
-	Timestamp      string       `json:"timestamp"`
-}
-
-type PredictionRequest struct {
-	Category     *string `json:"category,omitempty"`
-	Location     *string `json:"location,omitempty"`
-	ForecastDays int     `json:"forecast_days"`
-}
-
-// GetCrimePredictions gets crime predictions for the next N days
-func GetCrimePredictions(ctx context.Context, category *string, forecastDays int) (*PredictionResponse, error) {
-	reqBody := PredictionRequest{
-		Category:     category,
-		ForecastDays: forecastDays,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", MLCrimePredictionURL+"/predict", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call prediction service: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("prediction service returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result PredictionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &result, nil
-}
-
-type Hotspot struct {
-	Location               string                   `json:"location"`
-	Latitude               *float64                 `json:"latitude"`
-	Longitude              *float64                 `json:"longitude"`
-	CrimeCount             int                      `json:"crime_count"`
-	Categories             []map[string]interface{} `json:"categories"`
-	RiskScore              float64                  `json:"risk_score"`
-	RecommendedPatrolHours []int                    `json:"recommended_patrol_hours"`
-}
-
-type HotspotResponse struct {
-	Hotspots      []Hotspot `json:"hotspots"`
-	TotalLocations int       `json:"total_locations"`
-	TimeRangeHours int       `json:"time_range_hours"`
-	Timestamp      string    `json:"timestamp"`
-}
-
-type HotspotRequest struct {
-	Category       *string `json:"category,omitempty"`
-	TimeRangeHours int     `json:"time_range_hours"`
-	TopK           int     `json:"top_k"`
-}
-
-// GetCrimeHotspots gets crime hotspot predictions
-func GetCrimeHotspots(ctx context.Context, category *string, hours int, topK int) (*HotspotResponse, error) {
-	reqBody := HotspotRequest{
-		Category:       category,
-		TimeRangeHours: hours,
-		TopK:           topK,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", MLCrimePredictionURL+"/hotspots", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call hotspot service: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("hotspot service returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result HotspotResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &result, nil
 }
 
 // ============================================================================

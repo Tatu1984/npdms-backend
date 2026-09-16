@@ -74,14 +74,6 @@ scrape_configs:
           service: 'ml-search'
           app: 'npdms'
 
-  - job_name: 'ml-crime-prediction'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['ml-crime-prediction:8003']
-        labels:
-          service: 'ml-prediction'
-          app: 'npdms'
-
   # Node exporter for system metrics
   - job_name: 'node-exporter'
     static_configs:

@@ -37,7 +37,6 @@ data:
 
   # Service URLs
   ML_OCR_URL: "http://ocr-service.npdms.svc.cluster.local:8004"
-  ML_TRANSCRIPTION_URL: "http://transcription-service.npdms.svc.cluster.local:8005"
   ML_VIDEO_ANALYSIS_URL: "http://video-analysis-service.npdms.svc.cluster.local:8006"
 
   # CORS Configuration

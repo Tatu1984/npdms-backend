@@ -259,12 +259,6 @@ func main() {
 	}
 	ocrHandler := handlers.NewOCRHandler(ocrServiceURL, auditRepo)
 
-	transcriptionServiceURL := os.Getenv("ML_TRANSCRIPTION_URL")
-	if transcriptionServiceURL == "" {
-		transcriptionServiceURL = "http://localhost:8005"
-	}
-	transcriptionHandler := handlers.NewTranscriptionHandler(transcriptionServiceURL, auditRepo)
-
 	// Setup Gin router
 	if cfg.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -444,8 +438,6 @@ func main() {
 				ml.POST("/classify", mlHandler.ClassifyText)
 				ml.POST("/search", mlHandler.SearchSimilar)
 				ml.POST("/ocr", mlHandler.ExtractText)
-				ml.GET("/predictions", mlHandler.GetPredictions)
-				ml.GET("/hotspots", mlHandler.GetHotspots)
 			}
 
 			// Stats & Dashboard (with database context)
@@ -584,17 +576,6 @@ func main() {
 				ocr.POST("/classify", ocrHandler.ClassifyDocument)
 				ocr.POST("/extract-entities", ocrHandler.ExtractEntities)
 				ocr.POST("/enhance", ocrHandler.EnhanceImage)
-			}
-
-			// Voice Transcription routes
-			transcription := protected.Group("/transcription")
-			{
-				transcription.GET("/health", transcriptionHandler.HealthCheck)
-				transcription.GET("/languages", transcriptionHandler.GetLanguages)
-				transcription.POST("/transcribe", transcriptionHandler.Transcribe)
-				transcription.POST("/transcribe-fir", transcriptionHandler.TranscribeForFIR)
-				transcription.POST("/extract-entities", transcriptionHandler.ExtractEntities)
-				transcription.POST("/suggest-ipc", transcriptionHandler.SuggestIPCSections)
 			}
 
 			// File Upload routes (MinIO)

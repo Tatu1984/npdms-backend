@@ -13,7 +13,7 @@ The web frontend lives in a separate repository ([Tatu1984/npdms](https://github
 | `services/api` | Go 1.22 / Gin REST API — the main service |
 | `services/db/init` | Base PostgreSQL schema + seed data |
 | `services/api/migrations` | Incremental SQL migrations (`000006`–`000025`) |
-| `services/ml` | Python (FastAPI) ML services: FIR classifier, semantic search, OCR, crime prediction, transcription, video analysis |
+| `services/ml` | Python (FastAPI) ML services: FIR classifier, semantic search, OCR, video analysis. See `services/ml/README.md` for what was retired |
 | `scripts` | Demo data seeding |
 | `infrastructure` | Kubernetes manifests, production compose file |
 | `monitoring` | Prometheus config + Grafana dashboards |

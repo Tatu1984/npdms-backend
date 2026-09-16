@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for NPDMS ML Services
-# Supports: fir_classifier, semantic_search, crime_prediction, ocr_service
+# Supports: fir_classifier, semantic_search, ocr_service
 
 FROM python:3.10-slim as base
 
@@ -50,20 +50,6 @@ VOLUME ["/data"]
 EXPOSE 8002
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8002"]
-
-# ============================================================================
-# Crime Prediction Image
-# ============================================================================
-FROM base as crime_prediction
-
-COPY crime_prediction/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY crime_prediction/app.py .
-
-EXPOSE 8003
-
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8003"]
 
 # ============================================================================
 # OCR Service Image
