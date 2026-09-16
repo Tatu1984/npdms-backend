@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/npdms/api/internal/models"
@@ -61,52 +63,50 @@ func (r *AIReviewRepository) CreateDecision(ctx context.Context, decision *model
 	return err
 }
 
-// GetDecision retrieves an AI decision by ID
-func (r *AIReviewRepository) GetDecision(ctx context.Context, id uuid.UUID) (*models.AIDecision, error) {
-	query := `
+// decisionColumns is the one place the decision columns are listed. They were
+// repeated in six places before, which is how the list drifted.
+const decisionColumns = `
 		SELECT
-			id, type, status, priority,
+			id, type, status, priority, COALESCE(module, ''),
 			source_type, source_id, source_reference,
 			model_name, model_version, prediction, prediction_data,
-			confidence, confidence_threshold, alternatives,
+			confidence, confidence_threshold, COALESCE(language, ''), sources, alternatives,
 			reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
 			assigned_to, assigned_at, due_by,
 			requested_by, station_id, processing_time_ms,
 			created_at, updated_at
-		FROM ai_decisions
-		WHERE id = $1
-	`
+		FROM ai_decisions`
 
+func scanDecision(row interface {
+	Scan(dest ...interface{}) error
+}) (models.AIDecision, error) {
 	var d models.AIDecision
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&d.ID,
-		&d.Type,
-		&d.Status,
-		&d.Priority,
-		&d.SourceType,
-		&d.SourceID,
-		&d.SourceReference,
-		&d.ModelName,
-		&d.ModelVersion,
-		&d.Prediction,
-		&d.PredictionData,
-		&d.Confidence,
-		&d.ConfidenceThreshold,
-		&d.Alternatives,
-		&d.ReviewedBy,
-		&d.ReviewedAt,
-		&d.ReviewNotes,
-		&d.HumanDecision,
-		&d.OverrideReason,
-		&d.AssignedTo,
-		&d.AssignedAt,
-		&d.DueBy,
-		&d.RequestedBy,
-		&d.StationID,
-		&d.ProcessingTimeMs,
-		&d.CreatedAt,
-		&d.UpdatedAt,
+	var sources []byte
+	err := row.Scan(
+		&d.ID, &d.Type, &d.Status, &d.Priority, &d.Module,
+		&d.SourceType, &d.SourceID, &d.SourceReference,
+		&d.ModelName, &d.ModelVersion, &d.Prediction, &d.PredictionData,
+		&d.Confidence, &d.ConfidenceThreshold, &d.Language, &sources, &d.Alternatives,
+		&d.ReviewedBy, &d.ReviewedAt, &d.ReviewNotes, &d.HumanDecision, &d.OverrideReason,
+		&d.AssignedTo, &d.AssignedAt, &d.DueBy,
+		&d.RequestedBy, &d.StationID, &d.ProcessingTimeMs,
+		&d.CreatedAt, &d.UpdatedAt,
 	)
+	if err != nil {
+		return d, err
+	}
+	d.Sources = []models.AISource{}
+	if len(sources) > 0 {
+		if err := json.Unmarshal(sources, &d.Sources); err != nil {
+			return d, fmt.Errorf("unreadable sources on decision %s: %w", d.ID, err)
+		}
+	}
+	return d, nil
+}
+
+// GetDecision retrieves an AI decision by ID
+func (r *AIReviewRepository) GetDecision(ctx context.Context, id uuid.UUID) (*models.AIDecision, error) {
+	d, err := scanDecision(r.db.QueryRow(ctx, decisionColumns+` WHERE id = $1`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -150,159 +150,68 @@ func (r *AIReviewRepository) UpdateDecision(ctx context.Context, decision *model
 
 // ListDecisions lists AI decisions with filters
 func (r *AIReviewRepository) ListDecisions(ctx context.Context, filters map[string]interface{}, offset, limit int) ([]models.AIDecision, int64, error) {
-	baseQuery := `FROM ai_decisions WHERE 1=1`
-	countQuery := `SELECT COUNT(*) ` + baseQuery
-	selectQuery := `
-		SELECT
-			id, type, status, priority,
-			source_type, source_id, source_reference,
-			model_name, model_version, prediction, prediction_data,
-			confidence, confidence_threshold, alternatives,
-			reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
-			assigned_to, assigned_at, due_by,
-			requested_by, station_id, processing_time_ms,
-			created_at, updated_at
-		` + baseQuery
+	where := ` WHERE 1=1`
+	args := make([]interface{}, 0, 6)
 
-	args := make([]interface{}, 0)
-	argIndex := 1
+	add := func(clause string, value interface{}) {
+		args = append(args, value)
+		where += fmt.Sprintf(clause, len(args))
+	}
 
 	if status, ok := filters["status"].(models.AIDecisionStatus); ok {
-		baseQuery += ` AND status = $` + string(rune(argIndex+'0'))
-		countQuery = `SELECT COUNT(*) ` + baseQuery
-		selectQuery = `
-			SELECT
-				id, type, status, priority,
-				source_type, source_id, source_reference,
-				model_name, model_version, prediction, prediction_data,
-				confidence, confidence_threshold, alternatives,
-				reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
-				assigned_to, assigned_at, due_by,
-				requested_by, station_id, processing_time_ms,
-				created_at, updated_at
-			` + baseQuery
-		args = append(args, status)
-		argIndex++
+		add(" AND status = $%d", status)
 	}
-
 	if decisionType, ok := filters["type"].(models.AIDecisionType); ok {
-		appendFilter := " AND type = $" + string(rune(argIndex+'0'))
-		baseQuery += appendFilter
-		countQuery = `SELECT COUNT(*) ` + baseQuery
-		selectQuery = `
-			SELECT
-				id, type, status, priority,
-				source_type, source_id, source_reference,
-				model_name, model_version, prediction, prediction_data,
-				confidence, confidence_threshold, alternatives,
-				reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
-				assigned_to, assigned_at, due_by,
-				requested_by, station_id, processing_time_ms,
-				created_at, updated_at
-			` + baseQuery
-		args = append(args, decisionType)
-		argIndex++
+		add(" AND type = $%d", decisionType)
 	}
-
 	if priority, ok := filters["priority"].(models.AIDecisionPriority); ok {
-		appendFilter := " AND priority = $" + string(rune(argIndex+'0'))
-		baseQuery += appendFilter
-		countQuery = `SELECT COUNT(*) ` + baseQuery
-		selectQuery = `
-			SELECT
-				id, type, status, priority,
-				source_type, source_id, source_reference,
-				model_name, model_version, prediction, prediction_data,
-				confidence, confidence_threshold, alternatives,
-				reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
-				assigned_to, assigned_at, due_by,
-				requested_by, station_id, processing_time_ms,
-				created_at, updated_at
-			` + baseQuery
-		args = append(args, priority)
-		argIndex++
+		add(" AND priority = $%d", priority)
 	}
-
 	if assignedTo, ok := filters["assigned_to"].(uuid.UUID); ok {
-		appendFilter := " AND assigned_to = $" + string(rune(argIndex+'0'))
-		baseQuery += appendFilter
-		countQuery = `SELECT COUNT(*) ` + baseQuery
-		selectQuery = `
-			SELECT
-				id, type, status, priority,
-				source_type, source_id, source_reference,
-				model_name, model_version, prediction, prediction_data,
-				confidence, confidence_threshold, alternatives,
-				reviewed_by, reviewed_at, review_notes, human_decision, override_reason,
-				assigned_to, assigned_at, due_by,
-				requested_by, station_id, processing_time_ms,
-				created_at, updated_at
-			` + baseQuery
-		args = append(args, assignedTo)
-		argIndex++
+		add(" AND assigned_to = $%d", assignedTo)
+	}
+	if stationID, ok := filters["station_id"].(uuid.UUID); ok {
+		add(" AND station_id = $%d", stationID)
+	}
+	if module, ok := filters["module"].(string); ok && module != "" {
+		add(" AND module = $%d", module)
 	}
 
-	// Get total count
 	var total int64
-	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM ai_decisions`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	// Get paginated results
-	selectQuery += ` ORDER BY
-		CASE priority
-			WHEN 'CRITICAL' THEN 1
-			WHEN 'HIGH' THEN 2
-			WHEN 'MEDIUM' THEN 3
-			WHEN 'LOW' THEN 4
-		END,
-		created_at DESC
-		OFFSET $` + string(rune(argIndex+'0')) + ` LIMIT $` + string(rune(argIndex+1+'0'))
+	// Most pressing first: a critical suggestion that nobody has looked at
+	// should not sit behind a page of low-priority ones.
+	query := decisionColumns + where + `
+		ORDER BY
+			CASE priority
+				WHEN 'CRITICAL' THEN 1
+				WHEN 'HIGH' THEN 2
+				WHEN 'MEDIUM' THEN 3
+				WHEN 'LOW' THEN 4
+			END,
+			created_at DESC`
+	query += fmt.Sprintf(" OFFSET $%d LIMIT $%d", len(args)+1, len(args)+2)
 	args = append(args, offset, limit)
 
-	rows, err := r.db.Query(ctx, selectQuery, args...)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
 
-	var decisions []models.AIDecision
+	decisions := []models.AIDecision{}
 	for rows.Next() {
-		var d models.AIDecision
-		err := rows.Scan(
-			&d.ID,
-			&d.Type,
-			&d.Status,
-			&d.Priority,
-			&d.SourceType,
-			&d.SourceID,
-			&d.SourceReference,
-			&d.ModelName,
-			&d.ModelVersion,
-			&d.Prediction,
-			&d.PredictionData,
-			&d.Confidence,
-			&d.ConfidenceThreshold,
-			&d.Alternatives,
-			&d.ReviewedBy,
-			&d.ReviewedAt,
-			&d.ReviewNotes,
-			&d.HumanDecision,
-			&d.OverrideReason,
-			&d.AssignedTo,
-			&d.AssignedAt,
-			&d.DueBy,
-			&d.RequestedBy,
-			&d.StationID,
-			&d.ProcessingTimeMs,
-			&d.CreatedAt,
-			&d.UpdatedAt,
-		)
+		d, err := scanDecision(rows)
 		if err != nil {
 			return nil, 0, err
 		}
 		decisions = append(decisions, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
 	}
 
 	return decisions, total, nil
@@ -377,98 +286,88 @@ func (r *AIReviewRepository) GetFeedbackByDecision(ctx context.Context, decision
 	return feedback, nil
 }
 
-// GetModelConfig gets model configuration by name
-func (r *AIReviewRepository) GetModelConfig(ctx context.Context, modelName string) (*models.AIModelConfig, error) {
-	query := `
+// modelColumns is the registry read, shared by the single and list reads so
+// the two cannot drift apart. `measured` and `moduleOn` are derived, not
+// stored: whether this exact version has passed an evaluation, and whether its
+// module is switched on.
+const modelColumns = `
 		SELECT
-			id, model_name, decision_type, confidence_threshold,
-			auto_approve_threshold, is_enabled, requires_review,
-			review_timeout, max_queue_size, description, config_data,
-			created_at, updated_at
-		FROM ai_model_configs
-		WHERE model_name = $1
-	`
+			m.id, m.model_name, COALESCE(m.model_version, ''), m.decision_type,
+			COALESCE(m.module, ''), COALESCE(m.task, ''), COALESCE(m.endpoint_env, ''),
+			COALESCE(m.licence, ''), COALESCE(m.source_url, ''),
+			m.confidence_threshold, m.is_enabled, m.requires_review,
+			m.review_timeout, m.max_queue_size, COALESCE(m.description, ''),
+			COALESCE(m.config_data::text, ''), m.registered_by, m.retired_at,
+			COALESCE(m.retired_reason, ''),
+			ai_model_is_measured(m.model_name, COALESCE(m.model_version, '')),
+			COALESCE((SELECT s.enabled FROM ai_module_switches s WHERE s.module = m.module), FALSE),
+			m.created_at, m.updated_at
+		FROM ai_model_configs m`
 
+func scanModel(row interface {
+	Scan(dest ...interface{}) error
+}) (models.AIModelConfig, error) {
 	var c models.AIModelConfig
-	err := r.db.QueryRow(ctx, query, modelName).Scan(
-		&c.ID,
-		&c.ModelName,
-		&c.DecisionType,
-		&c.ConfidenceThreshold,
-		&c.AutoApproveThreshold,
-		&c.IsEnabled,
-		&c.RequiresReview,
-		&c.ReviewTimeout,
-		&c.MaxQueueSize,
-		&c.Description,
-		&c.ConfigData,
-		&c.CreatedAt,
-		&c.UpdatedAt,
+	err := row.Scan(
+		&c.ID, &c.ModelName, &c.ModelVersion, &c.DecisionType,
+		&c.Module, &c.Task, &c.EndpointEnv, &c.Licence, &c.SourceURL,
+		&c.ConfidenceThreshold, &c.IsEnabled, &c.RequiresReview,
+		&c.ReviewTimeout, &c.MaxQueueSize, &c.Description,
+		&c.ConfigData, &c.RegisteredBy, &c.RetiredAt, &c.RetiredReason,
+		&c.Measured, &c.ModuleOn,
+		&c.CreatedAt, &c.UpdatedAt,
 	)
+	return c, err
+}
+
+// GetModelConfig gets one registry entry by model name
+func (r *AIReviewRepository) GetModelConfig(ctx context.Context, modelName string) (*models.AIModelConfig, error) {
+	c, err := scanModel(r.db.QueryRow(ctx, modelColumns+` WHERE m.model_name = $1`, modelName))
 	if err != nil {
 		return nil, err
 	}
 	return &c, nil
 }
 
-// GetAllModelConfigs gets all model configurations
+// GetAllModelConfigs lists the registry, retired models last
 func (r *AIReviewRepository) GetAllModelConfigs(ctx context.Context) ([]models.AIModelConfig, error) {
-	query := `
-		SELECT
-			id, model_name, decision_type, confidence_threshold,
-			auto_approve_threshold, is_enabled, requires_review,
-			review_timeout, max_queue_size, description, config_data,
-			created_at, updated_at
-		FROM ai_model_configs
-		ORDER BY model_name
-	`
-
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, modelColumns+` ORDER BY m.retired_at IS NOT NULL, m.module NULLS LAST, m.model_name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var configs []models.AIModelConfig
+	configs := []models.AIModelConfig{}
 	for rows.Next() {
-		var c models.AIModelConfig
-		err := rows.Scan(
-			&c.ID,
-			&c.ModelName,
-			&c.DecisionType,
-			&c.ConfidenceThreshold,
-			&c.AutoApproveThreshold,
-			&c.IsEnabled,
-			&c.RequiresReview,
-			&c.ReviewTimeout,
-			&c.MaxQueueSize,
-			&c.Description,
-			&c.ConfigData,
-			&c.CreatedAt,
-			&c.UpdatedAt,
-		)
+		c, err := scanModel(rows)
 		if err != nil {
 			return nil, err
 		}
 		configs = append(configs, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return configs, nil
 }
 
-// UpdateModelConfig updates model configuration
+// UpdateModelConfig updates a registry entry. Enabling one is refused by the
+// database unless that exact version has passed an evaluation.
 func (r *AIReviewRepository) UpdateModelConfig(ctx context.Context, config *models.AIModelConfig) error {
 	query := `
 		UPDATE ai_model_configs SET
 			confidence_threshold = $2,
-			auto_approve_threshold = $3,
-			is_enabled = $4,
-			requires_review = $5,
-			review_timeout = $6,
-			max_queue_size = $7,
-			description = $8,
-			config_data = $9,
-			updated_at = $10
+			is_enabled = $3,
+			review_timeout = $4,
+			max_queue_size = $5,
+			description = $6,
+			config_data = NULLIF($7, '')::jsonb,
+			model_version = NULLIF($8, ''),
+			endpoint_env = NULLIF($9, ''),
+			licence = NULLIF($10, ''),
+			source_url = NULLIF($11, ''),
+			updated_at = $12
 		WHERE model_name = $1
 	`
 
@@ -477,27 +376,33 @@ func (r *AIReviewRepository) UpdateModelConfig(ctx context.Context, config *mode
 	_, err := r.db.Exec(ctx, query,
 		config.ModelName,
 		config.ConfidenceThreshold,
-		config.AutoApproveThreshold,
 		config.IsEnabled,
-		config.RequiresReview,
 		config.ReviewTimeout,
 		config.MaxQueueSize,
 		config.Description,
 		config.ConfigData,
+		config.ModelVersion,
+		config.EndpointEnv,
+		config.Licence,
+		config.SourceURL,
 		config.UpdatedAt,
 	)
 	return err
 }
 
-// CreateModelConfig creates a new model configuration
+// CreateModelConfig registers a model. It is off until it is measured.
 func (r *AIReviewRepository) CreateModelConfig(ctx context.Context, config *models.AIModelConfig) error {
 	query := `
 		INSERT INTO ai_model_configs (
-			id, model_name, decision_type, confidence_threshold,
-			auto_approve_threshold, is_enabled, requires_review,
-			review_timeout, max_queue_size, description, config_data,
-			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			id, model_name, model_version, decision_type, module, task,
+			endpoint_env, licence, source_url, confidence_threshold,
+			is_enabled, requires_review, review_timeout, max_queue_size,
+			description, config_data, registered_by, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''),
+			NULLIF($8, ''), NULLIF($9, ''), $10, FALSE, TRUE, $11, $12,
+			NULLIF($13, ''), NULLIF($14, '')::jsonb, $15, $16, $17
+		)
 	`
 
 	now := time.Now()
@@ -507,19 +412,76 @@ func (r *AIReviewRepository) CreateModelConfig(ctx context.Context, config *mode
 	_, err := r.db.Exec(ctx, query,
 		config.ID,
 		config.ModelName,
+		config.ModelVersion,
 		config.DecisionType,
+		config.Module,
+		config.Task,
+		config.EndpointEnv,
+		config.Licence,
+		config.SourceURL,
 		config.ConfidenceThreshold,
-		config.AutoApproveThreshold,
-		config.IsEnabled,
-		config.RequiresReview,
 		config.ReviewTimeout,
 		config.MaxQueueSize,
 		config.Description,
 		config.ConfigData,
+		config.RegisteredBy,
 		config.CreatedAt,
 		config.UpdatedAt,
 	)
 	return err
+}
+
+// RetireModel switches a model off and records why. Retired models stay in the
+// registry: a suggestion an officer acted on must keep naming the model that
+// made it.
+func (r *AIReviewRepository) RetireModel(ctx context.Context, modelName, reason string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE ai_model_configs
+		   SET is_enabled = FALSE, retired_at = NOW(), retired_reason = $2, updated_at = NOW()
+		 WHERE model_name = $1`, modelName, reason)
+	return err
+}
+
+// RecordEvaluation appends one measurement of one model version.
+func (r *AIReviewRepository) RecordEvaluation(ctx context.Context, e *models.AIModelEvaluation) error {
+	return r.db.QueryRow(ctx, `
+		INSERT INTO ai_model_evaluations (
+			model_name, model_version, dataset, dataset_size, dataset_sha256,
+			metric, threshold, measured, passed, limitations, notes, run_by
+		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''), $12)
+		RETURNING id, run_at`,
+		e.ModelName, e.ModelVersion, e.Dataset, e.DatasetSize, e.DatasetSHA256,
+		e.Metric, e.Threshold, e.Measured, e.Passed, e.Limitations, e.Notes, e.RunBy,
+	).Scan(&e.ID, &e.RunAt)
+}
+
+// ListEvaluations returns the measurements for a model, newest first.
+func (r *AIReviewRepository) ListEvaluations(ctx context.Context, modelName string) ([]models.AIModelEvaluation, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT e.id, e.model_name, e.model_version, e.dataset, e.dataset_size,
+		       COALESCE(e.dataset_sha256, ''), e.metric, e.threshold, e.measured,
+		       e.passed, COALESCE(e.limitations, ''), COALESCE(e.notes, ''),
+		       e.run_by, COALESCE(u.full_name, ''), e.run_at
+		  FROM ai_model_evaluations e
+		  LEFT JOIN users u ON u.id = e.run_by
+		 WHERE ($1 = '' OR e.model_name = $1)
+		 ORDER BY e.run_at DESC`, modelName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.AIModelEvaluation{}
+	for rows.Next() {
+		var e models.AIModelEvaluation
+		if err := rows.Scan(&e.ID, &e.ModelName, &e.ModelVersion, &e.Dataset, &e.DatasetSize,
+			&e.DatasetSHA256, &e.Metric, &e.Threshold, &e.Measured, &e.Passed,
+			&e.Limitations, &e.Notes, &e.RunBy, &e.RunByName, &e.RunAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // CreateAssignment creates a review assignment
@@ -724,65 +686,89 @@ func (r *AIReviewRepository) GetStats(ctx context.Context, startDate, endDate *t
 	return stats, nil
 }
 
-// GetPerformanceMetrics gets performance metrics for AI models
-func (r *AIReviewRepository) GetPerformanceMetrics(ctx context.Context, modelName, period string, startDate, endDate time.Time) ([]models.AIPerformanceMetric, error) {
-	query := `
-		SELECT
-			id, model_name, decision_type, period, period_start, period_end,
-			total_decisions, auto_approved, human_approved, human_rejected, overridden, expired,
-			accuracy_rate, precision_rate, recall_rate, f1_score,
-			avg_confidence, avg_processing_ms, avg_review_time_hrs,
-			created_at
-		FROM ai_performance_metrics
-		WHERE period = $1 AND period_start >= $2 AND period_end <= $3
-	`
-	args := []interface{}{period, startDate, endDate}
-
-	if modelName != "" {
-		query += ` AND model_name = $4`
-		args = append(args, modelName)
+// Acceptance counts what officers did with each model's suggestions, grouped
+// by model and by one of station or language, over a date range.
+//
+// The figures are counted from ai_decisions at read time rather than kept in a
+// summary table, so they cannot disagree with the decisions they describe. A
+// model officers keep rejecting shows up here, which is the point: the plan
+// requires that such a model be visible and switchable off.
+func (r *AIReviewRepository) Acceptance(ctx context.Context, groupBy string, modelName string, from, to time.Time) ([]models.AIAcceptance, error) {
+	var groupExpr, joinClause string
+	switch groupBy {
+	case "station":
+		groupExpr = `COALESCE(d.station_id::text, '')`
+		joinClause = `LEFT JOIN stations st ON st.id = d.station_id`
+	case "language":
+		groupExpr = `COALESCE(d.language, 'unknown')`
+	case "type":
+		groupExpr = `d.type::text`
+	default:
+		groupExpr = `''`
 	}
 
-	query += ` ORDER BY period_start DESC`
+	stationName := `''`
+	if groupBy == "station" {
+		stationName = `COALESCE(MAX(st.name), '')`
+	}
 
-	rows, err := r.db.Query(ctx, query, args...)
+	query := `
+		SELECT d.model_name, COALESCE(MAX(d.module), ''), ` + groupExpr + ` AS grp, ` + stationName + `,
+		       COUNT(*)::int,
+		       COUNT(*) FILTER (WHERE d.status = 'PENDING')::int,
+		       COUNT(*) FILTER (WHERE d.status = 'APPROVED')::int,
+		       COUNT(*) FILTER (WHERE d.status = 'REJECTED')::int,
+		       COUNT(*) FILTER (WHERE d.status = 'OVERRIDDEN')::int,
+		       COUNT(*) FILTER (WHERE d.status = 'EXPIRED')::int,
+		       AVG(d.confidence)
+		  FROM ai_decisions d
+		  ` + joinClause + `
+		 WHERE d.created_at >= $1 AND d.created_at < $2
+		   AND ($3 = '' OR d.model_name = $3)
+		 GROUP BY d.model_name, grp
+		 ORDER BY d.model_name, grp`
+
+	rows, err := r.db.Query(ctx, query, from, to, modelName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var metrics []models.AIPerformanceMetric
+	out := []models.AIAcceptance{}
 	for rows.Next() {
-		var m models.AIPerformanceMetric
-		err := rows.Scan(
-			&m.ID,
-			&m.ModelName,
-			&m.DecisionType,
-			&m.Period,
-			&m.PeriodStart,
-			&m.PeriodEnd,
-			&m.TotalDecisions,
-			&m.AutoApproved,
-			&m.HumanApproved,
-			&m.HumanRejected,
-			&m.Overridden,
-			&m.Expired,
-			&m.AccuracyRate,
-			&m.PrecisionRate,
-			&m.RecallRate,
-			&m.F1Score,
-			&m.AvgConfidence,
-			&m.AvgProcessingMs,
-			&m.AvgReviewTimeHrs,
-			&m.CreatedAt,
-		)
-		if err != nil {
+		var a models.AIAcceptance
+		var group, station string
+		var avgConfidence *float64
+		if err := rows.Scan(&a.ModelName, &a.Module, &group, &station,
+			&a.Total, &a.Pending, &a.Approved, &a.Rejected, &a.Overridden, &a.Expired,
+			&avgConfidence); err != nil {
 			return nil, err
 		}
-		metrics = append(metrics, m)
+
+		switch groupBy {
+		case "station":
+			a.StationID, a.StationName = group, station
+		case "language":
+			a.Language = group
+		case "type":
+			a.Type = group
+		}
+
+		// Rates are over reviewed suggestions only. Counting pending ones as
+		// rejections would make a model look worse the busier the station is.
+		a.Reviewed = a.Approved + a.Rejected + a.Overridden
+		if a.Reviewed > 0 {
+			accepted := float64(a.Approved) / float64(a.Reviewed)
+			overridden := float64(a.Overridden) / float64(a.Reviewed)
+			a.AcceptedRate = &accepted
+			a.OverrideRate = &overridden
+		}
+		a.AvgConfidence = avgConfidence
+
+		out = append(out, a)
 	}
 
-	return metrics, nil
+	return out, rows.Err()
 }
 
 // ExpireOldDecisions marks old pending decisions as expired

@@ -4,33 +4,36 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // AIDecisionType represents the type of AI decision
 type AIDecisionType string
 
 const (
-	AIDecisionIPCClassification   AIDecisionType = "IPC_CLASSIFICATION"
-	AIDecisionCrimeCategory       AIDecisionType = "CRIME_CATEGORY"
-	AIDecisionPriorityAssignment  AIDecisionType = "PRIORITY_ASSIGNMENT"
-	AIDecisionSuspectMatch        AIDecisionType = "SUSPECT_MATCH"
-	AIDecisionFraudDetection      AIDecisionType = "FRAUD_DETECTION"
+	AIDecisionStatuteSuggestion      AIDecisionType = "STATUTE_SUGGESTION"
+	AIDecisionCrimeCategory          AIDecisionType = "CRIME_CATEGORY"
+	AIDecisionComplaintCategory      AIDecisionType = "COMPLAINT_CATEGORY"
+	AIDecisionComplaintRouting       AIDecisionType = "COMPLAINT_ROUTING"
 	AIDecisionDocumentClassification AIDecisionType = "DOCUMENT_CLASSIFICATION"
-	AIDecisionEntityExtraction    AIDecisionType = "ENTITY_EXTRACTION"
-	AIDecisionSentimentAnalysis   AIDecisionType = "SENTIMENT_ANALYSIS"
+	AIDecisionDocumentText           AIDecisionType = "DOCUMENT_TEXT"
+	AIDecisionEntityExtraction       AIDecisionType = "ENTITY_EXTRACTION"
+	AIDecisionKnowledgeAnswer        AIDecisionType = "KNOWLEDGE_ANSWER"
+	AIDecisionFaceMatch              AIDecisionType = "FACE_MATCH"
+	AIDecisionPlateRead              AIDecisionType = "PLATE_READ"
 )
 
-// AIDecisionStatus represents the status of an AI decision
+// AIDecisionStatus represents the status of an AI decision.
+//
+// There is deliberately no auto-approved status: a suggestion is PENDING until
+// an officer approves, rejects or overrides it, or it expires unreviewed.
 type AIDecisionStatus string
 
 const (
-	AIDecisionStatusPending   AIDecisionStatus = "PENDING"
-	AIDecisionStatusApproved  AIDecisionStatus = "APPROVED"
-	AIDecisionStatusRejected  AIDecisionStatus = "REJECTED"
+	AIDecisionStatusPending    AIDecisionStatus = "PENDING"
+	AIDecisionStatusApproved   AIDecisionStatus = "APPROVED"
+	AIDecisionStatusRejected   AIDecisionStatus = "REJECTED"
 	AIDecisionStatusOverridden AIDecisionStatus = "OVERRIDDEN"
-	AIDecisionStatusAutoApproved AIDecisionStatus = "AUTO_APPROVED"
-	AIDecisionStatusExpired   AIDecisionStatus = "EXPIRED"
+	AIDecisionStatusExpired    AIDecisionStatus = "EXPIRED"
 )
 
 // AIDecisionPriority represents the priority of a review
@@ -43,156 +46,170 @@ const (
 	AIDecisionPriorityCritical AIDecisionPriority = "CRITICAL"
 )
 
-// AIDecision represents an AI decision that may require human review
+// AISource is one record, and the text within it, that a suggestion relied on.
+// Every suggestion carries its sources so an officer checks the model against
+// what they are already reading rather than taking its word.
+type AISource struct {
+	RecordType string `json:"recordType"`
+	RecordID   string `json:"recordId,omitempty"`
+	Reference  string `json:"reference,omitempty"`
+	Excerpt    string `json:"excerpt,omitempty"`
+}
+
+// AIDecision is one suggestion from one model, awaiting an officer.
 type AIDecision struct {
-	ID                uuid.UUID          `gorm:"type:uuid;primaryKey" json:"id"`
-	Type              AIDecisionType     `gorm:"size:50;not null;index" json:"type"`
-	Status            AIDecisionStatus   `gorm:"size:20;default:PENDING;index" json:"status"`
-	Priority          AIDecisionPriority `gorm:"size:20;default:MEDIUM" json:"priority"`
+	ID       uuid.UUID          `json:"id"`
+	Type     AIDecisionType     `json:"type"`
+	Status   AIDecisionStatus   `json:"status"`
+	Priority AIDecisionPriority `json:"priority"`
+	Module   string             `json:"module,omitempty"`
 
 	// Source context
-	SourceType        string     `gorm:"size:50;not null" json:"sourceType"` // FIR, CASE, EVIDENCE, etc.
-	SourceID          uuid.UUID  `gorm:"type:uuid;not null;index" json:"sourceId"`
-	SourceReference   string     `gorm:"size:100" json:"sourceReference,omitempty"` // FIR number, case number, etc.
+	SourceType      string    `json:"sourceType"` // FIR, COMPLAINT, DOCUMENT, …
+	SourceID        uuid.UUID `json:"sourceId"`
+	SourceReference string    `json:"sourceReference,omitempty"`
 
 	// AI prediction
-	ModelName         string     `gorm:"size:100" json:"modelName"`
-	ModelVersion      string     `gorm:"size:50" json:"modelVersion"`
-	Prediction        string     `gorm:"type:text;not null" json:"prediction"`
-	PredictionData    string     `gorm:"type:jsonb" json:"predictionData,omitempty"` // JSON with detailed prediction
-	Confidence        float64    `gorm:"not null" json:"confidence"`
-	ConfidenceThreshold float64  `gorm:"not null" json:"confidenceThreshold"`
+	ModelName           string     `json:"modelName"`
+	ModelVersion        string     `json:"modelVersion"`
+	Prediction          string     `json:"prediction"`
+	PredictionData      string     `json:"predictionData,omitempty"`
+	Confidence          float64    `json:"confidence"`
+	ConfidenceThreshold float64    `json:"confidenceThreshold"`
+	Language            string     `json:"language,omitempty"`
+	Sources             []AISource `json:"sources"`
 
 	// Alternative predictions
-	Alternatives      string     `gorm:"type:jsonb" json:"alternatives,omitempty"` // JSON array of alternative predictions
+	Alternatives string `json:"alternatives,omitempty"`
 
 	// Human review
-	ReviewedBy        *uuid.UUID `gorm:"type:uuid" json:"reviewedBy,omitempty"`
-	ReviewedAt        *time.Time `json:"reviewedAt,omitempty"`
-	ReviewNotes       string     `gorm:"size:1000" json:"reviewNotes,omitempty"`
-	HumanDecision     string     `gorm:"size:500" json:"humanDecision,omitempty"`
-	OverrideReason    string     `gorm:"size:500" json:"overrideReason,omitempty"`
+	ReviewedBy     *uuid.UUID `json:"reviewedBy,omitempty"`
+	ReviewedAt     *time.Time `json:"reviewedAt,omitempty"`
+	ReviewNotes    string     `json:"reviewNotes,omitempty"`
+	HumanDecision  string     `json:"humanDecision,omitempty"`
+	OverrideReason string     `json:"overrideReason,omitempty"`
 
 	// Assignment
-	AssignedTo        *uuid.UUID `gorm:"type:uuid" json:"assignedTo,omitempty"`
-	AssignedAt        *time.Time `json:"assignedAt,omitempty"`
-	DueBy             *time.Time `json:"dueBy,omitempty"`
+	AssignedTo *uuid.UUID `json:"assignedTo,omitempty"`
+	AssignedAt *time.Time `json:"assignedAt,omitempty"`
+	DueBy      *time.Time `json:"dueBy,omitempty"`
 
 	// Metadata
-	RequestedBy       uuid.UUID  `gorm:"type:uuid;not null" json:"requestedBy"`
-	StationID         *uuid.UUID `gorm:"type:uuid" json:"stationId,omitempty"`
-	ProcessingTimeMs  int64      `json:"processingTimeMs"`
+	RequestedBy      uuid.UUID  `json:"requestedBy"`
+	StationID        *uuid.UUID `json:"stationId,omitempty"`
+	ProcessingTimeMs int64      `json:"processingTimeMs"`
 
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // AIDecisionFeedback represents feedback on AI decisions for model improvement
 type AIDecisionFeedback struct {
-	ID              uuid.UUID `gorm:"type:uuid;primaryKey" json:"id"`
-	DecisionID      uuid.UUID `gorm:"type:uuid;not null;index" json:"decisionId"`
-	FeedbackType    string    `gorm:"size:50;not null" json:"feedbackType"` // CORRECT, INCORRECT, PARTIALLY_CORRECT
-	FeedbackBy      uuid.UUID `gorm:"type:uuid;not null" json:"feedbackBy"`
-	CorrectValue    string    `gorm:"type:text" json:"correctValue,omitempty"`
-	Comments        string    `gorm:"size:1000" json:"comments,omitempty"`
-	UsedForTraining bool      `gorm:"default:false" json:"usedForTraining"`
+	ID              uuid.UUID `json:"id"`
+	DecisionID      uuid.UUID `json:"decisionId"`
+	FeedbackType    string    `json:"feedbackType"` // CORRECT, INCORRECT, PARTIALLY_CORRECT
+	FeedbackBy      uuid.UUID `json:"feedbackBy"`
+	CorrectValue    string    `json:"correctValue,omitempty"`
+	Comments        string    `json:"comments,omitempty"`
+	UsedForTraining bool      `json:"usedForTraining"`
 	CreatedAt       time.Time `json:"createdAt"`
 }
 
-// AIModelConfig represents configuration for AI models
+// AIModelConfig is one entry in the model registry: what the model is, where it
+// runs, under what licence, and whether it may run at all. A model is enabled
+// only after an evaluation of that exact version has passed.
 type AIModelConfig struct {
-	ID                  uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
-	ModelName           string         `gorm:"size:100;uniqueIndex" json:"modelName"`
-	DecisionType        AIDecisionType `gorm:"size:50;not null" json:"decisionType"`
-	ConfidenceThreshold float64        `gorm:"not null;default:0.85" json:"confidenceThreshold"`
-	AutoApproveThreshold float64       `gorm:"not null;default:0.95" json:"autoApproveThreshold"`
-	IsEnabled           bool           `gorm:"default:true" json:"isEnabled"`
-	RequiresReview      bool           `gorm:"default:true" json:"requiresReview"`
-	ReviewTimeout       int            `gorm:"default:24" json:"reviewTimeout"` // hours
-	MaxQueueSize        int            `gorm:"default:1000" json:"maxQueueSize"`
-	Description         string         `gorm:"size:500" json:"description,omitempty"`
-	ConfigData          string         `gorm:"type:jsonb" json:"configData,omitempty"` // Additional config
-	CreatedAt           time.Time      `json:"createdAt"`
-	UpdatedAt           time.Time      `json:"updatedAt"`
+	ID                  uuid.UUID      `json:"id"`
+	ModelName           string         `json:"modelName"`
+	ModelVersion        string         `json:"modelVersion"`
+	DecisionType        AIDecisionType `json:"decisionType"`
+	Module              string         `json:"module,omitempty"`
+	Task                string         `json:"task,omitempty"`
+	EndpointEnv         string         `json:"endpointEnv,omitempty"`
+	Licence             string         `json:"licence,omitempty"`
+	SourceURL           string         `json:"sourceUrl,omitempty"`
+	ConfidenceThreshold float64        `json:"confidenceThreshold"`
+	IsEnabled           bool           `json:"isEnabled"`
+	RequiresReview      bool           `json:"requiresReview"`
+	ReviewTimeout       int            `json:"reviewTimeout"` // hours
+	MaxQueueSize        int            `json:"maxQueueSize"`
+	Description         string         `json:"description,omitempty"`
+	ConfigData          string         `json:"configData,omitempty"`
+	RegisteredBy        *uuid.UUID     `json:"registeredBy,omitempty"`
+	RetiredAt           *time.Time     `json:"retiredAt,omitempty"`
+	RetiredReason       string         `json:"retiredReason,omitempty"`
+	// Filled in on read, not stored: the state of the model's own service.
+	Connected   *bool  `json:"connected,omitempty"`
+	Measured    bool   `json:"measured"`
+	ModuleOn    bool   `json:"moduleOn"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// AIPerformanceMetric represents performance metrics for AI models
-type AIPerformanceMetric struct {
-	ID              uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
-	ModelName       string         `gorm:"size:100;not null;index" json:"modelName"`
-	DecisionType    AIDecisionType `gorm:"size:50;not null" json:"decisionType"`
-	Period          string         `gorm:"size:20;not null" json:"period"` // DAILY, WEEKLY, MONTHLY
-	PeriodStart     time.Time      `gorm:"not null;index" json:"periodStart"`
-	PeriodEnd       time.Time      `gorm:"not null" json:"periodEnd"`
+// AIModelEvaluation is one measurement of one model version against a named
+// held-out set. Append-only: a measurement is recorded, never rewritten.
+type AIModelEvaluation struct {
+	ID            uuid.UUID `json:"id"`
+	ModelName     string    `json:"modelName"`
+	ModelVersion  string    `json:"modelVersion"`
+	Dataset       string    `json:"dataset"`
+	DatasetSize   int       `json:"datasetSize"`
+	DatasetSHA256 string    `json:"datasetSha256,omitempty"`
+	Metric        string    `json:"metric"`
+	Threshold     float64   `json:"threshold"`
+	Measured      float64   `json:"measured"`
+	Passed        bool      `json:"passed"`
+	Limitations   string    `json:"limitations,omitempty"`
+	Notes         string    `json:"notes,omitempty"`
+	RunBy         uuid.UUID `json:"runBy"`
+	RunByName     string    `json:"runByName,omitempty"`
+	RunAt         time.Time `json:"runAt"`
+}
 
-	// Counts
-	TotalDecisions    int `json:"totalDecisions"`
-	AutoApproved      int `json:"autoApproved"`
-	HumanApproved     int `json:"humanApproved"`
-	HumanRejected     int `json:"humanRejected"`
-	Overridden        int `json:"overridden"`
-	Expired           int `json:"expired"`
+// AIModuleSwitch is the per-module off switch. Off at installation.
+type AIModuleSwitch struct {
+	Module        string     `json:"module"`
+	Enabled       bool       `json:"enabled"`
+	Config        string     `json:"config,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
+	Note          string     `json:"note,omitempty"`
+	UpdatedBy     *uuid.UUID `json:"updatedBy,omitempty"`
+	UpdatedByName string     `json:"updatedByName,omitempty"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
 
-	// Accuracy metrics
-	AccuracyRate      float64 `json:"accuracyRate"`
-	PrecisionRate     float64 `json:"precisionRate"`
-	RecallRate        float64 `json:"recallRate"`
-	F1Score           float64 `json:"f1Score"`
-
-	// Performance metrics
-	AvgConfidence     float64 `json:"avgConfidence"`
-	AvgProcessingMs   float64 `json:"avgProcessingMs"`
-	AvgReviewTimeHrs  float64 `json:"avgReviewTimeHrs"`
-
-	CreatedAt         time.Time `json:"createdAt"`
+// AIAcceptance is how a model is doing in the field: how many of its
+// suggestions officers took, and how many they turned down. Counted from the
+// decisions themselves so the figures cannot disagree with them.
+type AIAcceptance struct {
+	ModelName     string   `json:"modelName"`
+	Module        string   `json:"module,omitempty"`
+	Type          string   `json:"type,omitempty"`
+	StationID     string   `json:"stationId,omitempty"`
+	StationName   string   `json:"stationName,omitempty"`
+	Language      string   `json:"language,omitempty"`
+	Total         int      `json:"total"`
+	Pending       int      `json:"pending"`
+	Approved      int      `json:"approved"`
+	Rejected      int      `json:"rejected"`
+	Overridden    int      `json:"overridden"`
+	Expired       int      `json:"expired"`
+	Reviewed      int      `json:"reviewed"`
+	AcceptedRate  *float64 `json:"acceptedRate,omitempty"`
+	OverrideRate  *float64 `json:"overrideRate,omitempty"`
+	AvgConfidence *float64 `json:"avgConfidence,omitempty"`
 }
 
 // AIReviewAssignment represents assignment of review tasks
 type AIReviewAssignment struct {
-	ID           uuid.UUID `gorm:"type:uuid;primaryKey" json:"id"`
-	ReviewerID   uuid.UUID `gorm:"type:uuid;not null;index" json:"reviewerId"`
-	DecisionID   uuid.UUID `gorm:"type:uuid;not null;index" json:"decisionId"`
-	AssignedBy   uuid.UUID `gorm:"type:uuid;not null" json:"assignedBy"`
-	AssignedAt   time.Time `gorm:"not null" json:"assignedAt"`
-	DueBy        *time.Time `json:"dueBy,omitempty"`
-	CompletedAt  *time.Time `json:"completedAt,omitempty"`
-	Status       string    `gorm:"size:20;default:PENDING" json:"status"` // PENDING, COMPLETED, REASSIGNED
-	Notes        string    `gorm:"size:500" json:"notes,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-}
-
-// BeforeCreate hooks
-func (a *AIDecision) BeforeCreate(tx *gorm.DB) error {
-	if a.ID == uuid.Nil {
-		a.ID = uuid.New()
-	}
-	return nil
-}
-
-func (a *AIDecisionFeedback) BeforeCreate(tx *gorm.DB) error {
-	if a.ID == uuid.Nil {
-		a.ID = uuid.New()
-	}
-	return nil
-}
-
-func (a *AIModelConfig) BeforeCreate(tx *gorm.DB) error {
-	if a.ID == uuid.Nil {
-		a.ID = uuid.New()
-	}
-	return nil
-}
-
-func (a *AIPerformanceMetric) BeforeCreate(tx *gorm.DB) error {
-	if a.ID == uuid.Nil {
-		a.ID = uuid.New()
-	}
-	return nil
-}
-
-func (a *AIReviewAssignment) BeforeCreate(tx *gorm.DB) error {
-	if a.ID == uuid.Nil {
-		a.ID = uuid.New()
-	}
-	return nil
+	ID          uuid.UUID  `json:"id"`
+	ReviewerID  uuid.UUID  `json:"reviewerId"`
+	DecisionID  uuid.UUID  `json:"decisionId"`
+	AssignedBy  uuid.UUID  `json:"assignedBy"`
+	AssignedAt  time.Time  `json:"assignedAt"`
+	DueBy       *time.Time `json:"dueBy,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	Status      string     `json:"status"` // PENDING, COMPLETED, REASSIGNED
+	Notes       string     `json:"notes,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
 }

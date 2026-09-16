@@ -3,10 +3,13 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/npdms/api/internal/models"
@@ -29,18 +32,19 @@ func NewAIReviewService(db *pgxpool.Pool, auditRepo *repository.AuditRepository)
 
 // CreateDecisionRequest represents a request to create an AI decision
 type CreateDecisionRequest struct {
-	Type              models.AIDecisionType `json:"type"`
-	SourceType        string                `json:"sourceType"`
-	SourceID          uuid.UUID             `json:"sourceId"`
-	SourceReference   string                `json:"sourceReference,omitempty"`
-	ModelName         string                `json:"modelName"`
-	ModelVersion      string                `json:"modelVersion"`
-	Prediction        string                `json:"prediction"`
-	PredictionData    interface{}           `json:"predictionData,omitempty"`
-	Confidence        float64               `json:"confidence"`
-	Alternatives      []AlternativePrediction `json:"alternatives,omitempty"`
-	ProcessingTimeMs  int64                 `json:"processingTimeMs"`
-	StationID         *uuid.UUID            `json:"stationId,omitempty"`
+	Type             models.AIDecisionType   `json:"type"`
+	SourceType       string                  `json:"sourceType"`
+	SourceID         uuid.UUID               `json:"sourceId"`
+	SourceReference  string                  `json:"sourceReference,omitempty"`
+	ModelName        string                  `json:"modelName"`
+	Prediction       string                  `json:"prediction"`
+	PredictionData   interface{}             `json:"predictionData,omitempty"`
+	Confidence       float64                 `json:"confidence"`
+	Language         string                  `json:"language,omitempty"`
+	Sources          []models.AISource       `json:"sources,omitempty"`
+	Alternatives     []AlternativePrediction `json:"alternatives,omitempty"`
+	ProcessingTimeMs int64                   `json:"processingTimeMs"`
+	StationID        *uuid.UUID              `json:"stationId,omitempty"`
 }
 
 // AlternativePrediction represents an alternative prediction
@@ -80,24 +84,19 @@ type QueueResponse struct {
 	TotalPages int                 `json:"totalPages"`
 }
 
-// CreateDecision creates a new AI decision for review
+// CreateDecision records one suggestion for review.
+//
+// It is the only way a suggestion enters the platform, and it always enters as
+// PENDING: no confidence figure approves anything. An unregistered model is
+// refused rather than given default thresholds, because a threshold nobody
+// chose is not a threshold.
 func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecisionRequest, requestedBy uuid.UUID) (*models.AIDecision, error) {
-	// Get model config for threshold
 	config, err := s.GetModelConfig(ctx, req.ModelName)
 	if err != nil {
-		// Use default thresholds if config not found
-		config = &models.AIModelConfig{
-			ConfidenceThreshold:  0.85,
-			AutoApproveThreshold: 0.95,
-			RequiresReview:       true,
-		}
+		return nil, fmt.Errorf("model %s is not in the registry: %w", req.ModelName, err)
 	}
 
-	// Determine initial status based on confidence
 	status := models.AIDecisionStatusPending
-	if req.Confidence >= config.AutoApproveThreshold {
-		status = models.AIDecisionStatusAutoApproved
-	}
 
 	// Determine priority based on confidence
 	priority := models.AIDecisionPriorityMedium
@@ -123,6 +122,17 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 		alternativesJSON = string(data)
 	}
 
+	// The sources are the point of the row: without them an officer has a
+	// verdict and no way to check it.
+	sources := req.Sources
+	if sources == nil {
+		sources = []models.AISource{}
+	}
+	sourcesJSON, err := json.Marshal(sources)
+	if err != nil {
+		return nil, fmt.Errorf("failed to record the suggestion's sources: %w", err)
+	}
+
 	// Calculate due date
 	dueBy := time.Now().Add(time.Duration(config.ReviewTimeout) * time.Hour)
 
@@ -131,15 +141,18 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 		Type:                req.Type,
 		Status:              status,
 		Priority:            priority,
+		Module:              config.Module,
 		SourceType:          req.SourceType,
 		SourceID:            req.SourceID,
 		SourceReference:     req.SourceReference,
 		ModelName:           req.ModelName,
-		ModelVersion:        req.ModelVersion,
+		ModelVersion:        config.ModelVersion,
 		Prediction:          req.Prediction,
 		PredictionData:      predictionDataJSON,
 		Confidence:          req.Confidence,
 		ConfidenceThreshold: config.ConfidenceThreshold,
+		Language:            req.Language,
+		Sources:             sources,
 		Alternatives:        alternativesJSON,
 		RequestedBy:         requestedBy,
 		StationID:           req.StationID,
@@ -149,25 +162,37 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 
 	query := `
 		INSERT INTO ai_decisions (
-			id, type, status, priority, source_type, source_id, source_reference,
+			id, type, status, priority, module, source_type, source_id, source_reference,
 			model_name, model_version, prediction, prediction_data, confidence,
-			confidence_threshold, alternatives, requested_by, station_id,
+			confidence_threshold, language, sources, alternatives, requested_by, station_id,
 			processing_time_ms, due_by, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW()
+			$1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, $10, $11, $12, $13, $14,
+			NULLIF($15, ''), $16::jsonb, $17, $18, $19, $20, $21, NOW(), NOW()
 		)
 	`
 
 	_, err = s.db.Exec(ctx, query,
-		decision.ID, decision.Type, decision.Status, decision.Priority,
+		decision.ID, decision.Type, decision.Status, decision.Priority, decision.Module,
 		decision.SourceType, decision.SourceID, decision.SourceReference,
 		decision.ModelName, decision.ModelVersion, decision.Prediction,
 		decision.PredictionData, decision.Confidence, decision.ConfidenceThreshold,
+		decision.Language, string(sourcesJSON),
 		decision.Alternatives, decision.RequestedBy, decision.StationID,
 		decision.ProcessingTimeMs, decision.DueBy,
 	)
 
 	if err != nil {
+		// The database refuses suggestions from a model that is switched off,
+		// unmeasured or at a different version. Say which, rather than 500.
+		s.auditRepo.Log(ctx, &repository.AuditLog{
+			UserID:        &requestedBy,
+			Action:        "ai_suggestion_refused",
+			ResourceType:  "ai_decision",
+			Description:   ptr(fmt.Sprintf("Refused a %s suggestion from %s", req.Type, req.ModelName)),
+			Success:       false,
+			FailureReason: ptr(err.Error()),
+		})
 		return nil, fmt.Errorf("failed to create AI decision: %w", err)
 	}
 
@@ -177,8 +202,9 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 		Action:       "ai_decision_created",
 		ResourceType: "ai_decision",
 		ResourceID:   &decision.ID,
-		Description:  ptr(fmt.Sprintf("Created %s AI decision with %.2f%% confidence", req.Type, req.Confidence*100)),
-		Success:      true,
+		Description: ptr(fmt.Sprintf("%s suggestion from %s %s at %.0f%% confidence, awaiting review",
+			req.Type, req.ModelName, config.ModelVersion, req.Confidence*100)),
+		Success: true,
 	})
 
 	return decision, nil
@@ -186,45 +212,38 @@ func (s *AIReviewService) CreateDecision(ctx context.Context, req CreateDecision
 
 // GetDecision retrieves an AI decision by ID
 func (s *AIReviewService) GetDecision(ctx context.Context, id uuid.UUID) (*models.AIDecision, error) {
-	query := `
-		SELECT id, type, status, priority, source_type, source_id, source_reference,
-			   model_name, model_version, prediction, prediction_data, confidence,
-			   confidence_threshold, alternatives, reviewed_by, reviewed_at, review_notes,
-			   human_decision, override_reason, assigned_to, assigned_at, due_by,
-			   requested_by, station_id, processing_time_ms, created_at, updated_at
-		FROM ai_decisions
-		WHERE id = $1
-	`
-
-	var decision models.AIDecision
-	err := s.db.QueryRow(ctx, query, id).Scan(
-		&decision.ID, &decision.Type, &decision.Status, &decision.Priority,
-		&decision.SourceType, &decision.SourceID, &decision.SourceReference,
-		&decision.ModelName, &decision.ModelVersion, &decision.Prediction,
-		&decision.PredictionData, &decision.Confidence, &decision.ConfidenceThreshold,
-		&decision.Alternatives, &decision.ReviewedBy, &decision.ReviewedAt,
-		&decision.ReviewNotes, &decision.HumanDecision, &decision.OverrideReason,
-		&decision.AssignedTo, &decision.AssignedAt, &decision.DueBy,
-		&decision.RequestedBy, &decision.StationID, &decision.ProcessingTimeMs,
-		&decision.CreatedAt, &decision.UpdatedAt,
-	)
-
+	decision, err := s.repo().GetDecision(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get AI decision: %w", err)
 	}
-
-	return &decision, nil
+	return decision, nil
 }
 
-// ReviewDecision reviews an AI decision
+// ErrAlreadyReviewed is returned when a suggestion has already been decided.
+var ErrAlreadyReviewed = errors.New("this suggestion has already been reviewed")
+
+// ReviewDecision records an officer's decision on one suggestion.
+//
+// A suggestion is reviewed once. Without that, two officers looking at the
+// same queue can both act on it, and the second silently overwrites the first.
 func (s *AIReviewService) ReviewDecision(ctx context.Context, id uuid.UUID, req ReviewRequest, reviewerID uuid.UUID) (*models.AIDecision, error) {
 	now := time.Now()
 
+	switch req.Status {
+	case models.AIDecisionStatusApproved, models.AIDecisionStatusRejected, models.AIDecisionStatusOverridden:
+	default:
+		return nil, fmt.Errorf("a review approves, rejects or overrides a suggestion; %q is not one of those", req.Status)
+	}
+
+	if req.Status == models.AIDecisionStatusOverridden && strings.TrimSpace(req.OverrideReason) == "" {
+		return nil, errors.New("overriding a suggestion needs a reason")
+	}
+
 	query := `
 		UPDATE ai_decisions
-		SET status = $1, human_decision = $2, override_reason = $3, review_notes = $4,
+		SET status = $1, human_decision = $2, override_reason = NULLIF($3, ''), review_notes = $4,
 			reviewed_by = $5, reviewed_at = $6, updated_at = NOW()
-		WHERE id = $7
+		WHERE id = $7 AND status = 'PENDING'
 		RETURNING id, type, status, prediction, confidence, human_decision
 	`
 
@@ -234,6 +253,9 @@ func (s *AIReviewService) ReviewDecision(ctx context.Context, id uuid.UUID, req 
 		reviewerID, now, id,
 	).Scan(&decision.ID, &decision.Type, &decision.Status, &decision.Prediction, &decision.Confidence, &decision.HumanDecision)
 
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrAlreadyReviewed
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to review AI decision: %w", err)
 	}
@@ -407,54 +429,28 @@ func (s *AIReviewService) SubmitFeedback(ctx context.Context, decisionID uuid.UU
 	return nil
 }
 
-// GetModelConfig retrieves model configuration
+// GetModelConfig retrieves one registry entry
 func (s *AIReviewService) GetModelConfig(ctx context.Context, modelName string) (*models.AIModelConfig, error) {
-	query := `
-		SELECT id, model_name, decision_type, confidence_threshold, auto_approve_threshold,
-			   is_enabled, requires_review, review_timeout, max_queue_size, description
-		FROM ai_model_configs
-		WHERE model_name = $1
-	`
-
-	var config models.AIModelConfig
-	err := s.db.QueryRow(ctx, query, modelName).Scan(
-		&config.ID, &config.ModelName, &config.DecisionType, &config.ConfidenceThreshold,
-		&config.AutoApproveThreshold, &config.IsEnabled, &config.RequiresReview,
-		&config.ReviewTimeout, &config.MaxQueueSize, &config.Description,
-	)
-
+	config, err := s.repo().GetModelConfig(ctx, modelName)
 	if err != nil {
 		return nil, fmt.Errorf("model config not found: %w", err)
 	}
-
-	return &config, nil
+	return config, nil
 }
 
-// UpdateModelConfig updates model configuration
+// UpdateModelConfig saves a registry entry that already exists. Registering a
+// new model is a separate, deliberate act (RegisterModel), so a typo in a name
+// cannot quietly create a second model nobody measured.
 func (s *AIReviewService) UpdateModelConfig(ctx context.Context, config *models.AIModelConfig, updatedBy uuid.UUID) error {
-	query := `
-		INSERT INTO ai_model_configs (
-			id, model_name, decision_type, confidence_threshold, auto_approve_threshold,
-			is_enabled, requires_review, review_timeout, max_queue_size, description, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-		ON CONFLICT (model_name) DO UPDATE SET
-			confidence_threshold = EXCLUDED.confidence_threshold,
-			auto_approve_threshold = EXCLUDED.auto_approve_threshold,
-			is_enabled = EXCLUDED.is_enabled,
-			requires_review = EXCLUDED.requires_review,
-			review_timeout = EXCLUDED.review_timeout,
-			max_queue_size = EXCLUDED.max_queue_size,
-			description = EXCLUDED.description,
-			updated_at = NOW()
-	`
-
-	_, err := s.db.Exec(ctx, query,
-		uuid.New(), config.ModelName, config.DecisionType, config.ConfidenceThreshold,
-		config.AutoApproveThreshold, config.IsEnabled, config.RequiresReview,
-		config.ReviewTimeout, config.MaxQueueSize, config.Description,
-	)
-
-	if err != nil {
+	if err := s.repo().UpdateModelConfig(ctx, config); err != nil {
+		s.auditRepo.Log(ctx, &repository.AuditLog{
+			UserID:        &updatedBy,
+			Action:        "ai_model_config_refused",
+			ResourceType:  "ai_model_config",
+			Description:   ptr(fmt.Sprintf("Refused a change to model: %s", config.ModelName)),
+			Success:       false,
+			FailureReason: ptr(err.Error()),
+		})
 		return fmt.Errorf("failed to update model config: %w", err)
 	}
 
@@ -462,45 +458,123 @@ func (s *AIReviewService) UpdateModelConfig(ctx context.Context, config *models.
 		UserID:       &updatedBy,
 		Action:       "ai_model_config_updated",
 		ResourceType: "ai_model_config",
-		Description:  ptr(fmt.Sprintf("Updated config for model: %s", config.ModelName)),
-		Success:      true,
+		Description: ptr(fmt.Sprintf("Model %s: threshold %.2f, %s",
+			config.ModelName, config.ConfidenceThreshold, enabledWord(config.IsEnabled))),
+		Success: true,
 	})
 
 	return nil
+}
+
+func enabledWord(enabled bool) string {
+	if enabled {
+		return "switched on"
+	}
+	return "switched off"
+}
+
+// RegisterModel adds a model to the registry, switched off.
+func (s *AIReviewService) RegisterModel(ctx context.Context, config *models.AIModelConfig, registeredBy uuid.UUID) (*models.AIModelConfig, error) {
+	config.ID = uuid.New()
+	config.RegisteredBy = &registeredBy
+	config.IsEnabled = false
+	config.RequiresReview = true
+	if config.ReviewTimeout <= 0 {
+		config.ReviewTimeout = 24
+	}
+	if config.MaxQueueSize <= 0 {
+		config.MaxQueueSize = 1000
+	}
+
+	if err := s.repo().CreateModelConfig(ctx, config); err != nil {
+		return nil, fmt.Errorf("failed to register model: %w", err)
+	}
+
+	s.auditRepo.Log(ctx, &repository.AuditLog{
+		UserID:       &registeredBy,
+		Action:       "ai_model_registered",
+		ResourceType: "ai_model_config",
+		ResourceID:   &config.ID,
+		Description: ptr(fmt.Sprintf("Registered %s %s for %s, switched off until measured",
+			config.ModelName, config.ModelVersion, config.DecisionType)),
+		Success: true,
+	})
+
+	return s.GetModelConfig(ctx, config.ModelName)
+}
+
+// RecordEvaluation appends a measurement of one model version against a named
+// held-out set. Passing one is what allows the model to be switched on.
+func (s *AIReviewService) RecordEvaluation(ctx context.Context, e *models.AIModelEvaluation, runBy uuid.UUID) (*models.AIModelEvaluation, error) {
+	if _, err := s.GetModelConfig(ctx, e.ModelName); err != nil {
+		return nil, err
+	}
+
+	e.RunBy = runBy
+	e.Passed = e.Measured >= e.Threshold
+	if err := s.repo().RecordEvaluation(ctx, e); err != nil {
+		return nil, fmt.Errorf("failed to record the evaluation: %w", err)
+	}
+
+	verdict := "did not reach"
+	if e.Passed {
+		verdict = "reached"
+	}
+	s.auditRepo.Log(ctx, &repository.AuditLog{
+		UserID:       &runBy,
+		Action:       "ai_model_evaluated",
+		ResourceType: "ai_model_evaluation",
+		ResourceID:   &e.ID,
+		Description: ptr(fmt.Sprintf("%s %s on %s (%d examples): %s %.3f, %s the %.3f threshold",
+			e.ModelName, e.ModelVersion, e.Dataset, e.DatasetSize, e.Metric, e.Measured, verdict, e.Threshold)),
+		Success: true,
+	})
+
+	return e, nil
+}
+
+// ListEvaluations returns the measurements recorded for a model.
+func (s *AIReviewService) ListEvaluations(ctx context.Context, modelName string) ([]models.AIModelEvaluation, error) {
+	return s.repo().ListEvaluations(ctx, modelName)
+}
+
+// Acceptance reports what officers did with each model's suggestions.
+func (s *AIReviewService) Acceptance(ctx context.Context, groupBy, modelName string, from, to time.Time) ([]models.AIAcceptance, error) {
+	return s.repo().Acceptance(ctx, groupBy, modelName, from, to)
 }
 
 // GetStats returns AI review statistics
 func (s *AIReviewService) GetStats(ctx context.Context, stationID *uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
+	// One bound parameter for the station, so a station filter is a value and
+	// never part of the statement.
+	var station interface{}
+	if stationID != nil {
+		station = *stationID
+	}
+	const stationFilter = " AND ($1::uuid IS NULL OR station_id = $1)"
+
 	// Queue stats
 	var pendingCount, criticalCount, overdueCount int
-	baseWhere := "WHERE status = 'PENDING'"
-	if stationID != nil {
-		baseWhere += fmt.Sprintf(" AND station_id = '%s'", stationID.String())
-	}
+	baseWhere := "WHERE status = 'PENDING'" + stationFilter
 
-	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere).Scan(&pendingCount)
-	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere+" AND priority = 'CRITICAL'").Scan(&criticalCount)
-	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere+" AND due_by < NOW()").Scan(&overdueCount)
+	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere, station).Scan(&pendingCount)
+	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere+" AND priority = 'CRITICAL'", station).Scan(&criticalCount)
+	s.db.QueryRow(ctx, "SELECT COUNT(*) FROM ai_decisions "+baseWhere+" AND due_by < NOW()", station).Scan(&overdueCount)
 
 	stats["pendingCount"] = pendingCount
 	stats["criticalCount"] = criticalCount
 	stats["overdueCount"] = overdueCount
 
 	// Today's stats
-	var todayTotal, todayAutoApproved, todayHumanReviewed int
-	todayQuery := "SELECT COUNT(*) FROM ai_decisions WHERE DATE(created_at) = CURRENT_DATE"
-	if stationID != nil {
-		todayQuery += fmt.Sprintf(" AND station_id = '%s'", stationID.String())
-	}
-	s.db.QueryRow(ctx, todayQuery).Scan(&todayTotal)
-	s.db.QueryRow(ctx, todayQuery+" AND status = 'AUTO_APPROVED'").Scan(&todayAutoApproved)
-	s.db.QueryRow(ctx, todayQuery+" AND status IN ('APPROVED', 'REJECTED', 'OVERRIDDEN')").Scan(&todayHumanReviewed)
+	var todayTotal, todayReviewed int
+	todayQuery := "SELECT COUNT(*) FROM ai_decisions WHERE DATE(created_at) = CURRENT_DATE" + stationFilter
+	s.db.QueryRow(ctx, todayQuery, station).Scan(&todayTotal)
+	s.db.QueryRow(ctx, todayQuery+" AND status IN ('APPROVED', 'REJECTED', 'OVERRIDDEN')", station).Scan(&todayReviewed)
 
 	stats["todayTotal"] = todayTotal
-	stats["todayAutoApproved"] = todayAutoApproved
-	stats["todayHumanReviewed"] = todayHumanReviewed
+	stats["todayHumanReviewed"] = todayReviewed
 
 	// Accuracy (last 30 days)
 	var totalReviewed, correctCount int
@@ -528,7 +602,7 @@ func (s *AIReviewService) GetStats(ctx context.Context, stationID *uuid.UUID) (m
 
 	// By type breakdown
 	typeBreakdown := make(map[string]int)
-	rows, _ := s.db.Query(ctx, "SELECT type, COUNT(*) FROM ai_decisions "+baseWhere+" GROUP BY type")
+	rows, _ := s.db.Query(ctx, "SELECT type, COUNT(*) FROM ai_decisions "+baseWhere+" GROUP BY type", station)
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -559,15 +633,19 @@ func (s *AIReviewService) ExpireOldDecisions(ctx context.Context) (int, error) {
 	return int(result.RowsAffected()), nil
 }
 
-// AIModelConfigUpdate holds the mutable fields of a model configuration.
+// AIModelConfigUpdate holds the mutable fields of a registry entry. There is
+// no auto-approve threshold and no requiresReview flag: review is not
+// something a setting can switch off.
 type AIModelConfigUpdate struct {
-	ConfidenceThreshold  *float64 `json:"confidenceThreshold"`
-	AutoApproveThreshold *float64 `json:"autoApproveThreshold"`
-	IsEnabled            *bool    `json:"isEnabled"`
-	RequiresReview       *bool    `json:"requiresReview"`
-	ReviewTimeout        *int     `json:"reviewTimeout"`
-	MaxQueueSize         *int     `json:"maxQueueSize"`
-	Description          string   `json:"description"`
+	ConfidenceThreshold *float64 `json:"confidenceThreshold"`
+	IsEnabled           *bool    `json:"isEnabled"`
+	ModelVersion        string   `json:"modelVersion"`
+	EndpointEnv         string   `json:"endpointEnv"`
+	Licence             string   `json:"licence"`
+	SourceURL           string   `json:"sourceUrl"`
+	ReviewTimeout       *int     `json:"reviewTimeout"`
+	MaxQueueSize        *int     `json:"maxQueueSize"`
+	Description         string   `json:"description"`
 }
 
 func (s *AIReviewService) repo() *repository.AIReviewRepository {
@@ -589,14 +667,20 @@ func (s *AIReviewService) ApplyModelConfigUpdate(ctx context.Context, modelName 
 	if update.ConfidenceThreshold != nil {
 		config.ConfidenceThreshold = *update.ConfidenceThreshold
 	}
-	if update.AutoApproveThreshold != nil {
-		config.AutoApproveThreshold = *update.AutoApproveThreshold
-	}
 	if update.IsEnabled != nil {
 		config.IsEnabled = *update.IsEnabled
 	}
-	if update.RequiresReview != nil {
-		config.RequiresReview = *update.RequiresReview
+	if update.ModelVersion != "" {
+		config.ModelVersion = update.ModelVersion
+	}
+	if update.EndpointEnv != "" {
+		config.EndpointEnv = update.EndpointEnv
+	}
+	if update.Licence != "" {
+		config.Licence = update.Licence
+	}
+	if update.SourceURL != "" {
+		config.SourceURL = update.SourceURL
 	}
 	if update.ReviewTimeout != nil {
 		config.ReviewTimeout = *update.ReviewTimeout
@@ -619,9 +703,29 @@ func (s *AIReviewService) GetStatsByDateRange(ctx context.Context, startDate, en
 	return s.repo().GetStats(ctx, startDate, endDate)
 }
 
-// GetPerformanceMetrics returns model performance metrics for a period.
-func (s *AIReviewService) GetPerformanceMetrics(ctx context.Context, modelName, period string, startDate, endDate time.Time) ([]models.AIPerformanceMetric, error) {
-	return s.repo().GetPerformanceMetrics(ctx, modelName, period, startDate, endDate)
+// ModuleSwitches lists every AI module and whether it is switched on.
+func (s *AIReviewService) ModuleSwitches(ctx context.Context) ([]models.AIModuleSwitch, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT s.module, s.enabled, COALESCE(s.config::text, '{}'), COALESCE(s.reason, ''),
+		       COALESCE(s.note, ''), s.updated_by, COALESCE(u.full_name, ''), s.updated_at
+		  FROM ai_module_switches s
+		  LEFT JOIN users u ON u.id = s.updated_by
+		 ORDER BY s.module`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []models.AIModuleSwitch{}
+	for rows.Next() {
+		var m models.AIModuleSwitch
+		if err := rows.Scan(&m.Module, &m.Enabled, &m.Config, &m.Reason, &m.Note,
+			&m.UpdatedBy, &m.UpdatedByName, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // GetDecisionHistory returns the audit history of a decision.

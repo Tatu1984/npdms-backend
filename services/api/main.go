@@ -14,6 +14,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/npdms/api/internal/ai"
 	"github.com/npdms/api/internal/config"
 	"github.com/npdms/api/internal/database"
 	"github.com/npdms/api/internal/handlers"
@@ -82,7 +83,7 @@ func main() {
 	reportsRepo := repository.NewReportsRepository(db)
 	investigationRepo := repository.NewInvestigationRepository(db)
 	custodyRepo := repository.NewCustodyRepository(db)
-		districtRepo := repository.NewDistrictRepository(db)
+	districtRepo := repository.NewDistrictRepository(db)
 	stateRepo := repository.NewStateRepository(db)
 	nationalRepo := repository.NewNationalRepository(db)
 	uploadRepo := repository.NewUploadRepository(db)
@@ -106,6 +107,16 @@ func main() {
 	trafficChallanService := services.NewTrafficChallanService(trafficChallanRepo, auditRepo)
 	reportsService := services.NewReportsService(reportsRepo, auditRepo)
 	aiReviewService := services.NewAIReviewService(db, auditRepo)
+
+	// The AI gateway (layer A0): the one route from this platform to any
+	// model. Clients are attached per registered model, from the service
+	// address each registry entry names. A model with no address here is not
+	// connected, and the screens say so rather than showing an empty result.
+	aiGateway := ai.NewGateway(aiReviewService)
+	for _, entry := range aiModelEndpoints(context.Background(), aiReviewService) {
+		aiGateway.Register(entry.model, ai.NewHTTPModel(entry.env))
+	}
+
 	investigationService := services.NewInvestigationService(investigationRepo, auditRepo, db)
 	ipIntelService := services.NewIPIntelService(rdb, auditRepo)
 
@@ -212,6 +223,7 @@ func main() {
 	trafficChallanHandler := handlers.NewTrafficChallanHandler(trafficChallanService)
 	reportsHandler := handlers.NewReportsHandler(reportsService)
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
 	custodyHandler := handlers.NewCustodyHandler(custodyService)
@@ -1079,7 +1091,8 @@ func main() {
 				aiReview.GET("/queue", aiReviewHandler.GetReviewQueue)
 				aiReview.GET("/my-assignments", aiReviewHandler.GetMyAssignments)
 				aiReview.GET("/stats", aiReviewHandler.GetStats)
-				aiReview.GET("/metrics", aiReviewHandler.GetPerformanceMetrics)
+				// Acceptance and override rates per station, language or type.
+				aiReview.GET("/acceptance", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.GetAcceptance)
 
 				// Decision management
 				aiReview.GET("/decisions/:id", aiReviewHandler.GetDecision)
@@ -1091,10 +1104,23 @@ func main() {
 				// Bulk operations
 				aiReview.POST("/bulk-review", middleware.RequireRole("SHO", "DSP", "SP"), aiReviewHandler.BulkReview)
 
-				// Model configuration (admin only)
+				// The model registry. Reading it is open to DSP and above;
+				// registering, measuring and switching a model on is SP and above.
 				aiReview.GET("/models", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.GetModelConfigs)
+				aiReview.POST("/models", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.RegisterModel)
 				aiReview.GET("/models/:modelName", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.GetModelConfig)
 				aiReview.PUT("/models/:modelName", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.UpdateModelConfig)
+
+				// Evaluations: a model is switched on only after one passes.
+				aiReview.GET("/evaluations", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.ListEvaluations)
+				aiReview.POST("/evaluations", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.RecordEvaluation)
+
+				// The per-module off switches, one row per AI module.
+				aiReview.GET("/modules", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiReviewHandler.ListModuleSwitches)
+
+				// The gateway's own state: every registered model and whether
+				// its service can be reached from this deployment.
+				aiReview.GET("/gateway", middleware.RequireRole("DSP", "SP", "DIG", "IG", "DGP"), aiGatewayHandler.Status)
 
 				// Maintenance
 				aiReview.POST("/expire", middleware.RequireRole("SP", "DIG", "IG", "DGP"), aiReviewHandler.ExpireDecisions)
@@ -1305,4 +1331,33 @@ func main() {
 	}
 
 	log.Println("Server exited")
+}
+
+// aiModelEndpoints reads which environment variable holds each registered
+// model's service address. The registry is the source of truth, so adding a
+// model is a registry entry and an address, not a change to this file.
+//
+// A registry that cannot be read (a database built before migration 000076,
+// for instance) is not fatal: the API starts with no model clients, and every
+// AI screen reports that nothing is connected.
+func aiModelEndpoints(ctx context.Context, review *services.AIReviewService) []struct{ model, env string } {
+	out := []struct{ model, env string }{}
+
+	entries, err := review.GetAllModelConfigs(ctx)
+	if err != nil {
+		log.Printf("AI gateway: the model registry could not be read (%v); no model clients attached", err)
+		return out
+	}
+
+	for _, entry := range entries {
+		if entry.EndpointEnv == "" || entry.RetiredAt != nil {
+			continue
+		}
+		out = append(out, struct{ model, env string }{entry.ModelName, entry.EndpointEnv})
+	}
+
+	if len(out) == 0 {
+		log.Printf("AI gateway: %d models registered, none with a service address on this deployment", len(entries))
+	}
+	return out
 }

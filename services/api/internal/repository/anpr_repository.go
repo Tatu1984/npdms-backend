@@ -48,11 +48,13 @@ func anprPgCode(err error) string {
 
 /* ------------------------------------------------------------ module switch */
 
+// The switches live in ai_module_switches, the one table the A0 gateway keeps
+// for every AI module (000076 folded this module's own table into it).
 func (r *ANPRRepository) Switch(ctx context.Context, module string) (*models.ModuleSwitch, error) {
 	var s models.ModuleSwitch
 	err := r.db.QueryRow(ctx, `
-		SELECT m.module, m.enabled, m.note, m.updated_by, COALESCE(u.name, ''), m.updated_at
-		FROM module_switches m LEFT JOIN users u ON u.id = m.updated_by
+		SELECT m.module, m.enabled, COALESCE(m.note, m.reason, ''), m.updated_by, COALESCE(u.name, ''), m.updated_at
+		FROM ai_module_switches m LEFT JOIN users u ON u.id = m.updated_by
 		WHERE m.module = $1`, module).Scan(&s.Module, &s.Enabled, &s.Note, &s.UpdatedBy, &s.UpdatedByName, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The migration seeds the row; its absence means the module was never installed.
@@ -63,9 +65,11 @@ func (r *ANPRRepository) Switch(ctx context.Context, module string) (*models.Mod
 
 func (r *ANPRRepository) SetSwitch(ctx context.Context, module string, enabled bool, note string, actor uuid.UUID) error {
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO module_switches (module, enabled, note, updated_by, updated_at) VALUES ($1, $2, $3, $4, NOW())
+		INSERT INTO ai_module_switches (module, enabled, note, reason, updated_by, updated_at)
+		VALUES ($1, $2, $3, $3, $4, NOW())
 		ON CONFLICT (module) DO UPDATE SET enabled = EXCLUDED.enabled, note = EXCLUDED.note,
-		       updated_by = EXCLUDED.updated_by, updated_at = NOW()`, module, enabled, note, actor)
+		       reason = EXCLUDED.reason, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+		module, enabled, note, actor)
 	return err
 }
 
