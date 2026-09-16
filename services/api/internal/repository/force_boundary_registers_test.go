@@ -38,7 +38,12 @@ type twoForces struct {
 	tag string
 }
 
-func makeForceSide(t *testing.T, pool *pgxpool.Pool, code, district, tag string) registerFixture {
+// makeForceSide borrows a serving officer and their station rather than
+// inventing one. Two reasons: an account cannot be deleted — the database
+// refuses, because in service an account is closed and never removed — so a
+// test that created officers could not tidy up after itself; and an officer
+// the seed made is a truer subject than one written to suit the test.
+func makeForceSide(t *testing.T, pool *pgxpool.Pool, code, tag string) registerFixture {
 	t.Helper()
 	ctx := context.Background()
 	var f registerFixture
@@ -47,24 +52,15 @@ func makeForceSide(t *testing.T, pool *pgxpool.Pool, code, district, tag string)
 		t.Skipf("the forces are not in this database: %v", err)
 	}
 
-	f.station = uuid.New()
-	_, err := pool.Exec(ctx, `
-		INSERT INTO stations (id, name, code, district, state, force_id)
-		VALUES ($1, $2, $3, $4, 'West Bengal', $5)`,
-		f.station, "PROBE-boundary "+code+" station "+tag,
-		"PB"+code[:1]+tag[:5], district, f.force)
-	require.NoError(t, err)
-
-	f.officer = uuid.New()
-	_, err = pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, name, role, station_id, force_id, is_active)
-		VALUES ($1, $2, $3, 'x', $4, 'SI', $5, $6, TRUE)`,
-		f.officer, "probe-"+code+"-"+tag, "probe-"+code+"-"+tag+"@example.invalid",
-		"PROBE-boundary "+code+" officer", f.station, f.force)
-	require.NoError(t, err)
+	if err := pool.QueryRow(ctx, `
+		SELECT u.id, u.station_id FROM users u
+		 WHERE u.force_id = $1 AND u.station_id IS NOT NULL AND u.is_active
+		 ORDER BY u.created_at LIMIT 1`, f.force).Scan(&f.officer, &f.station); err != nil {
+		t.Skipf("no serving %s officer to test with: %v", code, err)
+	}
 
 	f.fir = uuid.New()
-	_, err = pool.Exec(ctx, `
+	_, err := pool.Exec(ctx, `
 		INSERT INTO firs (id, fir_number, station_id, complainant_name, incident_date,
 		                  incident_location, incident_description, ipc_sections, status, priority)
 		VALUES ($1, $2, $3, 'PROBE-boundary complainant', NOW() - INTERVAL '1 day', 'Test location',
@@ -120,28 +116,11 @@ func setUpTwoForceRegisters(t *testing.T, tdb *testutil.TestDB) *twoForces {
 				t.Logf("cleanup (%s): %v", sql, err)
 			}
 		}
-
-		// The officers and stations this test made go last, and the officers
-		// need the guard off: the database refuses to delete an account,
-		// because in service an account is closed and never removed. A test
-		// fixture is the one thing that is not in service, and leaving its
-		// accounts behind would change what the next run counts.
-		if _, err := tdb.Pool.Exec(ctx, `
-			DO $$
-			BEGIN
-				SET LOCAL session_replication_role = 'replica';
-				DELETE FROM users WHERE username LIKE 'probe-%-`+tag+`';
-			END $$;`); err != nil {
-			t.Logf("cleanup (test officers): %v", err)
-		}
-		if _, err := tdb.Pool.Exec(ctx, `DELETE FROM stations WHERE name LIKE 'PROBE-boundary%'`); err != nil {
-			t.Logf("cleanup (test stations): %v", err)
-		}
 	})
 
 	return &twoForces{
-		kp:  makeForceSide(t, tdb.Pool, "KP", "Kolkata", tag),
-		wbp: makeForceSide(t, tdb.Pool, "WBP", "Barrackpore", tag),
+		kp:  makeForceSide(t, tdb.Pool, "KP", tag),
+		wbp: makeForceSide(t, tdb.Pool, "WBP", tag),
 		tag: tag,
 	}
 }
