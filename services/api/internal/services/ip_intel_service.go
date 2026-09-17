@@ -92,7 +92,25 @@ const ipIntelCacheTTL = 24 * time.Hour
 // Lookup resolves an address. It never returns an error for an unreachable
 // provider: an investigator needs to know the lookup could not be made, which
 // is different from the address not existing.
+// Lookup resolves an address on an officer's behalf and records the egress
+// against them with the purpose they stated.
 func (s *IPIntelService) Lookup(ctx context.Context, raw string, actor *uuid.UUID, purpose string) (*IPIntel, error) {
+	s.record(ctx, actor, strings.TrimSpace(raw), purpose)
+	return s.locate(ctx, raw)
+}
+
+// Locate resolves an address for the platform's own records — the place a
+// sign-in came from, written onto the sign-in's own audit entry.
+//
+// It does not write an audit entry of its own. The egress it may cause is
+// already accounted for: the address and what was learned about it are on the
+// entry this result is attached to, and a lookup that recorded itself as well
+// would double every sign-in in the trail for no added account of anything.
+func (s *IPIntelService) Locate(ctx context.Context, raw string) (*IPIntel, error) {
+	return s.locate(ctx, raw)
+}
+
+func (s *IPIntelService) locate(ctx context.Context, raw string) (*IPIntel, error) {
 	addr := net.ParseIP(strings.TrimSpace(raw))
 	if addr == nil {
 		return nil, fmt.Errorf("%q is not a valid IP address", raw)
@@ -112,7 +130,6 @@ func (s *IPIntelService) Lookup(ctx context.Context, raw string, actor *uuid.UUI
 		result.Version = "IPv6"
 	}
 
-	s.record(ctx, actor, addr.String(), purpose)
 
 	// A private or loopback address has no public registration to look up, and
 	// asking an external provider about it would leak internal topology.

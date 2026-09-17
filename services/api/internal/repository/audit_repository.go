@@ -13,8 +13,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/npdms/api/internal/audit"
 	"github.com/npdms/api/internal/models"
 )
+
+// auditNullable keeps an empty string out of the row: a blank session is
+// absent, not recorded as "".
+func auditNullable(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // auditChainLockKey identifies the advisory lock that serialises appends to the
 // hash chain. Any value works so long as nothing else uses it.
@@ -109,25 +119,67 @@ func (r *AuditRepository) Create(ctx context.Context, log *models.SimpleAuditLog
 	currentHash := auditEventHash(eventID, eventType, action, log.UserID,
 		resourceType, log.ResourceID, outcome, at, previousHash, reason)
 
+	// What the request knew about itself. The schema has always had columns
+	// for the address, session, device and the caller's posting; before this
+	// they were filled only where a handler passed them by hand, which five of
+	// eighty-odd call sites did. A caller that set a value explicitly still
+	// wins — the request only fills what was left blank.
+	ip := derefString(log.IPAddress)
+	userAgent := log.UserAgent
+	var sessionID, deviceFingerprint, requestID, actorRole *string
+	var actorStation *uuid.UUID
+	var geo, resourceAttributes []byte
+
+	if rc := audit.From(ctx); rc != nil {
+		if ip == "" {
+			ip = rc.IPAddress
+		}
+		if userAgent == nil || *userAgent == "" {
+			userAgent = auditNullable(rc.UserAgent)
+		}
+		sessionID = auditNullable(rc.SessionID)
+		deviceFingerprint = auditNullable(rc.DeviceFingerprint)
+		requestID = auditNullable(rc.RequestID)
+		actorRole = auditNullable(rc.ActorRole)
+		actorStation = rc.ActorStation
+		geo = rc.GeoLocation
+		// There is no column for the route, and an inspection asking what an
+		// officer opened needs one, so it goes in resource_attributes.
+		if rc.Route != "" {
+			if encoded, err := json.Marshal(map[string]string{
+				"method": rc.Method, "route": rc.Route,
+			}); err == nil {
+				resourceAttributes = encoded
+			}
+		}
+	}
+
 	_, err = tx.Exec(ctx, `
 		INSERT INTO audit_logs (
 			id, event_id, event_type, action,
-			actor_user_id, resource_type, resource_id,
+			actor_user_id, actor_role, actor_station_id,
+			resource_type, resource_id, resource_attributes,
 			outcome, outcome_reason,
-			ip_address, user_agent,
+			ip_address, user_agent, session_id, device_fingerprint,
+			request_id, geo_location,
 			previous_hash, current_hash, hash_algorithm,
 			event_timestamp, received_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			NULLIF($10, '')::inet, $11, $12, $13, $15, $14, NOW()
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$11, $12,
+			NULLIF($13, '')::inet, $14, $15, $16,
+			$17, $18,
+			$19, $20, $21, $22, NOW()
 		)
 	`,
 		log.ID, eventID, eventType, action,
-		log.UserID, resourceType, log.ResourceID,
+		log.UserID, actorRole, actorStation,
+		resourceType, log.ResourceID, resourceAttributes,
 		outcome, reason,
-		derefString(log.IPAddress), log.UserAgent,
-		previousHash, currentHash,
-		at, AuditHashAlgorithm,
+		ip, userAgent, sessionID, deviceFingerprint,
+		requestID, geo,
+		previousHash, currentHash, AuditHashAlgorithm,
+		at,
 	)
 	if err != nil {
 		return err

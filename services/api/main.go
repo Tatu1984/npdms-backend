@@ -75,6 +75,7 @@ func main() {
 	accessLogRepo := repository.NewAccessLogRepository(db)
 	permissionRepo := repository.NewPermissionRepository(db)
 	roleRepo := repository.NewRoleRepository(db)
+	activityRepo := repository.NewActivityRepository(db)
 	workloadRepo := repository.NewWorkloadRepository(db)
 	riskRepo := repository.NewRiskRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
@@ -162,7 +163,11 @@ func main() {
 	biometricService := services.NewBiometricService(db, biometricRepo, auditRepo, mlServiceURL, aadhaarURL)
 
 	// Initialize handlers
-	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo)
+	// The sign-in entry records where the sign-in came from, not merely its
+	// address. Resolution is bounded and cached, and absent rather than guessed
+	// where no provider is configured.
+	authHandler := handlers.NewAuthHandler(authService, auditRepo, accessLogRepo).
+		WithGeo(ipIntelService)
 	armouryHandler := handlers.NewArmouryHandler(services.NewArmouryService(armouryRepo, auditRepo))
 	lookoutService := services.NewLookoutService(lookoutRepo, auditRepo)
 	lookoutHandler := handlers.NewLookoutHandler(lookoutService)
@@ -234,6 +239,7 @@ func main() {
 	referralHandler := handlers.NewReferralHandler(referralService)
 	userAdminHandler := handlers.NewUserAdminHandler(userAdminService)
 	roleHandler := handlers.NewRoleHandler(roleService)
+	activityHandler := handlers.NewActivityHandler(activityRepo, userRepo)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
@@ -287,6 +293,11 @@ func main() {
 	router.Use(middleware.GlobalRateLimiter(rdbV8))
 	router.Use(middleware.ZeroTrustMiddleware(rdbV8, zeroTrustConfig))
 	router.Use(middleware.AuditSecurityEventMiddleware(rdbV8))
+	// What the request knows about itself, for whoever writes its audit entry.
+	// Registered here so signing in — which happens before authentication, by
+	// definition — is covered, and again inside the protected group once the
+	// caller's rank and posting are known.
+	router.Use(middleware.AuditContext(nil))
 
 	// The API contract, served by the build it describes.
 	openAPIHandler := handlers.NewOpenAPIHandler()
@@ -319,6 +330,10 @@ func main() {
 		// and two checks that agree are cheaper than the risk of removing 248
 		// of them by hand.
 		protected.Use(middleware.RequirePermission(permissionRepo))
+		// Again, now that the caller is known: the entry gains their rank and
+		// posting, so it can be read years later without joining to a users
+		// table whose rows have since been amended.
+		protected.Use(middleware.AuditContext(nil))
 		{
 			// User routes
 			protected.GET("/me", authHandler.GetCurrentUser)
@@ -327,6 +342,19 @@ func main() {
 			// What this officer may do, by name, so the web application can
 			// hide a control rather than offer one the server will refuse.
 			protected.GET("/me/permissions", roleHandler.MyPermissions)
+			// An officer's own trail. Being able to see what is kept about you
+			// is part of being told it is kept at all.
+			protected.GET("/me/activity", activityHandler.Mine)
+
+			// Where officers went in the platform, and for how long. Reading
+			// is what misuse of a police system usually looks like, and
+			// reading changes nothing, so the audit trail alone cannot show it.
+			activity := protected.Group("/activity")
+			{
+				activity.POST("", activityHandler.Record)
+				activity.POST("/roll-up", activityHandler.RollUp)
+			}
+			protected.GET("/officers/:id/activity", activityHandler.ForOfficer)
 
 			// FIR routes
 			firs := protected.Group("/firs")

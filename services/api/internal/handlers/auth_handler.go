@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/npdms/api/internal/audit"
 	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
@@ -17,10 +21,74 @@ type AuthHandler struct {
 	authService *services.AuthService
 	auditRepo   *repository.AuditRepository
 	accessRepo  *repository.AccessLogRepository
+	// Optional. Where no resolver is configured a sign-in is recorded with its
+	// address and no location, which is the truth rather than a guess.
+	geo *services.IPIntelService
 }
 
 func NewAuthHandler(authService *services.AuthService, auditRepo *repository.AuditRepository, accessRepo *repository.AccessLogRepository) *AuthHandler {
 	return &AuthHandler{authService: authService, auditRepo: auditRepo, accessRepo: accessRepo}
+}
+
+// WithGeo records where a sign-in came from, not merely its address.
+func (h *AuthHandler) WithGeo(geo *services.IPIntelService) *AuthHandler {
+	h.geo = geo
+	return h
+}
+
+// signInLocation resolves the address a sign-in came from.
+//
+// Bounded hard. Signing in must not wait on an external provider, and must
+// never fail because one is slow or down: past the deadline the entry is
+// written with the address and no location. Results are cached for a day, so
+// a station's own address costs one lookup and nothing after that.
+func (h *AuthHandler) signInLocation(ctx context.Context, ip string) []byte {
+	if h.geo == nil || ip == "" {
+		return nil
+	}
+	bounded, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	defer cancel()
+
+	intel, err := h.geo.Locate(bounded, ip)
+	if err != nil || intel == nil {
+		return nil
+	}
+	located := map[string]any{"ip": intel.IP}
+	switch {
+	case intel.IsLoopback:
+		located["scope"] = "loopback"
+	case intel.IsPrivate:
+		located["scope"] = "private"
+	default:
+		located["scope"] = "public"
+	}
+	if intel.City != "" {
+		located["city"] = intel.City
+	}
+	if intel.Region != "" {
+		located["region"] = intel.Region
+	}
+	if intel.Country != "" {
+		located["country"] = intel.Country
+	}
+	if intel.CountryCode != "" {
+		located["countryCode"] = intel.CountryCode
+	}
+	if intel.Organisation != "" {
+		located["organisation"] = intel.Organisation
+	}
+	if intel.Latitude != nil && intel.Longitude != nil {
+		located["latitude"] = *intel.Latitude
+		located["longitude"] = *intel.Longitude
+	}
+	// Provenance, so nobody reads a coarse estimate as a fix on a person.
+	located["source"] = intel.Source
+	located["note"] = "Approximate, derived from the network address. Not a position fix."
+	encoded, err := json.Marshal(located)
+	if err != nil {
+		return nil
+	}
+	return encoded
 }
 
 // recordAccess writes a sign-in, failed sign-in or sign-out to the audit
@@ -43,7 +111,15 @@ func (h *AuthHandler) recordAccess(c *gin.Context, event string, userID *uuid.UU
 	if !success {
 		entry.FailureReason = &detail
 	}
-	h.auditRepo.Log(c.Request.Context(), entry)
+
+	// Where the sign-in came from, resolved here rather than for every request:
+	// this is the event an inspection asks about, and an external lookup on
+	// every call would be both slow and pointless.
+	ctx := c.Request.Context()
+	if rc := audit.From(ctx); rc != nil && rc.GeoLocation == nil {
+		rc.GeoLocation = h.signInLocation(ctx, ip)
+	}
+	h.auditRepo.Log(ctx, entry)
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
