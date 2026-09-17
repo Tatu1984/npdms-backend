@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,12 +24,46 @@ func NewEvidenceRepository(db *pgxpool.Pool) *EvidenceRepository {
 // Evidence carries no station of its own: it is placed by the FIR it was
 // collected under, then the case, then the officer who collected it. See
 // force_scope.go for the whole placement table.
-func (r *EvidenceRepository) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int) ([]models.Evidence, int64, error) {
-	scope := "TRUE"
+// EvidenceRegisterFilter narrows the register. Search and case were accepted by the
+// screen and never reached the query: an officer searching an exhibit number
+// got the whole register back, page by page, with no sign the question had
+// been ignored.
+type EvidenceRegisterFilter struct {
+	Search string
+	CaseID *uuid.UUID
+	FIRID  *uuid.UUID
+	Status *string
+}
+
+func (r *EvidenceRepository) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int,
+	filter EvidenceRegisterFilter) ([]models.Evidence, int64, error) {
+	conditions := []string{}
 	args := []interface{}{}
 	if viewerID != uuid.Nil {
 		args = append(args, viewerID)
-		scope = MustForceScopeRecordSQL("EVIDENCE", "e", len(args))
+		conditions = append(conditions, MustForceScopeRecordSQL("EVIDENCE", "e", len(args)))
+	}
+	if filter.Search != "" {
+		args = append(args, "%"+filter.Search+"%")
+		conditions = append(conditions, fmt.Sprintf(
+			"(e.evidence_number ILIKE $%d OR e.description ILIKE $%d OR e.seal_number ILIKE $%d OR e.collection_location ILIKE $%d)",
+			len(args), len(args), len(args), len(args)))
+	}
+	if filter.CaseID != nil {
+		args = append(args, *filter.CaseID)
+		conditions = append(conditions, fmt.Sprintf("e.case_id = $%d", len(args)))
+	}
+	if filter.FIRID != nil {
+		args = append(args, *filter.FIRID)
+		conditions = append(conditions, fmt.Sprintf("e.fir_id = $%d", len(args)))
+	}
+	if filter.Status != nil {
+		args = append(args, *filter.Status)
+		conditions = append(conditions, fmt.Sprintf("e.status = $%d", len(args)))
+	}
+	scope := "TRUE"
+	if len(conditions) > 0 {
+		scope = strings.Join(conditions, " AND ")
 	}
 
 	var total int64

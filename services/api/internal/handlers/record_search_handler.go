@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 )
@@ -58,7 +59,7 @@ func (h *RecordSearchHandler) Search(c *gin.Context) {
 }
 
 func (h *RecordSearchHandler) Stations(c *gin.Context) {
-	stations, err := h.repo.Stations(c.Request.Context())
+	stations, err := h.repo.Stations(c.Request.Context(), middleware.GetUserID(c))
 	if err != nil {
 		log.Printf("stations list failed: %v", err)
 		serverError(c, "Failed to load stations")

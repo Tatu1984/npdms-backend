@@ -20,8 +20,9 @@ func NewEvidenceService(evidenceRepo *repository.EvidenceRepository, auditRepo *
 	}
 }
 
-func (s *EvidenceService) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int) (*models.PaginatedResponse, error) {
-	evidence, total, err := s.evidenceRepo.List(ctx, viewerID, page, pageSize)
+func (s *EvidenceService) List(ctx context.Context, viewerID uuid.UUID, page, pageSize int,
+	filter repository.EvidenceRegisterFilter) (*models.PaginatedResponse, error) {
+	evidence, total, err := s.evidenceRepo.List(ctx, viewerID, page, pageSize, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -60,11 +61,11 @@ func (s *EvidenceService) Create(ctx context.Context, e *models.Evidence, userID
 
 	// Create initial custody record
 	s.evidenceRepo.AddCustodyTransfer(ctx, &models.EvidenceCustody{
-		EvidenceID:   e.ID,
-		ToUser:       &userID,
-		ToLocation:   e.StorageLocation,
-		Purpose:      stringPtr("Initial collection"),
-		Verified:     true,
+		EvidenceID: e.ID,
+		ToUser:     &userID,
+		ToLocation: e.StorageLocation,
+		Purpose:    stringPtr("Initial collection"),
+		Verified:   true,
 	})
 
 	// Audit log

@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -22,6 +24,27 @@ type FIRHandler struct {
 
 func NewFIRHandler(firService *services.FIRService, db *pgxpool.Pool) *FIRHandler {
 	return &FIRHandler{firService: firService, db: db}
+}
+
+// parseFilterDate accepts a plain date or a full timestamp, which is what the
+// screens send between them.
+func parseFilterDate(raw string) (time.Time, error) {
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%q is not a date", raw)
+}
+
+// badFilter refuses a filter that cannot be understood, naming it. Ignoring it
+// would answer a different question than the one asked and say nothing.
+func badFilter(c *gin.Context, name, value string) {
+	c.JSON(http.StatusBadRequest, models.ErrorResponse{
+		Error:   "invalid_filter",
+		Message: fmt.Sprintf("%s=%q could not be read. Use a date (2026-09-17) or an identifier.", name, value),
+		Code:    400,
+	})
 }
 
 func (h *FIRHandler) List(c *gin.Context) {
@@ -50,6 +73,54 @@ func (h *FIRHandler) List(c *gin.Context) {
 	if priority := c.Query("priority"); priority != "" {
 		p := models.Priority(priority)
 		filter.Priority = &p
+	}
+
+	// Date, officer and station. The repository has always supported all four
+	// and this never read them, so every one of these filters was accepted by
+	// the screen, sent, and silently ignored: an officer narrowing the register
+	// to their own FIRs for a week got the whole register back and no hint
+	// that the question had not been asked.
+	//
+	// A date that cannot be parsed is refused rather than dropped, for the same
+	// reason — a filter that quietly does nothing is worse than an error.
+	if raw := c.Query("dateFrom"); raw != "" {
+		from, err := parseFilterDate(raw)
+		if err != nil {
+			badFilter(c, "dateFrom", raw)
+			return
+		}
+		filter.DateFrom = &from
+	}
+
+	if raw := c.Query("dateTo"); raw != "" {
+		to, err := parseFilterDate(raw)
+		if err != nil {
+			badFilter(c, "dateTo", raw)
+			return
+		}
+		// A bare date means the whole of that day, not midnight at its start.
+		if len(raw) == len("2006-01-02") {
+			to = to.Add(24*time.Hour - time.Nanosecond)
+		}
+		filter.DateTo = &to
+	}
+
+	if raw := c.Query("officerId"); raw != "" {
+		officer, err := uuid.Parse(raw)
+		if err != nil {
+			badFilter(c, "officerId", raw)
+			return
+		}
+		filter.OfficerID = &officer
+	}
+
+	if raw := c.Query("stationId"); raw != "" {
+		station, err := uuid.Parse(raw)
+		if err != nil {
+			badFilter(c, "stationId", raw)
+			return
+		}
+		filter.StationID = &station
 	}
 
 	response, err := h.firService.List(c.Request.Context(), filter)

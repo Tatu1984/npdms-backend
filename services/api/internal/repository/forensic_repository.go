@@ -70,7 +70,12 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	}
 
 	if filter.Search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(fr.lab ILIKE $%d)", argIndex))
+		// The laboratory alone was searchable, which is the one thing every
+		// request at a station has in common. The number, the case and the
+		// analyst are what an officer actually has to hand.
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(fr.request_number ILIKE $%d OR fr.lab ILIKE $%d OR fr.analyst ILIKE $%d OR c.case_number ILIKE $%d)",
+			argIndex, argIndex, argIndex, argIndex))
 		args = append(args, "%"+filter.Search+"%")
 		argIndex++
 	}
@@ -78,7 +83,12 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	var total int64
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM forensics fr WHERE %s", whereClause)
+	// Joined the same way as the page query: the search reaches the case, so
+	// the count must see it too.
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM forensics fr
+		LEFT JOIN cases c ON fr.case_id = c.id
+		WHERE %s`, whereClause)
 	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -87,7 +97,8 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	offset := (filter.Page - 1) * filter.PageSize
 	query := fmt.Sprintf(`
 		SELECT
-			fr.id, fr.evidence_id, fr.case_id, fr.type, fr.status, fr.priority,
+			fr.id, COALESCE(fr.request_number, ''), fr.evidence_id, fr.case_id,
+			fr.type, fr.status, fr.priority,
 			fr.submitted_date, fr.completed_date, fr.expected_date,
 			fr.lab, fr.analyst, fr.summary, fr.findings, fr.progress,
 			fr.created_at, fr.updated_at,
@@ -111,7 +122,7 @@ func (r *ForensicRepository) List(ctx context.Context, filter ForensicFilter) ([
 	for rows.Next() {
 		var f models.Forensic
 		err := rows.Scan(
-			&f.ID, &f.EvidenceID, &f.CaseID, &f.Type, &f.Status, &f.Priority,
+			&f.ID, &f.RequestNumber, &f.EvidenceID, &f.CaseID, &f.Type, &f.Status, &f.Priority,
 			&f.SubmittedDate, &f.CompletedDate, &f.ExpectedDate,
 			&f.Lab, &f.Analyst, &f.Summary, &f.Findings, &f.Progress,
 			&f.CreatedAt, &f.UpdatedAt,
@@ -137,7 +148,8 @@ func (r *ForensicRepository) Owner(ctx context.Context, id, viewerID uuid.UUID) 
 func (r *ForensicRepository) FindByID(ctx context.Context, id uuid.UUID) (*models.Forensic, error) {
 	query := `
 		SELECT
-			fr.id, fr.evidence_id, fr.case_id, fr.type, fr.status, fr.priority,
+			fr.id, COALESCE(fr.request_number, ''), fr.evidence_id, fr.case_id,
+			fr.type, fr.status, fr.priority,
 			fr.submitted_date, fr.completed_date, fr.expected_date,
 			fr.lab, fr.analyst, fr.summary, fr.findings, fr.progress,
 			fr.created_at, fr.updated_at,
@@ -149,7 +161,7 @@ func (r *ForensicRepository) FindByID(ctx context.Context, id uuid.UUID) (*model
 
 	var f models.Forensic
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&f.ID, &f.EvidenceID, &f.CaseID, &f.Type, &f.Status, &f.Priority,
+		&f.ID, &f.RequestNumber, &f.EvidenceID, &f.CaseID, &f.Type, &f.Status, &f.Priority,
 		&f.SubmittedDate, &f.CompletedDate, &f.ExpectedDate,
 		&f.Lab, &f.Analyst, &f.Summary, &f.Findings, &f.Progress,
 		&f.CreatedAt, &f.UpdatedAt,
@@ -168,11 +180,11 @@ func (r *ForensicRepository) FindByID(ctx context.Context, id uuid.UUID) (*model
 func (r *ForensicRepository) Create(ctx context.Context, forensic *models.Forensic) error {
 	query := `
 		INSERT INTO forensics (
-			id, evidence_id, case_id, type, status, priority,
+			id, request_number, evidence_id, case_id, type, status, priority,
 			submitted_date, expected_date, lab,
 			created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 		)
 	`
 
@@ -180,8 +192,19 @@ func (r *ForensicRepository) Create(ctx context.Context, forensic *models.Forens
 	forensic.CreatedAt = time.Now()
 	forensic.UpdatedAt = time.Now()
 
-	_, err := r.db.Exec(ctx, query,
-		forensic.ID, forensic.EvidenceID, forensic.CaseID, forensic.Type, forensic.Status, forensic.Priority,
+	// The number a laboratory quotes back. Issued from the counter table, not
+	// from COUNT(*) or the clock: two officers submitting at the same moment
+	// would otherwise be given the same number, or one that cannot be read out
+	// over a radio.
+	number, err := formatRecordNumber(ctx, r.db, "FSL")
+	if err != nil {
+		return err
+	}
+	forensic.RequestNumber = number
+
+	_, err = r.db.Exec(ctx, query,
+		forensic.ID, forensic.RequestNumber,
+		forensic.EvidenceID, forensic.CaseID, forensic.Type, forensic.Status, forensic.Priority,
 		forensic.SubmittedDate, forensic.ExpectedDate, forensic.Lab,
 		forensic.CreatedAt, forensic.UpdatedAt,
 	)

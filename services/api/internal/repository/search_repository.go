@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -110,10 +111,23 @@ type StationRef struct {
 	Longitude *float64 `json:"longitude"`
 }
 
-func (r *SearchRepository) Stations(ctx context.Context) ([]StationRef, error) {
+// Stations lists the viewer's own force's stations.
+//
+// It listed every force's. The boundary drawn in 000082 and 000083 keeps one
+// department's records from another, and this handed over the other three
+// departments' station list — names, codes and coordinates — to anybody signed
+// in. A wing sees its parent force's stations, because a traffic sergeant is
+// posted to one: force_family is the same rule the record scoping uses.
+func (r *SearchRepository) Stations(ctx context.Context, viewerID uuid.UUID) ([]StationRef, error) {
+	scope := "TRUE"
+	args := []any{}
+	if viewerID != uuid.Nil {
+		args = append(args, viewerID)
+		scope = ForceScopeSQL("id", len(args))
+	}
 	rows, err := r.db.Query(ctx, `
 		SELECT id::text, COALESCE(code, ''), name, COALESCE(district, ''), latitude, longitude
-		FROM stations ORDER BY name`)
+		FROM stations WHERE `+scope+` ORDER BY name`, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/npdms/api/internal/models"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -273,10 +274,14 @@ func (r *CourtRepository) ListOrders(ctx context.Context, filter CourtOrderFilte
 		SELECT
 			o.id, o.case_id, o.order_date, o.order_type,
 			COALESCE(o.summary, ''), COALESCE(o.court, ''), o.judge_name,
+			o.compliance_status, o.comply_by, o.complied_at, o.complied_by,
+			COALESCE(u.name, ''), o.compliance_note,
+			o.amended_at, o.amended_by,
 			o.created_at, o.updated_at,
 			COALESCE(c.case_number, '')
 		FROM court_orders o
 		LEFT JOIN cases c ON o.case_id = c.id
+		LEFT JOIN users u ON u.id = o.complied_by
 		WHERE %s
 		ORDER BY o.order_date DESC
 		LIMIT $%d OFFSET $%d
@@ -296,6 +301,9 @@ func (r *CourtRepository) ListOrders(ctx context.Context, filter CourtOrderFilte
 		err := rows.Scan(
 			&o.ID, &o.CaseID, &o.OrderDate, &o.OrderType,
 			&o.Summary, &o.Court, &o.JudgeName,
+			&o.ComplianceStatus, &o.ComplyBy, &o.CompliedAt, &o.CompliedBy,
+			&o.CompliedByName, &o.ComplianceNote,
+			&o.AmendedAt, &o.AmendedBy,
 			&o.CreatedAt, &o.UpdatedAt,
 			&o.CaseNumber,
 		)
@@ -316,10 +324,14 @@ func (r *CourtRepository) FindOrderByID(ctx context.Context, id uuid.UUID) (*mod
 		SELECT
 			o.id, o.case_id, o.order_date, o.order_type,
 			COALESCE(o.summary, ''), COALESCE(o.court, ''), o.judge_name,
+			o.compliance_status, o.comply_by, o.complied_at, o.complied_by,
+			COALESCE(u.name, ''), o.compliance_note,
+			o.amended_at, o.amended_by,
 			o.created_at, o.updated_at,
 			COALESCE(c.case_number, '')
 		FROM court_orders o
 		LEFT JOIN cases c ON o.case_id = c.id
+		LEFT JOIN users u ON u.id = o.complied_by
 		WHERE o.id = $1
 	`
 
@@ -327,6 +339,9 @@ func (r *CourtRepository) FindOrderByID(ctx context.Context, id uuid.UUID) (*mod
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&o.ID, &o.CaseID, &o.OrderDate, &o.OrderType,
 		&o.Summary, &o.Court, &o.JudgeName,
+		&o.ComplianceStatus, &o.ComplyBy, &o.CompliedAt, &o.CompliedBy,
+		&o.CompliedByName, &o.ComplianceNote,
+		&o.AmendedAt, &o.AmendedBy,
 		&o.CreatedAt, &o.UpdatedAt,
 		&o.CaseNumber,
 	)
@@ -362,6 +377,61 @@ func (r *CourtRepository) CreateOrder(ctx context.Context, order *models.CourtOr
 	return err
 }
 
+// UpdateOrder corrects a recorded order. A hearing date typed wrongly or a
+// summary taken from the wrong paragraph had no remedy but recording a second
+// order contradicting the first.
+//
+// The amendment names who made it. What the court directed is not rewritten
+// anonymously.
+func (r *CourtRepository) UpdateOrder(ctx context.Context, order *models.CourtOrder, by uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE court_orders SET
+			order_date = $2, order_type = $3, summary = $4, court = $5,
+			judge_name = $6, comply_by = $7,
+			amended_at = NOW(), amended_by = $8, updated_at = NOW()
+		WHERE id = $1`,
+		order.ID, order.OrderDate, order.OrderType, order.Summary, order.Court,
+		order.JudgeName, order.ComplyBy, by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("court order not found")
+	}
+	return nil
+}
+
+// RecordCompliance settles what happened after the direction.
+//
+// Returning to PENDING clears the attribution, because an order that is
+// pending again was not complied with by anybody and the database refuses a
+// settled state with no officer behind it.
+func (r *CourtRepository) RecordCompliance(ctx context.Context, id uuid.UUID,
+	status models.CourtOrderCompliance, note *string, by uuid.UUID) error {
+	var tag pgconn.CommandTag
+	var err error
+	if status == models.OrderPending {
+		tag, err = r.db.Exec(ctx, `
+			UPDATE court_orders SET
+				compliance_status = $2, complied_at = NULL, complied_by = NULL,
+				compliance_note = $3, updated_at = NOW()
+			WHERE id = $1`, id, status, note)
+	} else {
+		tag, err = r.db.Exec(ctx, `
+			UPDATE court_orders SET
+				compliance_status = $2, complied_at = NOW(), complied_by = $3,
+				compliance_note = $4, updated_at = NOW()
+			WHERE id = $1`, id, status, by, note)
+	}
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("court order not found")
+	}
+	return nil
+}
+
 // GetStats counts the viewer's own force's court work.
 func (r *CourtRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
@@ -388,16 +458,21 @@ func (r *CourtRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map
 		return nil, err
 	}
 
-	// Orders carry no pending/complete state, so this is every order recorded.
-	var ordersRecorded int64
-	err = r.db.QueryRow(ctx, "SELECT COUNT(*) FROM court_orders o WHERE "+orderScope, args...).Scan(&ordersRecorded)
+	// Orders still awaiting compliance. This was every order ever recorded,
+	// because there was no state to count — a figure that only ever rose, and
+	// told a station with six directions outstanding the same number as one
+	// with none.
+	var ordersPending int64
+	err = r.db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM court_orders o WHERE o.compliance_status = 'PENDING' AND "+orderScope,
+		args...).Scan(&ordersPending)
 	if err != nil {
 		return nil, err
 	}
 
 	stats["todayHearings"] = todayHearings
 	stats["thisWeekHearings"] = thisWeekHearings
-	stats["pendingOrders"] = ordersRecorded
+	stats["pendingOrders"] = ordersPending
 	// Cases with a hearing today or later. Was the constant 143.
 	stats["activeCases"] = activeCases
 

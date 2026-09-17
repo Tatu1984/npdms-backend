@@ -84,13 +84,18 @@ func RateLimiter(config RateLimiterConfig) gin.HandlerFunc {
 }
 
 // getClientIdentifier extracts client identifier from request
+// getClientIdentifier names who is being limited.
+//
+// It looked for "user_id" and the authentication middleware sets "userID", so
+// it never matched and every request was limited by address — including every
+// authenticated one. That is the wrong unit for a police network: a station
+// behind one NAT address is dozens of officers sharing a single allowance, and
+// each screen costs about five requests, so a busy station throttles itself
+// while an attacker with a browser and a fresh address does not.
 func getClientIdentifier(c *gin.Context) string {
-	// Try to get user ID from context (authenticated requests)
-	if userID, exists := c.Get("user_id"); exists {
+	if userID, exists := c.Get("userID"); exists {
 		return fmt.Sprintf("user:%v", userID)
 	}
-
-	// Fall back to IP address
 	return fmt.Sprintf("ip:%s", c.ClientIP())
 }
 
@@ -155,12 +160,32 @@ func checkRateLimit(
 }
 
 // GlobalRateLimiter applies global rate limit (100 req/min per IP)
+// GlobalRateLimiter guards the door before anybody is known.
+//
+// Per address, and deliberately generous, because at this point in the chain
+// an address is a building rather than a person: a station of forty officers
+// arrives here as one address. The meaningful limit is PerOfficerRateLimiter
+// below, which runs once the officer is known. Signing in keeps its own tight
+// per-address limit — see AuthRateLimiter — because that is the one route
+// where an address really is the only thing there is to count.
 func GlobalRateLimiter(redisClient *redis.Client) gin.HandlerFunc {
 	return RateLimiter(RateLimiterConfig{
-		Limit:       100,
+		Limit:       2000,
 		Window:      time.Minute,
 		RedisClient: redisClient,
 		KeyPrefix:   "global",
+	})
+}
+
+// PerOfficerRateLimiter limits an authenticated officer, whatever address they
+// share. Placed after authentication, so getClientIdentifier finds the officer
+// and keys on them rather than on their station's address.
+func PerOfficerRateLimiter(redisClient *redis.Client) gin.HandlerFunc {
+	return RateLimiter(RateLimiterConfig{
+		Limit:       300,
+		Window:      time.Minute,
+		RedisClient: redisClient,
+		KeyPrefix:   "officer",
 	})
 }
 

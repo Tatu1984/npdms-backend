@@ -334,6 +334,9 @@ func main() {
 		// posting, so it can be read years later without joining to a users
 		// table whose rows have since been amended.
 		protected.Use(middleware.AuditContext(nil))
+		// Now that the officer is known, limit them rather than their station's
+		// address. Twelve screens a minute, each costing about five requests.
+		protected.Use(middleware.PerOfficerRateLimiter(rdbV8))
 		{
 			// User routes
 			protected.GET("/me", authHandler.GetCurrentUser)
@@ -461,6 +464,10 @@ func main() {
 				court.GET("/orders", courtHandler.ListOrders)
 				court.GET("/orders/:id", courtHandler.GetOrder)
 				court.POST("/orders", courtHandler.CreateOrder)
+				// A recorded order is corrected, never deleted: it is a record
+				// of what a court directed. The database refuses a DELETE.
+				court.PATCH("/orders/:id", courtHandler.UpdateOrder)
+				court.POST("/orders/:id/compliance", courtHandler.RecordCompliance)
 
 				// Stats
 				court.GET("/stats", courtHandler.GetStats)

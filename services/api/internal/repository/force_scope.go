@@ -142,8 +142,18 @@ var recordPlacements = map[string]recordPlacement{
 	},
 
 	// Registers with a station of their own.
-	"WEAPON":            {table: "weapons", station: directStation, referred: noReferral},
-	"PERSONNEL":         {table: "personnel", station: directStation, referred: noReferral},
+	"WEAPON":    {table: "weapons", station: directStation, referred: noReferral},
+	"PERSONNEL": {table: "personnel", station: directStation, referred: noReferral},
+
+	// Attendance, shifts and leave. Left out when the boundary was drawn over
+	// the twenty-five registers, and each of them carries a station of its own,
+	// so one department could read another's roster: who was on duty, who was
+	// absent, and who was on leave and until when. That is the shape of a
+	// force's operational strength, and it is not another force's to read.
+	"ATTENDANCE":        {table: "attendance_records", station: directStation, referred: noReferral},
+	"DAILY_ATTENDANCE":  {table: "daily_attendance", station: directStation, referred: noReferral},
+	"LEAVE_REQUEST":     {table: "leave_requests", station: directStation, referred: noReferral},
+	"SHIFT":             {table: "shifts", station: directStation, referred: noReferral},
 	"PROPERTY":          {table: "property_items", station: directStation, referred: noReferral},
 	"MALKHANA_LOCATION": {table: "malkhana_locations", station: directStation, referred: noReferral},
 	"VEHICLE":           {table: "vehicles", station: directStation, referred: noReferral},

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 
@@ -97,6 +98,48 @@ func (s *CourtService) ListOrders(ctx context.Context, filter repository.CourtOr
 }
 
 func (s *CourtService) GetOrderByID(ctx context.Context, id uuid.UUID) (*models.CourtOrder, error) {
+	return s.courtRepo.FindOrderByID(ctx, id)
+}
+
+// UpdateOrder corrects a recorded order. What a court directed is corrected,
+// never deleted, and the correction names who made it.
+func (s *CourtService) UpdateOrder(ctx context.Context, order *models.CourtOrder,
+	by uuid.UUID) (*models.CourtOrder, error) {
+	if err := s.courtRepo.UpdateOrder(ctx, order, by); err != nil {
+		return nil, err
+	}
+	actor := by
+	detail := "Amended court order " + order.OrderDate.Format("2006-01-02")
+	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
+		Action:       "court_order_amended",
+		ResourceType: "court_order",
+		ResourceID:   &order.ID,
+		Description:  &detail,
+		Success:      true,
+	})
+	return s.courtRepo.FindOrderByID(ctx, order.ID)
+}
+
+// RecordCompliance settles what happened after the direction.
+func (s *CourtService) RecordCompliance(ctx context.Context, id uuid.UUID,
+	status models.CourtOrderCompliance, note *string, by uuid.UUID) (*models.CourtOrder, error) {
+	if !status.Valid() {
+		return nil, fmt.Errorf("%q is not a compliance state", status)
+	}
+	if err := s.courtRepo.RecordCompliance(ctx, id, status, note, by); err != nil {
+		return nil, err
+	}
+	actor := by
+	detail := "Court order recorded as " + string(status)
+	s.auditRepo.Log(ctx, &models.SimpleAuditLog{
+		UserID:       &actor,
+		Action:       "court_order_compliance_recorded",
+		ResourceType: "court_order",
+		ResourceID:   &id,
+		Description:  &detail,
+		Success:      true,
+	})
 	return s.courtRepo.FindOrderByID(ctx, id)
 }
 

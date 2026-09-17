@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
+	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
 )
 
@@ -26,7 +27,28 @@ func (h *EvidenceHandler) List(c *gin.Context) {
 
 	// The register is the viewer's own force's, plus what has been referred to
 	// it: evidence follows the FIR or case it was collected under.
-	response, err := h.evidenceService.List(c.Request.Context(), middleware.GetUserID(c), page, pageSize)
+	filter := repository.EvidenceRegisterFilter{Search: c.Query("search")}
+	if raw := c.Query("caseId"); raw != "" {
+		caseID, err := uuid.Parse(raw)
+		if err != nil {
+			badFilter(c, "caseId", raw)
+			return
+		}
+		filter.CaseID = &caseID
+	}
+	if raw := c.Query("firId"); raw != "" {
+		firID, err := uuid.Parse(raw)
+		if err != nil {
+			badFilter(c, "firId", raw)
+			return
+		}
+		filter.FIRID = &firID
+	}
+	if status := c.Query("status"); status != "" {
+		filter.Status = &status
+	}
+
+	response, err := h.evidenceService.List(c.Request.Context(), middleware.GetUserID(c), page, pageSize, filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",

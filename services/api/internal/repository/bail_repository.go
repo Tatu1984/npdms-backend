@@ -62,7 +62,13 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 	}
 
 	if filter.Search != "" {
-		whereClauses = append(whereClauses, fmt.Sprintf("(b.application_number ILIKE $%d)", argIndex))
+		// The application number alone is the one thing an officer does not
+		// have to hand: they are looking for a person, or the case. Searching
+		// only the number meant a name typed into the box always returned
+		// nothing, which reads as "no such application".
+		whereClauses = append(whereClauses, fmt.Sprintf(
+			"(b.application_number ILIKE $%d OR a.name ILIKE $%d OR c.case_number ILIKE $%d OR f.fir_number ILIKE $%d)",
+			argIndex, argIndex, argIndex, argIndex))
 		args = append(args, "%"+filter.Search+"%")
 		argIndex++
 	}
@@ -70,7 +76,15 @@ func (r *BailRepository) List(ctx context.Context, filter BailFilter) ([]models.
 	whereClause := strings.Join(whereClauses, " AND ")
 
 	var total int64
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM bail b WHERE %s", whereClause)
+	// The same joins as the page query below. The search reaches the accused,
+	// the case and the FIR, so the count has to see them too, or it answers a
+	// narrower question than the rows it is counting.
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM bail b
+		LEFT JOIN cases c ON b.case_id = c.id
+		LEFT JOIN firs f ON b.fir_id = f.id
+		LEFT JOIN accused a ON b.accused_id = a.id
+		WHERE %s`, whereClause)
 	err := r.db.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -302,16 +316,23 @@ func (r *BailRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[
 		scope = MustForceScopeRecordSQL("BAIL", "b", len(args))
 	}
 
+	// Four outcomes, counted apart. Granted and released are not the same
+	// thing — bail can be granted and the accused still in custody for want of
+	// a surety, which is exactly the case an officer needs to find — and a
+	// refused application is not a cancelled one. Merging them hid both.
 	query := `
 		SELECT
 			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE b.status = 'PENDING') as pending,
-			COUNT(*) FILTER (WHERE b.status IN ('APPROVED', 'RELEASED')) as approved,
-			COUNT(*) FILTER (WHERE b.status IN ('REJECTED', 'CANCELLED')) as rejected
+			COUNT(*) FILTER (WHERE b.status = 'PENDING')   as pending,
+			COUNT(*) FILTER (WHERE b.status = 'APPROVED')  as approved,
+			COUNT(*) FILTER (WHERE b.status = 'RELEASED')  as released,
+			COUNT(*) FILTER (WHERE b.status = 'REJECTED')  as rejected,
+			COUNT(*) FILTER (WHERE b.status = 'CANCELLED') as cancelled
 		FROM bail b WHERE ` + scope
 
-	var total, pending, approved, rejected int64
-	err := r.db.QueryRow(ctx, query, args...).Scan(&total, &pending, &approved, &rejected)
+	var total, pending, approved, released, rejected, cancelled int64
+	err := r.db.QueryRow(ctx, query, args...).Scan(
+		&total, &pending, &approved, &released, &rejected, &cancelled)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +340,11 @@ func (r *BailRepository) GetStats(ctx context.Context, viewerID uuid.UUID) (map[
 	stats["total"] = total
 	stats["pending"] = pending
 	stats["approved"] = approved
+	stats["released"] = released
 	stats["rejected"] = rejected
+	stats["cancelled"] = cancelled
+	// Granted but not yet out: the figure a station acts on.
+	stats["grantedNotReleased"] = approved
 
 	return stats, nil
 }

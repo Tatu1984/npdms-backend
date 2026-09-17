@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 
@@ -42,6 +44,39 @@ func (s *AlertService) List(ctx context.Context, filter repository.AlertFilter) 
 
 func (s *AlertService) GetByID(ctx context.Context, id uuid.UUID) (*models.Alert, error) {
 	return s.alertRepo.FindByID(ctx, id)
+}
+
+// MinimumRankForScope is how far an alert may reach, by the rank of the
+// officer issuing it.
+//
+// An alert is a broadcast: every officer inside its scope is expected to act
+// on it. A station-house officer could issue a NATIONAL one, which is the
+// whole country told to look for a vehicle on one SHO's say-so. Rank is
+// exactly the right instrument here — this is seniority, not a job — which is
+// why it stays rank-based while day-to-day access moved to permissions.
+var MinimumRankForScope = map[models.AlertScope]models.Role{
+	models.AlertScopeStation:  models.RoleSI,
+	models.AlertScopeDistrict: models.RoleSHO,
+	models.AlertScopeState:    models.RoleDIG,
+	models.AlertScopeNational: models.RoleIG,
+}
+
+// ErrScopeAboveRank is returned when an officer reaches further than their
+// rank allows.
+var ErrScopeAboveRank = errors.New("that scope is above your rank")
+
+// CheckScope refuses an alert that reaches further than the issuing officer's
+// rank permits, naming the rank that could issue it.
+func CheckScope(scope models.AlertScope, rank models.Role) error {
+	required, known := MinimumRankForScope[scope]
+	if !known {
+		return fmt.Errorf("%q is not an alert scope", scope)
+	}
+	if models.RoleHierarchy[rank] < models.RoleHierarchy[required] {
+		return fmt.Errorf("%w: a %s alert is issued by %s rank and above",
+			ErrScopeAboveRank, scope, required)
+	}
+	return nil
 }
 
 func (s *AlertService) Create(ctx context.Context, alert *models.Alert) (*models.Alert, error) {

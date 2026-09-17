@@ -220,17 +220,36 @@ func (r *FIRRepository) Create(ctx context.Context, fir *models.FIR) error {
 }
 
 func (r *FIRRepository) Update(ctx context.Context, fir *models.FIR) error {
+	// The incident's date and the complainant's identification were on the
+	// form, accepted by the API, and dropped here: the UPDATE never named the
+	// columns. An officer correcting the date of an offence — which decides
+	// limitation, and which register year the case belongs to — was told it
+	// had been saved and it had not.
 	query := `
 		UPDATE firs SET
 			complainant_name = $2, complainant_phone = $3, complainant_address = $4,
-			incident_location = $5, incident_description = $6, ipc_sections = $7,
-			priority = $8, investigating_officer = $9,
-			incident_latitude = $10, incident_longitude = $11
+			complainant_id_type = $5, complainant_id_number = $6,
+			incident_date = COALESCE($7, incident_date),
+			incident_location = $8, incident_description = $9, ipc_sections = $10,
+			priority = $11, investigating_officer = $12,
+			incident_latitude = $13, incident_longitude = $14,
+			updated_at = NOW()
 		WHERE id = $1
 	`
 
+	// A caller that does not send the date is not clearing it — the zero time
+	// means "absent", and writing it would put the offence in the year 1. Only
+	// a date that was actually sent replaces the one on the record.
+	var incidentDate *time.Time
+	if !fir.IncidentDate.IsZero() {
+		at := fir.IncidentDate
+		incidentDate = &at
+	}
+
 	_, err := r.db.Exec(ctx, query,
 		fir.ID, fir.ComplainantName, fir.ComplainantPhone, fir.ComplainantAddress,
+		fir.ComplainantIDType, fir.ComplainantIDNumber,
+		incidentDate,
 		fir.IncidentLocation, fir.IncidentDescription, fir.IPCSections,
 		fir.Priority, fir.InvestigatingOfficer,
 		fir.IncidentLatitude, fir.IncidentLongitude,

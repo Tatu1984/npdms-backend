@@ -643,8 +643,42 @@ type CourtOrder struct {
 	Summary    string         `json:"summary" db:"summary"`
 	Court      string         `json:"court" db:"court"`
 	JudgeName  *string        `json:"judgeName" db:"judge_name"`
-	CreatedAt  time.Time      `json:"createdAt" db:"created_at"`
-	UpdatedAt  time.Time      `json:"updatedAt" db:"updated_at"`
+
+	// What happened after the direction. An order with no compliance state is
+	// pending, which is what the dashboard counts — before this, "pending
+	// orders" was every order ever recorded and never fell.
+	ComplianceStatus CourtOrderCompliance `json:"complianceStatus" db:"compliance_status"`
+	ComplyBy         *time.Time           `json:"complyBy" db:"comply_by"`
+	CompliedAt       *time.Time           `json:"compliedAt" db:"complied_at"`
+	CompliedBy       *uuid.UUID           `json:"compliedBy" db:"complied_by"`
+	CompliedByName   string               `json:"compliedByName,omitempty"`
+	ComplianceNote   *string              `json:"complianceNote" db:"compliance_note"`
+
+	// A correction names who made it. The order itself is never deleted.
+	AmendedAt *time.Time `json:"amendedAt" db:"amended_at"`
+	AmendedBy *uuid.UUID `json:"amendedBy" db:"amended_by"`
+
+	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
+}
+
+// CourtOrderCompliance is what happened after the court directed it.
+type CourtOrderCompliance string
+
+const (
+	OrderPending     CourtOrderCompliance = "PENDING"
+	OrderComplied    CourtOrderCompliance = "COMPLIED"
+	OrderNotComplied CourtOrderCompliance = "NOT_COMPLIED"
+	OrderNotRequired CourtOrderCompliance = "NOT_REQUIRED"
+)
+
+// Valid reports whether this is a state the database will accept.
+func (c CourtOrderCompliance) Valid() bool {
+	switch c {
+	case OrderPending, OrderComplied, OrderNotComplied, OrderNotRequired:
+		return true
+	}
+	return false
 }
 
 // Alert Types and Scope

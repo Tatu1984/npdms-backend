@@ -323,7 +323,7 @@ func scopedRegisters() []scopedRegister {
 					uuid.New(), "PROBE-B/E/"+short(s.station), s.fir, s.caseID, s.officer)
 			},
 			seenBy: func(t *testing.T, pool *pgxpool.Pool, v uuid.UUID) map[uuid.UUID]bool {
-				l, _, err := NewEvidenceRepository(pool).List(ctx, v, 1, 500)
+				l, _, err := NewEvidenceRepository(pool).List(ctx, v, 1, 500, EvidenceRegisterFilter{})
 				return seen(t, l, err, func(x models.Evidence) uuid.UUID { return x.ID })
 			},
 		},
@@ -524,7 +524,7 @@ func TestAnUnplacedRecordDoesNotVanishFromEveryone(t *testing.T) {
 		name string
 		id   uuid.UUID
 	}{{"Kolkata Police", f.kp.officer}, {"West Bengal Police", f.wbp.officer}} {
-		list, _, err := repo.List(ctx, viewer.id, 1, 500)
+		list, _, err := repo.List(ctx, viewer.id, 1, 500, EvidenceRegisterFilter{})
 		require.NoError(t, err)
 		found := false
 		for _, e := range list {
@@ -553,7 +553,7 @@ func TestAnAcceptedReferralCarriesTheRecordsThatHangOffTheCase(t *testing.T) {
 
 	repo := NewEvidenceRepository(tdb.Pool)
 	sees := func(viewer uuid.UUID) bool {
-		list, _, err := repo.List(ctx, viewer, 1, 500)
+		list, _, err := repo.List(ctx, viewer, 1, 500, EvidenceRegisterFilter{})
 		require.NoError(t, err)
 		for _, e := range list {
 			if e.ID == exhibit {

@@ -200,7 +200,11 @@ func (r *CaseRepository) GetAccused(ctx context.Context, caseID uuid.UUID) ([]mo
 	}
 	defer rows.Close()
 
-	var accused []models.Accused
+	// An empty register is an empty list, not null. A nil slice marshals to
+	// `null`, and every caller then has to guard against it before iterating —
+	// which the screens did not, so a case with no accused threw rather than
+	// showing "none recorded".
+	accused := []models.Accused{}
 	for rows.Next() {
 		var a models.Accused
 		err := rows.Scan(
@@ -228,15 +232,21 @@ func (r *CaseRepository) AddAccused(ctx context.Context, accused *models.Accused
 			id, case_id, fir_id, name, alias, description, age, gender,
 			address, id_type, id_number, status, arrest_date
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING created_at, updated_at
 	`
 
 	// arrest_date was accepted in the request but never written, so no accused
 	// recorded through the API carried the date the custody period runs from.
-	_, err := r.db.Exec(ctx, query,
+	//
+	// The timestamps are read back rather than left at their zero value: the
+	// row is created with the database's clock, and returning 0001-01-01 to
+	// the screen that just created it made a new record look older than the
+	// register it was added to.
+	err := r.db.QueryRow(ctx, query,
 		accused.ID, accused.CaseID, accused.FIRID, accused.Name, accused.Alias,
 		accused.Description, accused.Age, accused.Gender, accused.Address,
 		accused.IDType, accused.IDNumber, accused.Status, accused.ArrestDate,
-	)
+	).Scan(&accused.CreatedAt, &accused.UpdatedAt)
 
 	return err
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -110,8 +111,24 @@ func (h *AlertHandler) Create(c *gin.Context) {
 	}
 	alert.IssuedBy = &issuer
 
+	// How far it reaches is limited by the rank of the officer issuing it. An
+	// SHO could issue a NATIONAL alert — the whole country told to look for a
+	// vehicle on one station-house officer's say-so.
+	if err := services.CheckScope(alert.Scope, middleware.GetUserRole(c)); err != nil {
+		status := http.StatusForbidden
+		code := "scope_above_rank"
+		if !errors.Is(err, services.ErrScopeAboveRank) {
+			status, code = http.StatusBadRequest, "invalid_scope"
+		}
+		c.JSON(status, models.ErrorResponse{Error: code, Message: err.Error(), Code: status})
+		return
+	}
+
 	created, err := h.alertService.Create(c.Request.Context(), &alert)
 	if err != nil {
+		if DatabaseRefusal(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.ErrorResponse{
 			Error:   "server_error",
 			Message: "Failed to create alert",
