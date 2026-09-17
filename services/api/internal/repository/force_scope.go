@@ -145,6 +145,13 @@ var recordPlacements = map[string]recordPlacement{
 	"WEAPON":    {table: "weapons", station: directStation, referred: noReferral},
 	"PERSONNEL": {table: "personnel", station: directStation, referred: noReferral},
 
+	// The fleet's own history. Each carries the station the vehicle is
+	// attached to, so a force sees its own vehicles' journeys and nobody
+	// else's — a trip log says where officers went and when.
+	"VEHICLE_TRIP":        {table: "vehicle_trips", station: directStation, referred: noReferral},
+	"VEHICLE_FUEL":        {table: "vehicle_fuel_logs", station: directStation, referred: noReferral},
+	"VEHICLE_MAINTENANCE": {table: "vehicle_maintenance", station: directStation, referred: noReferral},
+
 	// Attendance, shifts and leave. Left out when the boundary was drawn over
 	// the twenty-five registers, and each of them carries a station of its own,
 	// so one department could read another's roster: who was on duty, who was
