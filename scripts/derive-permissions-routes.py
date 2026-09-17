@@ -10,20 +10,29 @@ import re
 import sys
 from collections import defaultdict
 
-MAIN = "/Users/sudipto/Desktop/projects/npdms-backend/services/api/main.go"
+# main.go registers almost everything, but not quite: a handler may mount its
+# own group. Missing one is caught at startup rather than silently — which is
+# how the twenty-one face recognition routes were found — so every file that
+# registers routes is read here.
+SOURCES = [
+    "/Users/sudipto/Desktop/projects/npdms-backend/services/api/main.go",
+    "/Users/sudipto/Desktop/projects/npdms-backend/services/api/internal/handlers/face_recognition_handler.go",
+]
 HIERARCHY = {
     "CONSTABLE": 1, "HEAD_CONSTABLE": 2, "ASI": 3, "SI": 4, "INSPECTOR": 5,
     "SHO": 6, "DSP": 7, "SP": 8, "DIG": 9, "IG": 10, "SECRETARY": 11, "DGP": 12,
 }
 
-src = open(MAIN).read()
-lines = src.split("\n")
-
-# Group prefixes: `x := parent.Group("/path")` and `{ ... }` nesting. Rather
-# than parse Go, track brace depth and the most recent Group() at each depth.
 route_re = re.compile(r'(\w+)\.(GET|POST|PUT|PATCH|DELETE)\(\s*"([^"]*)"(.*)$')
 group_re = re.compile(r'(\w+)\s*:=\s*(\w+)\.Group\(\s*"([^"]*)"')
 use_re = re.compile(r'(\w+)\.Use\(\s*middleware\.RequireRole\(([^)]*)\)')
+
+lines = []
+for path in SOURCES:
+    lines.extend(open(path).read().split("\n"))
+
+# Group prefixes: `x := parent.Group("/path")`. `protected` is the group a
+# handler's RegisterRoutes is handed, and it is mounted at /api/v1.
 prefix = {"router": "", "v1": "/api/v1", "protected": "/api/v1"}
 group_floor = {}
 
@@ -35,6 +44,16 @@ for line in lines:
         prefix[child] = prefix.get(parent, "") + path
         if parent in group_floor:
             group_floor[child] = group_floor[parent]
+        # A guard can also be handed to Group() as an argument:
+        #   protected.Group("/workload", middleware.RequireRole("SHO"))
+        # Missing these read four modules as having no floor at all, which
+        # would have seeded their permissions to every rank — the permission
+        # set must not be wider than what the router enforces today.
+        inline_ranks = re.findall(r'RequireRole\(([^)]*)\)', line)
+        if inline_ranks:
+            names = re.findall(r'"([A-Z_]+)"', inline_ranks[0])
+            if names:
+                group_floor[child] = min(names, key=lambda r: HIERARCHY.get(r, 0))
         continue
 
     m = use_re.search(line)

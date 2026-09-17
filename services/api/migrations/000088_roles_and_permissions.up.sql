@@ -22,7 +22,7 @@
 -- what it gains is the ability to say something the ladder could not.
 --
 -- The catalogue below was derived from the router rather than invented: all
--- 569 authenticated routes were read out of main.go with the rank floor each
+-- 590 authenticated routes were read out of the router with the rank floor each
 -- one carries today, and grouped into the smallest set of permissions in which
 -- every route sharing a permission also shares a floor. Where routes under one
 -- name disagreed — adding a camera is an SHO's, decommissioning one a DSP's,
@@ -83,7 +83,7 @@ COMMENT ON TABLE permissions IS
 CREATE INDEX IF NOT EXISTS idx_permissions_module ON permissions(module);
 
 INSERT INTO permissions (key, module, action, description, default_min_rank, routes) VALUES
-    ('access-log.view', 'access-log', 'view', 'View — Access log', NULL, ARRAY['GET /api/v1/access-log','GET /api/v1/access-log/stats']::TEXT[]),
+    ('access-log.view', 'access-log', 'view', 'View — Access log', 'DSP'::user_role, ARRAY['GET /api/v1/access-log','GET /api/v1/access-log/stats']::TEXT[]),
     ('ai-review.acceptance.view', 'ai-review', 'view', 'View — AI review queue · acceptance', 'DSP'::user_role, ARRAY['GET /api/v1/ai-review/acceptance']::TEXT[]),
     ('ai-review.amend', 'ai-review', 'amend', 'Amend — AI review queue', 'SP'::user_role, ARRAY['PUT /api/v1/ai-review/models/:modelName','PUT /api/v1/ai-review/modules/:module']::TEXT[]),
     ('ai-review.bulk-review.create', 'ai-review', 'create', 'Create — AI review queue · bulk review', 'SHO'::user_role, ARRAY['POST /api/v1/ai-review/bulk-review']::TEXT[]),
@@ -161,7 +161,7 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('case-files.entries.create', 'case-files', 'create', 'Create — Case file and court readiness · entries', 'SI'::user_role, ARRAY['POST /api/v1/case-files/:id/entries/:entryId/remove','POST /api/v1/case-files/:id/entries/upload']::TEXT[]),
     ('case-files.packs', 'case-files', 'packs', 'Packs — Case file and court readiness', 'SI'::user_role, ARRAY['POST /api/v1/case-files/:id/packs']::TEXT[]),
     ('case-files.packs.create', 'case-files', 'create', 'Create — Case file and court readiness · packs', 'INSPECTOR'::user_role, ARRAY['POST /api/v1/case-files/:id/packs/:packId/approve','POST /api/v1/case-files/:id/packs/:packId/return']::TEXT[]),
-    ('case-files.view', 'case-files', 'view', 'View — Case file and court readiness', NULL, ARRAY['GET /api/v1/case-files','GET /api/v1/case-files/:id','GET /api/v1/case-files/:id/completeness','GET /api/v1/case-files/:id/entries','GET /api/v1/case-files/:id/entries/:entryId/file','GET /api/v1/case-files/:id/evidence-matrix','GET /api/v1/case-files/:id/packs','GET /api/v1/case-files/:id/packs/:packId','GET /api/v1/case-files/:id/sources','GET /api/v1/case-files/:id/versions','GET /api/v1/case-files/:id/versions/:version','GET /api/v1/case-files/:id/witness-matrix','GET /api/v1/case-files/by-workspace/:workspaceId']::TEXT[]),
+    ('case-files.view', 'case-files', 'view', 'View — Case file and court readiness', 'ASI'::user_role, ARRAY['GET /api/v1/case-files','GET /api/v1/case-files/:id','GET /api/v1/case-files/:id/completeness','GET /api/v1/case-files/:id/entries','GET /api/v1/case-files/:id/entries/:entryId/file','GET /api/v1/case-files/:id/evidence-matrix','GET /api/v1/case-files/:id/packs','GET /api/v1/case-files/:id/packs/:packId','GET /api/v1/case-files/:id/sources','GET /api/v1/case-files/:id/versions','GET /api/v1/case-files/:id/versions/:version','GET /api/v1/case-files/:id/witness-matrix','GET /api/v1/case-files/by-workspace/:workspaceId']::TEXT[]),
     ('case-files.witness-facts', 'case-files', 'witness-facts', 'Witness facts — Case file and court readiness', 'SI'::user_role, ARRAY['POST /api/v1/case-files/:id/witness-facts']::TEXT[]),
     ('cases.amend', 'cases', 'amend', 'Amend — Case register', 'SI'::user_role, ARRAY['PUT /api/v1/cases/:id']::TEXT[]),
     ('cases.create', 'cases', 'create', 'Create — Case register', 'SI'::user_role, ARRAY['POST /api/v1/cases','POST /api/v1/cases/:id/accused','POST /api/v1/cases/:id/witnesses']::TEXT[]),
@@ -223,6 +223,16 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('evidence.amend', 'evidence', 'amend', 'Amend — Evidence and chain of custody', NULL, ARRAY['PUT /api/v1/evidence/:id']::TEXT[]),
     ('evidence.create', 'evidence', 'create', 'Create — Evidence and chain of custody', NULL, ARRAY['POST /api/v1/evidence']::TEXT[]),
     ('evidence.view', 'evidence', 'view', 'View — Evidence and chain of custody', NULL, ARRAY['GET /api/v1/evidence','GET /api/v1/evidence/:id','GET /api/v1/evidence/:id/custody']::TEXT[]),
+    ('face-recognition.amend', 'face-recognition', 'amend', 'Amend — Face recognition', 'SP'::user_role, ARRAY['PUT /api/v1/face-recognition/settings']::TEXT[]),
+    ('face-recognition.authorisations.create', 'face-recognition', 'create', 'Create — Face recognition · authorisations', 'SP'::user_role, ARRAY['POST /api/v1/face-recognition/authorisations','POST /api/v1/face-recognition/authorisations/:id/revoke']::TEXT[]),
+    ('face-recognition.authorisations.view', 'face-recognition', 'view', 'View — Face recognition · authorisations', NULL, ARRAY['GET /api/v1/face-recognition/authorisations']::TEXT[]),
+    ('face-recognition.camera-snapshots.create', 'face-recognition', 'create', 'Create — Face recognition · camera snapshots', 'ASI'::user_role, ARRAY['POST /api/v1/face-recognition/camera-snapshots']::TEXT[]),
+    ('face-recognition.candidates.create', 'face-recognition', 'create', 'Create — Face recognition · candidates', 'ASI'::user_role, ARRAY['POST /api/v1/face-recognition/candidates/:id/confirm','POST /api/v1/face-recognition/candidates/:id/reject']::TEXT[]),
+    ('face-recognition.candidates.view', 'face-recognition', 'view', 'View — Face recognition · candidates', 'ASI'::user_role, ARRAY['GET /api/v1/face-recognition/candidates','GET /api/v1/face-recognition/candidates/:id','GET /api/v1/face-recognition/candidates/:id/crop','GET /api/v1/face-recognition/candidates/:id/frame']::TEXT[]),
+    ('face-recognition.enrolments.view', 'face-recognition', 'view', 'View — Face recognition · enrolments', NULL, ARRAY['GET /api/v1/face-recognition/enrolments/:id/face']::TEXT[]),
+    ('face-recognition.searches.create', 'face-recognition', 'create', 'Create — Face recognition · searches', 'ASI'::user_role, ARRAY['POST /api/v1/face-recognition/searches']::TEXT[]),
+    ('face-recognition.searches.view', 'face-recognition', 'view', 'View — Face recognition · searches', 'DSP'::user_role, ARRAY['GET /api/v1/face-recognition/searches']::TEXT[]),
+    ('face-recognition.status.view', 'face-recognition', 'view', 'View — Face recognition · status', NULL, ARRAY['GET /api/v1/face-recognition/status']::TEXT[]),
     ('files.delete', 'files', 'delete', 'Delete — Files', 'SI'::user_role, ARRAY['DELETE /api/v1/files/*key']::TEXT[]),
     ('files.view', 'files', 'view', 'View — Files', NULL, ARRAY['GET /api/v1/files/*key']::TEXT[]),
     ('firs.amend', 'firs', 'amend', 'Amend — FIR and general diary', 'SI'::user_role, ARRAY['PUT /api/v1/firs/:id','PATCH /api/v1/firs/:id/status']::TEXT[]),
@@ -275,6 +285,9 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('missing-persons.checklist.create', 'missing-persons', 'create', 'Create — Missing persons · checklist', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/checklist/:itemCode/complete']::TEXT[]),
     ('missing-persons.close', 'missing-persons', 'close', 'Close — Missing persons', 'SI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/close']::TEXT[]),
     ('missing-persons.create', 'missing-persons', 'create', 'Create — Missing persons', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons']::TEXT[]),
+    ('missing-persons.face-recognition.enrol.create', 'missing-persons', 'create', 'Create — Missing persons · face recognition · enrol', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/face-recognition/enrol']::TEXT[]),
+    ('missing-persons.face-recognition.enrolments.create', 'missing-persons', 'create', 'Create — Missing persons · face recognition · enrolments', 'SI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/face-recognition/enrolments/:enrolmentId/withdraw']::TEXT[]),
+    ('missing-persons.face-recognition.synthetic-photos.create', 'missing-persons', 'create', 'Create — Missing persons · face recognition · synthetic photos', 'DGP'::user_role, ARRAY['POST /api/v1/missing-persons/:id/face-recognition/synthetic-photos']::TEXT[]),
     ('missing-persons.family-contacts', 'missing-persons', 'family-contacts', 'Family contacts — Missing persons', NULL, ARRAY['POST /api/v1/missing-persons/:id/family-contacts']::TEXT[]),
     ('missing-persons.lookout', 'missing-persons', 'lookout', 'Lookout — Missing persons', 'SI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/lookout']::TEXT[]),
     ('missing-persons.photos', 'missing-persons', 'photos', 'Photos — Missing persons', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/photos']::TEXT[]),
@@ -284,7 +297,7 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('missing-persons.sightings.create', 'missing-persons', 'create', 'Create — Missing persons · sightings', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/sightings/:sightingId/reject','POST /api/v1/missing-persons/:id/sightings/:sightingId/verify']::TEXT[]),
     ('missing-persons.start-search', 'missing-persons', 'start-search', 'Start search — Missing persons', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/start-search']::TEXT[]),
     ('missing-persons.station-checks', 'missing-persons', 'station-checks', 'Station checks — Missing persons', 'ASI'::user_role, ARRAY['POST /api/v1/missing-persons/:id/station-checks']::TEXT[]),
-    ('missing-persons.view', 'missing-persons', 'view', 'View — Missing persons', NULL, ARRAY['GET /api/v1/missing-persons','GET /api/v1/missing-persons/:id','GET /api/v1/missing-persons/:id/checklist','GET /api/v1/missing-persons/:id/family-contacts','GET /api/v1/missing-persons/:id/map','GET /api/v1/missing-persons/:id/movement','GET /api/v1/missing-persons/:id/photos','GET /api/v1/missing-persons/:id/photos/:photoId/image','GET /api/v1/missing-persons/:id/photos/:photoId/thumbnail','GET /api/v1/missing-persons/:id/sightings','GET /api/v1/missing-persons/:id/station-checks','GET /api/v1/missing-persons/board','GET /api/v1/missing-persons/stats']::TEXT[]),
+    ('missing-persons.view', 'missing-persons', 'view', 'View — Missing persons', NULL, ARRAY['GET /api/v1/missing-persons','GET /api/v1/missing-persons/:id','GET /api/v1/missing-persons/:id/checklist','GET /api/v1/missing-persons/:id/face-recognition','GET /api/v1/missing-persons/:id/face-recognition/candidates','GET /api/v1/missing-persons/:id/face-recognition/photos/:photoId/image','GET /api/v1/missing-persons/:id/family-contacts','GET /api/v1/missing-persons/:id/map','GET /api/v1/missing-persons/:id/movement','GET /api/v1/missing-persons/:id/photos','GET /api/v1/missing-persons/:id/photos/:photoId/image','GET /api/v1/missing-persons/:id/photos/:photoId/thumbnail','GET /api/v1/missing-persons/:id/sightings','GET /api/v1/missing-persons/:id/station-checks','GET /api/v1/missing-persons/board','GET /api/v1/missing-persons/stats']::TEXT[]),
     ('ml.create', 'ml', 'create', 'Create — Model registry', NULL, ARRAY['POST /api/v1/ml/classify','POST /api/v1/ml/ocr','POST /api/v1/ml/search']::TEXT[]),
     ('ml.view', 'ml', 'view', 'View — Model registry', NULL, ARRAY['GET /api/v1/ml/health']::TEXT[]),
     ('national.amend', 'national', 'amend', 'Amend — National coordination', 'IG'::user_role, ARRAY['PUT /api/v1/national/alerts/:id','PUT /api/v1/national/patterns/:id']::TEXT[]),
@@ -303,11 +316,11 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('referrals.view', 'referrals', 'view', 'View — Referrals', NULL, ARRAY['GET /api/v1/referrals','GET /api/v1/referrals/:id']::TEXT[]),
     ('reports.create', 'reports', 'create', 'Create — Reports', NULL, ARRAY['POST /api/v1/reports/generate']::TEXT[]),
     ('reports.view', 'reports', 'view', 'View — Reports', NULL, ARRAY['GET /api/v1/reports/crime-statistics','GET /api/v1/reports/daily-summary','GET /api/v1/reports/download/:type','GET /api/v1/reports/fir-status','GET /api/v1/reports/officer-workload','GET /api/v1/reports/pending-investigation','GET /api/v1/reports/types']::TEXT[]),
-    ('risk.beats.create', 'risk', 'create', 'Create — Public safety risk · beats', NULL, ARRAY['POST /api/v1/risk/beats']::TEXT[]),
-    ('risk.delete', 'risk', 'delete', 'Delete — Public safety risk', NULL, ARRAY['DELETE /api/v1/risk/beats/:id','DELETE /api/v1/risk/placements/:firId']::TEXT[]),
-    ('risk.placements.create', 'risk', 'create', 'Create — Public safety risk · placements', NULL, ARRAY['POST /api/v1/risk/placements']::TEXT[]),
-    ('risk.simulate.create', 'risk', 'create', 'Create — Public safety risk · simulate', NULL, ARRAY['POST /api/v1/risk/simulate']::TEXT[]),
-    ('risk.view', 'risk', 'view', 'View — Public safety risk', NULL, ARRAY['GET /api/v1/risk/areas','GET /api/v1/risk/beats','GET /api/v1/risk/factors','GET /api/v1/risk/firs','GET /api/v1/risk/recommendations','GET /api/v1/risk/weights/history']::TEXT[]),
+    ('risk.beats.create', 'risk', 'create', 'Create — Public safety risk · beats', 'SHO'::user_role, ARRAY['POST /api/v1/risk/beats']::TEXT[]),
+    ('risk.delete', 'risk', 'delete', 'Delete — Public safety risk', 'SHO'::user_role, ARRAY['DELETE /api/v1/risk/beats/:id','DELETE /api/v1/risk/placements/:firId']::TEXT[]),
+    ('risk.placements.create', 'risk', 'create', 'Create — Public safety risk · placements', 'SHO'::user_role, ARRAY['POST /api/v1/risk/placements']::TEXT[]),
+    ('risk.simulate.create', 'risk', 'create', 'Create — Public safety risk · simulate', 'SHO'::user_role, ARRAY['POST /api/v1/risk/simulate']::TEXT[]),
+    ('risk.view', 'risk', 'view', 'View — Public safety risk', 'SHO'::user_role, ARRAY['GET /api/v1/risk/areas','GET /api/v1/risk/beats','GET /api/v1/risk/factors','GET /api/v1/risk/firs','GET /api/v1/risk/recommendations','GET /api/v1/risk/weights/history']::TEXT[]),
     ('risk.weights.create', 'risk', 'create', 'Create — Public safety risk · weights', 'SP'::user_role, ARRAY['POST /api/v1/risk/weights']::TEXT[]),
     ('search.view', 'search', 'view', 'View — Search', NULL, ARRAY['GET /api/v1/search']::TEXT[]),
     ('state.alerts.acknowledge', 'state', 'acknowledge', 'Acknowledge — State administration · alerts', NULL, ARRAY['POST /api/v1/state/alerts/:id/acknowledge']::TEXT[]),
@@ -365,13 +378,13 @@ INSERT INTO permissions (key, module, action, description, default_min_rank, rou
     ('warrants.amend', 'warrants', 'amend', 'Amend — Warrants and summons', 'SI'::user_role, ARRAY['PUT /api/v1/warrants/:id','PATCH /api/v1/warrants/:id/status']::TEXT[]),
     ('warrants.create', 'warrants', 'create', 'Create — Warrants and summons', 'SI'::user_role, ARRAY['POST /api/v1/warrants']::TEXT[]),
     ('warrants.view', 'warrants', 'view', 'View — Warrants and summons', NULL, ARRAY['GET /api/v1/warrants','GET /api/v1/warrants/:id','GET /api/v1/warrants/stats']::TEXT[]),
-    ('workload.backlog.view', 'workload', 'view', 'View — Station workload · backlog', NULL, ARRAY['GET /api/v1/workload/backlog']::TEXT[]),
-    ('workload.officers.view', 'workload', 'view', 'View — Station workload · officers', NULL, ARRAY['GET /api/v1/workload/officers']::TEXT[]),
-    ('workload.scopes.view', 'workload', 'view', 'View — Station workload · scopes', NULL, ARRAY['GET /api/v1/workload/scopes']::TEXT[]),
-    ('workload.sla.view', 'workload', 'view', 'View — Station workload · sla', NULL, ARRAY['GET /api/v1/workload/sla']::TEXT[]),
+    ('workload.backlog.view', 'workload', 'view', 'View — Station workload · backlog', 'SHO'::user_role, ARRAY['GET /api/v1/workload/backlog']::TEXT[]),
+    ('workload.officers.view', 'workload', 'view', 'View — Station workload · officers', 'SHO'::user_role, ARRAY['GET /api/v1/workload/officers']::TEXT[]),
+    ('workload.scopes.view', 'workload', 'view', 'View — Station workload · scopes', 'SHO'::user_role, ARRAY['GET /api/v1/workload/scopes']::TEXT[]),
+    ('workload.sla.view', 'workload', 'view', 'View — Station workload · sla', 'SHO'::user_role, ARRAY['GET /api/v1/workload/sla']::TEXT[]),
     ('workload.stations.view', 'workload', 'view', 'View — Station workload · stations', 'DSP'::user_role, ARRAY['GET /api/v1/workload/stations']::TEXT[]),
-    ('workload.summary.view', 'workload', 'view', 'View — Station workload · summary', NULL, ARRAY['GET /api/v1/workload/summary']::TEXT[]),
-    ('workload.trends.view', 'workload', 'view', 'View — Station workload · trends', NULL, ARRAY['GET /api/v1/workload/trends']::TEXT[])
+    ('workload.summary.view', 'workload', 'view', 'View — Station workload · summary', 'SHO'::user_role, ARRAY['GET /api/v1/workload/summary']::TEXT[]),
+    ('workload.trends.view', 'workload', 'view', 'View — Station workload · trends', 'SHO'::user_role, ARRAY['GET /api/v1/workload/trends']::TEXT[])
 ON CONFLICT (key) DO UPDATE
     SET module = EXCLUDED.module,
         action = EXCLUDED.action,
@@ -455,15 +468,17 @@ INSERT INTO roles (code, name, name_bn, description, is_rank_default, rank) VALU
     ('ig',             'IG',                'আইজি',                'What an IG could do before roles existed.',                TRUE, 'IG'),
     ('secretary',      'Secretary',         'সচিব',                'What the secretary could do before roles existed.',        TRUE, 'SECRETARY'),
     ('dgp',            'Director General',  'ডিরেক্টর জেনারেল',    'What the Director General could do before roles existed.', TRUE, 'DGP')
-ON CONFLICT (code) DO UPDATE
-    SET name = EXCLUDED.name, name_bn = EXCLUDED.name_bn;
+-- Keyed on the rank, because that is what a rank-default role is. Keying on
+-- the code would let a renamed code try to insert a second role for a rank
+-- that already has one, which the partial unique index then rejects.
+ON CONFLICT (rank) WHERE is_rank_default DO UPDATE
+    SET code = EXCLUDED.code, name = EXCLUDED.name, name_bn = EXCLUDED.name_bn;
 
 -- The trigger that fixes what a rank role grants is created at the end of this
 -- file, and would otherwise refuse the seeding below on a second run: the
--- statement is written to insert nothing when the rows are already there, but
--- a BEFORE INSERT trigger fires per row regardless of ON CONFLICT. Dropped
--- here so applying this migration twice is a no-op rather than an error, and
--- recreated once the seeding is done.
+-- statement inserts nothing when the rows are already there, but a BEFORE
+-- INSERT trigger fires per row whatever ON CONFLICT says. Dropped here so
+-- applying this migration twice is a no-op, and recreated once seeding is done.
 DROP TRIGGER IF EXISTS trg_rank_role_grants_are_not_edited ON role_permissions;
 
 -- Each rank role is granted exactly what that rank can already reach: every

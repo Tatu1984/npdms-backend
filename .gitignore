@@ -50,3 +50,14 @@ services/api/api
 # Evidence files written by a local API (STORAGE_PATH=./data/evidence). Evidence
 # bytes never belong in the repository.
 services/api/data/
+
+# Sync-conflict duplicates. iCloud and OneDrive both write "name 2.ext"
+# beside the original; they are stale copies, they break the Go build when
+# they materialise, and one `git add -A` puts 84 of them in the repository.
+*\ 2.go
+*\ 2.sql
+*\ 2.py
+*\ 2.ts
+*\ 2.tsx
+*\ 2.json
+*\ 2.md

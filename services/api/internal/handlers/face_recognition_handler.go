@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/npdms/api/internal/middleware"
 	"github.com/npdms/api/internal/models"
 	"github.com/npdms/api/internal/repository"
 	"github.com/npdms/api/internal/services"
@@ -37,29 +36,29 @@ func (h *FaceRecognitionHandler) RegisterRoutes(protected *gin.RouterGroup) {
 	{
 		fr.GET("/status", h.Status)
 		fr.GET("/authorisations", h.Authorisations)
-		fr.POST("/authorisations", middleware.RequireRole("SP"), h.RecordAuthorisation)
-		fr.POST("/authorisations/:id/revoke", middleware.RequireRole("SP"), h.RevokeAuthorisation)
-		fr.PUT("/settings", middleware.RequireRole("SP"), h.UpdateSettings)
-		fr.POST("/searches", middleware.RequireRole("ASI"), h.Search)
-		fr.GET("/searches", middleware.RequireRole("DSP"), h.Searches)
-		fr.POST("/camera-snapshots", middleware.RequireRole("ASI"), h.CameraSnapshot)
-		fr.GET("/candidates", middleware.RequireRole("ASI"), h.Queue)
-		fr.GET("/candidates/:id", middleware.RequireRole("ASI"), h.Candidate)
-		fr.GET("/candidates/:id/frame", middleware.RequireRole("ASI"), h.CandidateImage("frame"))
-		fr.GET("/candidates/:id/crop", middleware.RequireRole("ASI"), h.CandidateImage("crop"))
-		fr.POST("/candidates/:id/confirm", middleware.RequireRole("ASI"), h.Confirm)
-		fr.POST("/candidates/:id/reject", middleware.RequireRole("ASI"), h.Reject)
+		fr.POST("/authorisations", h.RecordAuthorisation)
+		fr.POST("/authorisations/:id/revoke", h.RevokeAuthorisation)
+		fr.PUT("/settings", h.UpdateSettings)
+		fr.POST("/searches", h.Search)
+		fr.GET("/searches", h.Searches)
+		fr.POST("/camera-snapshots", h.CameraSnapshot)
+		fr.GET("/candidates", h.Queue)
+		fr.GET("/candidates/:id", h.Candidate)
+		fr.GET("/candidates/:id/frame", h.CandidateImage("frame"))
+		fr.GET("/candidates/:id/crop", h.CandidateImage("crop"))
+		fr.POST("/candidates/:id/confirm", h.Confirm)
+		fr.POST("/candidates/:id/reject", h.Reject)
 		fr.GET("/enrolments/:id/face", h.EnrolmentFace)
 	}
 	mp := protected.Group("/missing-persons/:id/face-recognition")
 	{
 		mp.GET("", h.ReportView)
-		mp.POST("/enrol", middleware.RequireRole("ASI"), h.Enrol)
-		mp.POST("/enrolments/:enrolmentId/withdraw", middleware.RequireRole("SI"), h.Withdraw)
+		mp.POST("/enrol", h.Enrol)
+		mp.POST("/enrolments/:enrolmentId/withdraw", h.Withdraw)
 		mp.GET("/candidates", h.ReportCandidates)
 		mp.GET("/photos/:photoId/image", h.PhotoImage)
 		// Admin-only demo path for synthetic test faces.
-		mp.POST("/synthetic-photos", middleware.RequireRole("DGP"), h.UploadSyntheticPhoto)
+		mp.POST("/synthetic-photos", h.UploadSyntheticPhoto)
 	}
 }
 
