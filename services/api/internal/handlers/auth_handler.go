@@ -46,7 +46,10 @@ func (h *AuthHandler) signInLocation(ctx context.Context, ip string) []byte {
 	if h.geo == nil || ip == "" {
 		return nil
 	}
-	bounded, cancel := context.WithTimeout(ctx, 900*time.Millisecond)
+	// Long enough for a provider that answers, short enough that signing in is
+	// never held up by one that does not. Results are cached, so a station's
+	// own address pays this once.
+	bounded, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
 	intel, err := h.geo.Locate(bounded, ip)
@@ -81,9 +84,20 @@ func (h *AuthHandler) signInLocation(ctx context.Context, ip string) []byte {
 		located["latitude"] = *intel.Latitude
 		located["longitude"] = *intel.Longitude
 	}
-	// Provenance, so nobody reads a coarse estimate as a fix on a person.
+	// Provenance, so nobody reads a coarse estimate as a fix on a person —
+	// and so an entry with no city says why it has none. A silent absence
+	// reads as "nowhere"; "the provider refused the lookup" is the truth, and
+	// it is the difference between a gap in the record and a gap in the
+	// evidence about the record.
 	located["source"] = intel.Source
-	located["note"] = "Approximate, derived from the network address. Not a position fix."
+	located["resolved"] = intel.City != "" || intel.Country != ""
+	if intel.Note != "" {
+		located["note"] = intel.Note
+	}
+	if !intel.Available {
+		located["unavailable"] = true
+	}
+	located["caveat"] = "Approximate, derived from the network address. Not a position fix."
 	encoded, err := json.Marshal(located)
 	if err != nil {
 		return nil

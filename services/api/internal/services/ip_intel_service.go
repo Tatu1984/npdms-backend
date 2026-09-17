@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,7 +39,25 @@ type IPIntelService struct {
 	// entirely, which is the correct setting for an air-gapped edge server.
 	provider string
 	enabled  bool
+
+	// A cache inside the process, because the deployed API has no Redis: the
+	// rate limiter there already falls back to process memory. Without this a
+	// sign-in would call the provider every single time, and the provider is
+	// rate limited by source address — which is how the deployed API came to
+	// be answered with 429 for every lookup it made.
+	local   map[string]localIntel
+	localMu sync.RWMutex
 }
+
+type localIntel struct {
+	intel *IPIntel
+	until time.Time
+}
+
+// localIntelTTL is short beside the Redis cache's day: this one is lost on
+// every cold start anyway, and a shorter life keeps a rate-limited refusal
+// from being remembered as though it were an answer.
+const localIntelTTL = 30 * time.Minute
 
 func NewIPIntelService(rdb *redis.Client, auditRepo *repository.AuditRepository) *IPIntelService {
 	provider := os.Getenv("IP_INTEL_PROVIDER")
@@ -53,6 +72,7 @@ func NewIPIntelService(rdb *redis.Client, auditRepo *repository.AuditRepository)
 	return &IPIntelService{
 		redis:     rdb,
 		auditRepo: auditRepo,
+		local:     make(map[string]localIntel),
 		client:    &http.Client{Timeout: 8 * time.Second},
 		provider:  provider,
 		enabled:   enabled,
@@ -62,29 +82,29 @@ func NewIPIntelService(rdb *redis.Client, auditRepo *repository.AuditRepository)
 // IPIntel is the structured answer. Fields left empty mean the provider did not
 // supply them; the caller is never handed a guess.
 type IPIntel struct {
-	IP           string     `json:"ip"`
-	Version      string     `json:"version,omitempty"`
-	City         string     `json:"city,omitempty"`
-	Region       string     `json:"region,omitempty"`
-	Country      string     `json:"country,omitempty"`
-	CountryCode  string     `json:"countryCode,omitempty"`
-	Postal       string     `json:"postal,omitempty"`
-	Latitude     *float64   `json:"latitude,omitempty"`
-	Longitude    *float64   `json:"longitude,omitempty"`
-	Timezone     string     `json:"timezone,omitempty"`
-	ASN          string     `json:"asn,omitempty"`
-	Organisation string     `json:"organisation,omitempty"`
+	IP           string   `json:"ip"`
+	Version      string   `json:"version,omitempty"`
+	City         string   `json:"city,omitempty"`
+	Region       string   `json:"region,omitempty"`
+	Country      string   `json:"country,omitempty"`
+	CountryCode  string   `json:"countryCode,omitempty"`
+	Postal       string   `json:"postal,omitempty"`
+	Latitude     *float64 `json:"latitude,omitempty"`
+	Longitude    *float64 `json:"longitude,omitempty"`
+	Timezone     string   `json:"timezone,omitempty"`
+	ASN          string   `json:"asn,omitempty"`
+	Organisation string   `json:"organisation,omitempty"`
 
 	// Classification the platform derives itself, not taken from the provider.
 	IsPrivate  bool `json:"isPrivate"`
 	IsLoopback bool `json:"isLoopback"`
 
 	// Provenance, so a result can be judged and reproduced.
-	Source     string    `json:"source"`
+	Source      string    `json:"source"`
 	RetrievedAt time.Time `json:"retrievedAt"`
-	Cached     bool      `json:"cached"`
-	Available  bool      `json:"available"`
-	Note       string    `json:"note,omitempty"`
+	Cached      bool      `json:"cached"`
+	Available   bool      `json:"available"`
+	Note        string    `json:"note,omitempty"`
 }
 
 const ipIntelCacheTTL = 24 * time.Hour
@@ -111,6 +131,40 @@ func (s *IPIntelService) Locate(ctx context.Context, raw string) (*IPIntel, erro
 }
 
 func (s *IPIntelService) locate(ctx context.Context, raw string) (*IPIntel, error) {
+	if cached, ok := s.fromLocal(strings.TrimSpace(raw)); ok {
+		return cached, nil
+	}
+	result, err := s.resolve(ctx, raw)
+	if err == nil && result != nil {
+		s.toLocal(result)
+	}
+	return result, err
+}
+
+func (s *IPIntelService) fromLocal(ip string) (*IPIntel, bool) {
+	s.localMu.RLock()
+	hit, ok := s.local[ip]
+	s.localMu.RUnlock()
+	if !ok || time.Now().After(hit.until) {
+		return nil, false
+	}
+	copied := *hit.intel
+	copied.Cached = true
+	return &copied, true
+}
+
+func (s *IPIntelService) toLocal(intel *IPIntel) {
+	s.localMu.Lock()
+	// Bounded. A police deployment sees a few hundred addresses; anything far
+	// past that is a scan, and the map must not grow without limit.
+	if len(s.local) > 2000 {
+		s.local = make(map[string]localIntel)
+	}
+	s.local[intel.IP] = localIntel{intel: intel, until: time.Now().Add(localIntelTTL)}
+	s.localMu.Unlock()
+}
+
+func (s *IPIntelService) resolve(ctx context.Context, raw string) (*IPIntel, error) {
 	addr := net.ParseIP(strings.TrimSpace(raw))
 	if addr == nil {
 		return nil, fmt.Errorf("%q is not a valid IP address", raw)
@@ -129,7 +183,6 @@ func (s *IPIntelService) locate(ctx context.Context, raw string) (*IPIntel, erro
 	} else {
 		result.Version = "IPv6"
 	}
-
 
 	// A private or loopback address has no public registration to look up, and
 	// asking an external provider about it would leak internal topology.
@@ -182,18 +235,18 @@ func (s *IPIntelService) fetch(ctx context.Context, ip string) (*IPIntel, error)
 	}
 
 	var payload struct {
-		City     string   `json:"city"`
-		Region   string   `json:"region"`
-		Country  string   `json:"country_name"`
-		Code     string   `json:"country_code"`
-		Postal   string   `json:"postal"`
-		Latitude *float64 `json:"latitude"`
+		City      string   `json:"city"`
+		Region    string   `json:"region"`
+		Country   string   `json:"country_name"`
+		Code      string   `json:"country_code"`
+		Postal    string   `json:"postal"`
+		Latitude  *float64 `json:"latitude"`
 		Longitude *float64 `json:"longitude"`
-		Timezone string   `json:"timezone"`
-		ASN      string   `json:"asn"`
-		Org      string   `json:"org"`
-		Error    bool     `json:"error"`
-		Reason   string   `json:"reason"`
+		Timezone  string   `json:"timezone"`
+		ASN       string   `json:"asn"`
+		Org       string   `json:"org"`
+		Error     bool     `json:"error"`
+		Reason    string   `json:"reason"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
