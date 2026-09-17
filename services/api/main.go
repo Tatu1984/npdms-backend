@@ -76,6 +76,8 @@ func main() {
 	permissionRepo := repository.NewPermissionRepository(db)
 	roleRepo := repository.NewRoleRepository(db)
 	activityRepo := repository.NewActivityRepository(db)
+	fleetRepo := repository.NewFleetRepository(db)
+	suretyRepo := repository.NewSuretyRepository(db)
 	workloadRepo := repository.NewWorkloadRepository(db)
 	riskRepo := repository.NewRiskRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
@@ -240,6 +242,7 @@ func main() {
 	userAdminHandler := handlers.NewUserAdminHandler(userAdminService)
 	roleHandler := handlers.NewRoleHandler(roleService)
 	activityHandler := handlers.NewActivityHandler(activityRepo, userRepo)
+	fleetHandler := handlers.NewFleetHandler(fleetRepo, suretyRepo, auditRepo)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
@@ -424,6 +427,14 @@ func main() {
 				bail.PUT("/:id", bailHandler.Update)
 				bail.PATCH("/:id/status", bailHandler.UpdateStatus)
 				bail.GET("/stats", bailHandler.GetStats)
+
+				// Who stands surety. bail_sureties has existed since the bail
+				// module was built and no route ever reached it: a bail order
+				// naming no surety is an incomplete record of the order.
+				bail.GET("/:id/sureties", fleetHandler.Sureties)
+				bail.POST("/:id/sureties", fleetHandler.AddSurety)
+				bail.POST("/:id/sureties/:suretyId/verify", fleetHandler.VerifySurety)
+				bail.DELETE("/:id/sureties/:suretyId", fleetHandler.RemoveSurety)
 			}
 
 			// Forensic routes
@@ -458,6 +469,19 @@ func main() {
 				vehicles.POST("/:id/allocate", vehicleHandler.AllocateVehicle)
 				vehicles.POST("/:id/return", vehicleHandler.ReturnVehicle)
 				vehicles.DELETE("/:id", vehicleHandler.Delete)
+
+				// The history behind the vehicle's current state. `vehicles`
+				// held an odometer reading with no journey behind it and a
+				// fuel level with no fill; these are the records a fleet is
+				// audited on.
+				vehicles.GET("/:id/trips", fleetHandler.Trips)
+				vehicles.POST("/:id/trips", fleetHandler.StartTrip)
+				vehicles.POST("/:id/trips/:tripId/close", fleetHandler.EndTrip)
+				vehicles.GET("/:id/fuel", fleetHandler.Fuel)
+				vehicles.POST("/:id/fuel", fleetHandler.AddFuel)
+				vehicles.GET("/:id/maintenance", fleetHandler.Maintenance)
+				vehicles.POST("/:id/maintenance", fleetHandler.AddMaintenance)
+				vehicles.POST("/:id/maintenance/:recordId/complete", fleetHandler.CompleteMaintenance)
 			}
 
 			// Court routes
