@@ -322,8 +322,17 @@ func main() {
 		protected := v1.Group("")
 		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret, rdb))
 		protected.Use(middleware.SessionValidationMiddleware(rdbV8, zeroTrustConfig))
-		protected.Use(middleware.DeviceVerificationMiddleware(rdbV8, zeroTrustConfig))
-		protected.Use(middleware.ContinuousAuthMiddleware(rdbV8))
+		// DeviceVerificationMiddleware and ContinuousAuthMiddleware are no
+		// longer in the chain. Between them they spent three to five Redis
+		// commands per request to set requiresMFA, unknownDevice and
+		// requiresReauth — and the only reader of any of those is
+		// SensitiveOperationMiddleware, which is defined and has never been
+		// registered. The device fingerprint they were keeping is now on every
+		// audit entry, which is a better record than a Redis set with a
+		// thirty-day expiry, and survives a cache that is emptied or absent.
+		//
+		// They are kept in the middleware package. When a re-authentication
+		// step is actually built, this is where it goes back.
 		// What this officer may do, checked against the route catalogue. The
 		// per-route RequireRole guards below stay as they are: they say the
 		// same thing about rank that the seeded roles say about permissions,

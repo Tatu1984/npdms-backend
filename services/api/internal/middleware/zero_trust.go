@@ -39,14 +39,14 @@ type SessionInfo struct {
 
 // ZeroTrustConfig holds zero trust configuration
 type ZeroTrustConfig struct {
-	SessionTimeout      time.Duration
+	SessionTimeout        time.Duration
 	MaxConcurrentSessions int
-	MaxRefreshCount     int
-	RequireDeviceMatch  bool
-	AllowedIPs          []string
-	BlockedIPs          []string
-	EnableGeoBlocking   bool
-	AllowedCountries    []string
+	MaxRefreshCount       int
+	RequireDeviceMatch    bool
+	AllowedIPs            []string
+	BlockedIPs            []string
+	EnableGeoBlocking     bool
+	AllowedCountries      []string
 }
 
 // DefaultZeroTrustConfig returns default zero trust configuration.
@@ -126,18 +126,28 @@ func SessionValidationMiddleware(rdb *redis.Client, config ZeroTrustConfig) gin.
 		}
 		c.Header("X-Session-Token", sessionToken)
 
-		// Validate session
-		sessionKey := fmt.Sprintf("session:%s:%s", userID, sessionToken)
 		ctx := context.Background()
-
-		// Check concurrent sessions
 		userSessionsKey := fmt.Sprintf("user_sessions:%s", userID)
-		sessionCount, _ := rdb.SCard(ctx, userSessionsKey).Result()
 
-		if int(sessionCount) >= config.MaxConcurrentSessions {
-			// Check if this session exists
-			exists, _ := rdb.SIsMember(ctx, userSessionsKey, sessionToken).Result()
-			if !exists {
+		// One command in the steady state, three when a session is new.
+		//
+		// This was five on every request: SCARD, sometimes SISMEMBER, then SET,
+		// SADD and EXPIRE. The SET wrote session:<user>:<token> with the time,
+		// and nothing has ever read that key — it is written here and deleted
+		// at sign-out, and never consulted in between. A managed Redis bills
+		// commands, so a write with no reader is a bill with no benefit.
+		//
+		// SADD answers the question the SCARD was asked for: it returns 1 when
+		// the session is new to the set and 0 when it was already there. Only a
+		// genuinely new session needs the cap checked, and a session already
+		// counted cannot push the count over it.
+		added, err := rdb.SAdd(ctx, userSessionsKey, sessionToken).Result()
+		if err == nil && added == 1 {
+			rdb.Expire(ctx, userSessionsKey, config.SessionTimeout)
+			count, err := rdb.SCard(ctx, userSessionsKey).Result()
+			if err == nil && int(count) > config.MaxConcurrentSessions {
+				// Take it back out: it was refused, so it is not one of theirs.
+				rdb.SRem(ctx, userSessionsKey, sessionToken)
 				c.JSON(http.StatusTooManyRequests, gin.H{
 					"error":   "Maximum concurrent sessions reached",
 					"message": "Please logout from another device to continue",
@@ -146,11 +156,6 @@ func SessionValidationMiddleware(rdb *redis.Client, config ZeroTrustConfig) gin.
 				return
 			}
 		}
-
-		// Update session activity
-		rdb.Set(ctx, sessionKey, time.Now().Unix(), config.SessionTimeout)
-		rdb.SAdd(ctx, userSessionsKey, sessionToken)
-		rdb.Expire(ctx, userSessionsKey, config.SessionTimeout)
 
 		c.Set("sessionToken", sessionToken)
 		c.Next()

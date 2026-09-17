@@ -108,7 +108,6 @@ func checkRateLimit(
 	window time.Duration,
 ) (allowed bool, remaining int, resetTime time.Time, err error) {
 	now := time.Now()
-	windowStart := now.Add(-window)
 
 	// No Redis client at all: count in memory rather than waving the request
 	// through.
@@ -117,35 +116,42 @@ func checkRateLimit(
 		return allowed, remaining, resetTime, nil
 	}
 
-	// Use Redis pipeline for atomic operations
-	pipe := rdb.Pipeline()
-
-	// Remove old entries outside the window
-	pipe.ZRemRangeByScore(ctx, key, "0", strconv.FormatInt(windowStart.UnixNano(), 10))
-
-	// Count current requests in window
-	countCmd := pipe.ZCard(ctx, key)
-
-	// Add current request
-	pipe.ZAdd(ctx, key, &redis.Z{
-		Score:  float64(now.UnixNano()),
-		Member: fmt.Sprintf("%d", now.UnixNano()),
-	})
-
-	// Set expiration
-	pipe.Expire(ctx, key, window)
-
-	// Execute pipeline
-	_, err = pipe.Exec(ctx)
+	// A fixed window, counted with two commands rather than four.
+	//
+	// This was a sliding window over a sorted set: ZREMRANGEBYSCORE, ZCARD,
+	// ZADD and EXPIRE for every request, on both limiters, which is eight
+	// commands a request spent on rate limiting alone. A managed Redis bills
+	// commands, and the platform issues about five requests per screen, so
+	// that arithmetic decided how much of a day's budget a single officer
+	// could use before anything was policed at all.
+	//
+	// INCR on a key that expires with the window gives the same protection at
+	// half the cost. What is lost is smoothness at the boundary: a caller can
+	// spend the tail of one window and the head of the next back to back. For
+	// a limit meant to stop flooding rather than to meter usage precisely,
+	// that is an acceptable trade and a stated one.
+	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return false, 0, time.Time{}, err
 	}
 
-	// Get count
-	count, err := countCmd.Result()
-	if err != nil {
-		return false, 0, time.Time{}, err
+	// The window's expiry is set once, by the request that opened it. Setting
+	// it on every request renewed a TTL that had not changed and doubled the
+	// cost of the cheapest thing here.
+	if count == 1 {
+		rdb.Expire(ctx, key, window)
+	} else if int(count) > limit {
+		// A key over its limit with no expiry would refuse this caller for
+		// ever: the EXPIRE that should have followed the opening INCR was lost
+		// — the process died between the two, or Redis dropped it. Checked
+		// only on the path that is already being refused, so it costs nothing
+		// in the ordinary case.
+		if ttl, err := rdb.TTL(ctx, key).Result(); err == nil && ttl < 0 {
+			rdb.Expire(ctx, key, window)
+		}
 	}
+	// INCR counts this request; the sorted set counted the ones before it.
+	count--
 
 	// Calculate remaining and reset time
 	remaining = limit - int(count)
