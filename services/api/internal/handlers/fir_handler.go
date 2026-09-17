@@ -169,9 +169,12 @@ func (h *FIRHandler) Get(c *gin.Context) {
 func (h *FIRHandler) Create(c *gin.Context) {
 	var fir models.FIR
 	if err := c.ShouldBindJSON(&fir); err != nil {
+		// Name what could not be read. "Invalid FIR data" tells an officer
+		// filling in a form nothing about which field to correct, and it hid
+		// the cause of every failure here from whoever was debugging one.
 		c.JSON(http.StatusBadRequest, models.ErrorResponse{
 			Error:   "validation_error",
-			Message: "Invalid FIR data",
+			Message: "The FIR could not be read: " + err.Error(),
 			Code:    400,
 		})
 		return
