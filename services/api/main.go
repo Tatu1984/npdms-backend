@@ -74,6 +74,7 @@ func main() {
 	lookoutRepo := repository.NewLookoutRepository(db)
 	accessLogRepo := repository.NewAccessLogRepository(db)
 	permissionRepo := repository.NewPermissionRepository(db)
+	roleRepo := repository.NewRoleRepository(db)
 	workloadRepo := repository.NewWorkloadRepository(db)
 	riskRepo := repository.NewRiskRepository(db)
 	vehicleRepo := repository.NewVehicleRepository(db)
@@ -113,6 +114,7 @@ func main() {
 	// Officer accounts. Until this module every account in the platform was
 	// inserted by hand; there was no way to appoint, transfer or retire one.
 	userAdminService := services.NewUserAdminService(db, auditRepo)
+	roleService := services.NewRoleService(roleRepo, permissionRepo, userRepo, auditRepo)
 
 	// The AI gateway (layer A0): the one route from this platform to any
 	// model. Clients are attached per registered model, from the service
@@ -231,6 +233,7 @@ func main() {
 	aiReviewHandler := handlers.NewAIReviewHandler(aiReviewService)
 	referralHandler := handlers.NewReferralHandler(referralService)
 	userAdminHandler := handlers.NewUserAdminHandler(userAdminService)
+	roleHandler := handlers.NewRoleHandler(roleService)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(aiGateway)
 	investigationHandler := handlers.NewInvestigationHandler(investigationService)
 	ipIntelHandler := handlers.NewIPIntelHandler(ipIntelService)
@@ -321,6 +324,9 @@ func main() {
 			protected.GET("/me", authHandler.GetCurrentUser)
 			protected.PUT("/me", authHandler.UpdateProfile)
 			protected.PUT("/me/password", authHandler.ChangePassword)
+			// What this officer may do, by name, so the web application can
+			// hide a control rather than offer one the server will refuse.
+			protected.GET("/me/permissions", roleHandler.MyPermissions)
 
 			// FIR routes
 			firs := protected.Group("/firs")
@@ -1116,7 +1122,23 @@ func main() {
 				officers.POST("/:id/deactivate", userAdminHandler.Deactivate)
 				officers.POST("/:id/reactivate", userAdminHandler.Reactivate)
 				officers.POST("/:id/password-reset", userAdminHandler.ResetPassword)
+				officers.GET("/:id/roles", roleHandler.OfficerRoles)
+				officers.POST("/:id/roles", roleHandler.Assign)
+				officers.DELETE("/:id/roles/:roleId", roleHandler.Unassign)
 			}
+
+			// Roles and the permission catalogue. What an officer may do is
+			// administered here; how senior they are stays on /officers.
+			roles := protected.Group("/roles")
+			{
+				roles.GET("", roleHandler.List)
+				roles.POST("", roleHandler.Create)
+				roles.GET("/:id", roleHandler.Get)
+				roles.PATCH("/:id", roleHandler.Update)
+				roles.DELETE("/:id", roleHandler.Delete)
+				roles.PUT("/:id/permissions", roleHandler.SetPermissions)
+			}
+			protected.GET("/permissions", roleHandler.Catalogue)
 
 			aiReview := protected.Group("/ai-review")
 			{
