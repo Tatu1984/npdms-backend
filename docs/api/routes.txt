@@ -1,4 +1,5 @@
 DELETE /api/v1/alerts/:id
+DELETE /api/v1/bail/:id/sureties/:suretyId
 DELETE /api/v1/case-files/:id/charges/:chargeId
 DELETE /api/v1/case-files/:id/charges/:chargeId/evidence/:evidenceId
 DELETE /api/v1/case-files/:id/witness-facts/:factId
@@ -54,6 +55,7 @@ GET /api/v1/audit/stats
 GET /api/v1/audit/verify
 GET /api/v1/bail
 GET /api/v1/bail/:id
+GET /api/v1/bail/:id/sureties
 GET /api/v1/bail/stats
 GET /api/v1/biometric/devices
 GET /api/v1/biometric/devices/:id
@@ -307,6 +309,9 @@ GET /api/v1/traffic/vehicle/:vehicleNumber
 GET /api/v1/traffic/violation-types
 GET /api/v1/vehicles
 GET /api/v1/vehicles/:id
+GET /api/v1/vehicles/:id/fuel
+GET /api/v1/vehicles/:id/maintenance
+GET /api/v1/vehicles/:id/trips
 GET /api/v1/video/access-log
 GET /api/v1/video/cameras
 GET /api/v1/video/cameras/:id
@@ -362,6 +367,8 @@ POST /api/v1/armoury/weapons
 POST /api/v1/armoury/weapons/:id/issue
 POST /api/v1/armoury/weapons/:id/return
 POST /api/v1/bail
+POST /api/v1/bail/:id/sureties
+POST /api/v1/bail/:id/sureties/:suretyId/verify
 POST /api/v1/biometric/devices
 POST /api/v1/biometric/devices/:id/heartbeat
 POST /api/v1/biometric/evidence/:evidenceId/verify
@@ -559,7 +566,12 @@ POST /api/v1/upload
 POST /api/v1/upload/presigned
 POST /api/v1/vehicles
 POST /api/v1/vehicles/:id/allocate
+POST /api/v1/vehicles/:id/fuel
+POST /api/v1/vehicles/:id/maintenance
+POST /api/v1/vehicles/:id/maintenance/:recordId/complete
 POST /api/v1/vehicles/:id/return
+POST /api/v1/vehicles/:id/trips
+POST /api/v1/vehicles/:id/trips/:tripId/close
 POST /api/v1/video/cameras
 POST /api/v1/video/cameras/:id/decommission
 POST /api/v1/video/cameras/:id/health-check

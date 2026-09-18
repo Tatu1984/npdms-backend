@@ -6,8 +6,8 @@ One platform, fourteen phased modules, for Kolkata Police / West Bengal Police /
 | | |
 |---|---|
 | Canonical location | `npdms-backend/POA.md` — the frontend repo points here |
-| Last updated | 2026-09-17 |
-| Current focus | Four departments on one platform, with a permission model deciding what each officer may do and an activity trail recording what they looked at. All fourteen phases functional without AI or blockchain, deployed (Vercel + Neon). Next: CCTNS/ICJS, which is blocked on access rather than engineering, then the AI and anchoring layers |
+| Last updated | 2026-09-18 |
+| Current focus | Four departments on one platform, with a permission model deciding what each officer may do and an activity trail recording what they looked at. All fourteen phases functional without AI or blockchain, deployed (Vercel + Neon). Roughly 75% ready to hold a real force's case data; the remainder is mostly authorisations, credentials and an infrastructure decision rather than engineering — see the deployment brief and the open decisions below. Next: re-verify the fourteen phases against the four-force model, then the AI and anchoring layers |
 
 ---
 
@@ -60,12 +60,13 @@ Work that is not a phase but that every phase depends on.
 | Free demo/staging deployment — Oracle | `ABANDONED` | `deploy/oracle-free/` remains in the repo and is still correct, but the Oracle Always Free shape was dropped. See the note below. |
 | Staging deployment — Vercel | `DONE` | Go API live at `https://api-black-pi.vercel.app`, Vercel project `api`, region `bom1`, database Neon. Demo and integration only; **not** the system of record. See "Deployed environments". |
 | Backup and restore | `DONE` | `scripts/backup.sh` — verifies the dump before pruning, states plainly when evidence files are not included. |
-| API contract and versioning | `DONE` | `docs/api/CONTRACT.md`, `docs/api/openapi.yaml`, `docs/api/routes.txt` (607 authenticated routes; ten more are public or liveness). Served live at `GET /openapi.yaml`. |
+| API contract and versioning | `DONE` | `docs/api/CONTRACT.md`, `docs/api/openapi.yaml`, `docs/api/routes.txt` (619 authenticated routes; ten more are public or liveness). Served live at `GET /openapi.yaml`. |
 | Audit trail | `DONE` | Hash-chained append-only `audit_logs`. Every state change appended; failures logged, never discarded. Since 2026-09-17 every entry also carries the client address, session, device, request id and the actor's rank and posting: the schema always had those columns and wrote sixteen of forty-one, because filling them meant each of eighty call sites passing them by hand and five did. The request now carries what it knows. Sign-in entries carry a location where a provider resolves one, and say why when none does. |
 | Federation code removed | `DONE` | 683 lines of browser-side vector-clock sync deleted, plus its dead backend twin. Not needed on a single server. |
 | IP/OSINT lookup moved server-side | `DONE` | `GET /intel/ip/{ip}` — controlled egress, audited with stated purpose, private addresses classified locally. |
 | **Core records onto the API** | `DONE` | All thirteen stores retired. FIR, cases, evidence, warrants, bail, court, forensics, personnel, vehicles, alerts, armoury, lookouts and the access log run on the API, each verified in a browser with writes confirmed in Postgres. See below. |
-| RBAC and permissions model | `DONE` | 318 permissions derived from all 617 routes, twelve rank-default roles that reproduce the old ladder exactly, and roles an administrator creates for a job. One middleware enforces the lot; a route naming no permission stops the service at startup. Permissions resolve from Postgres per request, never from the token, so a withdrawal takes effect on the next request. Migrations `000088`–`000091`, `000094`. Screens: Settings → Roles and permissions, and a Roles action per officer. |
+| RBAC and permissions model | `DONE` | 330 permissions covering all 619 authenticated routes, twelve rank-default roles that reproduce the old ladder exactly, and roles an administrator creates for a job. One middleware enforces the lot; a route naming no permission stops the service at startup. Permissions resolve from Postgres per request, never from the token, so a withdrawal takes effect on the next request. Migrations `000088`–`000091`, `000094`, `000097`. Screens: Settings → Roles and permissions, and a Roles action per officer. |
+| Fleet and surety registers | `DONE` | Vehicle trips, fuel and maintenance (`000096`), and the bail surety register repaired and exposed (`000098`). Rules in the database: one open trip per vehicle, no reversing odometer, one claim per fuel bill, verification attributed to an officer. |
 | Activity trail | `DONE` | Which screens an officer opened and for how long — the only way to see misuse that changes nothing, and so leaves no trace in the audit trail. Detail 90 days, then monthly totals per module by `roll_up_officer_activity()`. Migration `000090`. An officer reads their own on their profile, where the retention is stated. |
 | Offline / sync layer | `PLANNED` | Deferred by decision. The previous IndexedDB layer was removed: it masked failures with demo data, returned locally queued writes as successes, and the service worker cached every API response for 24 hours. When this is built, a queued write must be visibly pending, never shown as saved. |
 | CCTNS / ICJS integration | `BLOCKED` | Not an engineering task until five things exist, none of which the platform can produce: written sponsorship from West Bengal SCRB, the state CCTNS interface specification and ICJS exchange schema (issued under NDA, not public), a named technical contact at the state's system integrator, a UAT endpoint with client credentials, and **a network path** — CCTNS runs on NICNET/SWAN, which the Vercel deployment cannot reach at all. That last one is the strongest argument for the MDC edge box. |
@@ -208,13 +209,33 @@ Examined and **not** a defect:
   states — collected at a scene, deposited in the store — and a Postgres enum
   already holds the column to exactly the five the Go constants define.
 
+Built since, and no longer open (2026-09-17, `1ecbf69`):
+
+- **Vehicle trip, fuel and maintenance logs.** `vehicles` held a state with
+  nothing that explained it — an odometer reading with no journey behind it, a
+  fuel level with no fill. Three registers now, placed at a station like every
+  other, with their rules in the database: one open trip per vehicle, an
+  odometer that cannot run backwards, one claim per fuel bill. Distance is
+  derived from the two readings, never stored. Migration `000096`.
+- **Bail sureties.** The table existed and no route ever reached it — and none
+  could have: its foreign key pointed at `bail_applications` while every bail
+  record the platform writes goes to `bail`, so any insert was refused. The
+  cause read straight off the response once `handlers/pgfail.go` started
+  naming database refusals. Repointed in `000098`, with verification now
+  naming the officer who did it.
+
 Still open:
 
-- **Remaining vehicle, trip, fuel and maintenance logs, sureties, and a beat
-  register** do not exist; the UI no longer pretends they do.
+- **A beat register** for patrol allocation does not exist. `risk_beats` is the
+  Phase 10 hotspot beat and serves a different purpose; the UI does not pretend
+  otherwise.
 - **`GET /evidence` and the custody module list the same table through two
   filters** (`EvidenceRegisterFilter` and `EvidenceFilter`). Harmless, worth
   consolidating.
+- **The fourteen phases have not been re-verified since the four-force model
+  went in.** Their `DONE` records predate it. Nothing suggests they broke —
+  the boundary is enforced below them — but the records are older than the
+  change and should be re-run rather than trusted.
 
 ---
 
@@ -252,6 +273,7 @@ Raised, not yet ruled on. Neither blocks current work.
 | Face recognition: hosting and authorisation — `DECIDED` 2026-09-15 | Build now, host later: without `FR_SERVICE_URL` every face recognition screen says "not connected". Demo only for now: a `DEMO` authorisation runs only on synthetic test faces uploaded by an administrator, refuses real report photos and labels everything "Demo — synthetic faces". Real photos need an ORDER with reference, date and issuing authority. See "Face recognition for missing persons" under Later layers. |
 | RBAC model — `DECIDED` 2026-09-17 | Named roles separate from rank. Rank keeps seniority (how far an alert reaches, whose figures a report may span); a role says what the officer's job lets them do. Twelve rank-default roles reproduce the old ladder exactly and are immutable, so the platform behaved identically the day it went in. |
 | Activity trail retention — `DECIDED` 2026-09-17 | Ninety days of detail, then monthly totals per officer per module. Enough for "who works this register" and not enough to reconstruct a person's day a year later. |
+| Session cache for the deployed service | The deployed API has no Redis, so session limits, sign-out and distributed rate limiting are degraded there — the rate limiter falls back to process memory. Permissions and the audit trail deliberately do not depend on it and resolve from Postgres, so authorisation is correct either way. Needs a managed instance and its `REDIS_URL`. Cost per request was reduced from seventeen operations to four on 2026-09-17, which brings a free tier within reach for demonstration use. |
 | Sign-in location needs a provider | The deployed API resolves nothing: ipapi.co answers from Vercel's shared egress with 429. Needs a keyed endpoint via `IP_INTEL_PROVIDER`, or a local GeoLite2 database — which would also suit the edge box, since it needs no egress at all. A credential or a data file, not code. |
 | CCTNS/ICJS interfaces, ML hardware sizing | Still open, tracked in Foundation and Later layers above. |
 
@@ -978,6 +1000,9 @@ Newest first. One line per completed task.
 | 2026-09-14 | **Container builds repaired and verified.** Three places pinned Go 1.22 against a `go 1.25` go.mod — `services/api/Dockerfile`, `Dockerfile.dev` and `.github/workflows/ci.yaml`, so CI was broken as well as the images. All three now on 1.25. Two further defects found while verifying: the production Dockerfile hardcoded `GOARCH=amd64`, yielding an image tagged arm64 that carried an x86-64 binary and only ran where emulation existed — now `ARG TARGETARCH` with an amd64 default; and `Dockerfile.dev` installed `cosmtrek/air@latest`, a renamed module whose current release needs Go 1.26, so an unpinned install broke the build — now `air-verse/air@v1.61.7`. Verified by building both images and running the API container against Neon: `/health` 200, `/ready` reports `database: healthy`. |
 | 2026-09-14 | Decided the backend repository stays public for now. |
 | 2026-09-14 | **Staging API deployed to Vercel** at `https://api-black-pi.vercel.app`, against Neon. Vercel's Go runtime runs a `package main` that listens on `$PORT`, which `main.go` already did, so no application change was needed — `services/api/vercel.json` supplies the build command, region and non-secret environment. Health, readiness and CORS preflight verified; login not yet exercised. |
+| 2026-09-18 | **POA brought current again**, and the 195 iCloud/OneDrive conflict duplicates removed after checking every one had a surviving original — 133 were byte-identical, none was orphaned. |
+| 2026-09-17 | **Fleet logs and the surety register.** Two registers this document listed as not existing: one did not, the other did and could never have worked — `bail_sureties` keyed to a table the platform does not write to, so every insert was refused. Found because `handlers/pgfail.go` now names database refusals; it would have been a 500 the day before. Migrations `000096`, `000098`. Seventeen checks against a real database. |
+| 2026-09-17 | **Redis cost cut from seventeen operations per request to four.** A session key written on every request and never read once; a concurrency check asking SCARD when SADD already answers it; two middlewares spending three to five operations setting flags whose only reader is never registered; and two rate limiters keeping a sorted set each. Sign-out, the session cap and flood protection were each re-checked afterwards rather than assumed. |
 | 2026-09-17 | **Demo records for the other three departments.** West Bengal Police, the CID and the traffic wing had stations and officers but no work, so signing in as any of them opened an empty register. Six FIRs and three cases for the districts, six challans against the violation schedule for the traffic wing, and referred-and-accepted cases for the CID — all through the API, and the boundary checked afterwards rather than assumed. `scripts/seed-departments-records.py`. |
 | 2026-09-17 | **Twelve registers repaired.** Filters that were accepted and ignored, an FIR update that dropped the incident date, court orders that could not be corrected and a "pending" count that only rose, bail outcomes merged together, forensic requests with no number, a roster that allowed two records per officer, `/stations` handing over every department's list, and a rate limiter keyed on a context value nothing sets. Every one proved against a real database. The reason they had gone unfound: each surfaced as a generic 500, now mapped by `handlers/pgfail.go`. |
 | 2026-09-17 | **The dashboard made force-aware.** It was written once and shown to everybody, so a traffic officer opened on "Active investigations" with a primary button leading to a module their own force is not shown — a dead end, verified by clicking it. It now reads the same mapping the sidebar does. |
