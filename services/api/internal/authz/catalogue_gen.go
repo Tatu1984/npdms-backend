@@ -338,6 +338,8 @@ var RoutePermissions = map[string]string{
 	"GET /api/v1/video/cameras/:id/health-checks":                                        "video.cameras.view",
 	"GET /api/v1/video/cameras/stats":                                                    "video.cameras.view",
 	"GET /api/v1/video/events/stats":                                                     "video.events.view",
+	"GET /api/v1/video/live/cameras":                                                     "video.live.view",
+	"GET /api/v1/video/live/media-status":                                                "video.live.view",
 	"GET /api/v1/warrants":                                                               "warrants.view",
 	"GET /api/v1/warrants/:id":                                                           "warrants.view",
 	"GET /api/v1/warrants/stats":                                                         "warrants.view",
@@ -595,6 +597,9 @@ var RoutePermissions = map[string]string{
 	"POST /api/v1/video/cameras":                                                         "video.cameras.create",
 	"POST /api/v1/video/cameras/:id/decommission":                                        "video.cameras.decommission",
 	"POST /api/v1/video/cameras/:id/health-check":                                        "video.cameras.health-check",
+	"POST /api/v1/video/cameras/:id/streaming/disable":                                   "video.live.streaming.manage",
+	"POST /api/v1/video/cameras/:id/streaming/enable":                                    "video.live.streaming.manage",
+	"POST /api/v1/video/cameras/:id/streaming/rotate-token":                              "video.live.streaming.manage",
 	"POST /api/v1/video/events":                                                          "video.events.create",
 	"POST /api/v1/video/events/:id/access":                                               "video.events.access",
 	"POST /api/v1/video/events/:id/link":                                                 "video.events.link",
@@ -602,6 +607,8 @@ var RoutePermissions = map[string]string{
 	"POST /api/v1/video/events/:id/triage":                                               "video.events.triage",
 	"POST /api/v1/video/events/purge-expired":                                            "video.events.purge-expired.create",
 	"POST /api/v1/video/events/search":                                                   "video.events.search.create",
+	"POST /api/v1/video/live/sessions":                                                   "video.live.watch",
+	"POST /api/v1/video/live/sessions/:id/end":                                           "video.live.session.end",
 	"POST /api/v1/warrants":                                                              "warrants.create",
 	"PUT /api/v1/ai-review/models/:modelName":                                            "ai-review.amend",
 	"PUT /api/v1/ai-review/modules/:module":                                              "ai-review.amend",
@@ -656,4 +663,15 @@ var PublicRoutes = map[string]bool{
 // copy request is made by a member of the public.
 var PublicPrefixes = []string{
 	"/api/v1/public/",
+}
+
+// DeviceAuthPrefixes are route trees where the caller is a device, not an
+// officer, so there is no officer to hold a permission. The Edge Agent ingest
+// plane is the whole of it: a camera authenticates with its own bearer token,
+// checked against the hash stored on its register row, and an officer reaching
+// the same path for playback is checked against a purpose-logged viewing
+// session instead. These are not public — an unauthenticated request is
+// refused — they are simply outside the officer permission model.
+var DeviceAuthPrefixes = []string{
+	"/api/edge/ingest/",
 }

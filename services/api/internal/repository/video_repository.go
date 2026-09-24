@@ -49,6 +49,7 @@ const cameraSelect = `
 	           WHEN c.stream_type = 'NONE' THEN 'NO_STREAM'
 	           WHEN c.last_checked_at IS NULL THEN 'UNCHECKED'
 	           WHEN c.last_check_ok THEN 'REACHABLE'
+	           WHEN is_private_host(c.stream_host) THEN 'NOT_ROUTABLE'
 	           ELSE 'UNREACHABLE'
 	       END,
 	       c.last_checked_at, c.last_seen_at,
@@ -129,6 +130,7 @@ func (r *VideoRepository) ListCameras(ctx context.Context, f CameraFilter) ([]mo
 	              WHEN c.stream_type = 'NONE' THEN 'NO_STREAM'
 	              WHEN c.last_checked_at IS NULL THEN 'UNCHECKED'
 	              WHEN c.last_check_ok THEN 'REACHABLE'
+	              WHEN is_private_host(c.stream_host) THEN 'NOT_ROUTABLE'
 	              ELSE 'UNREACHABLE' END AS health
 	          FROM cameras c`
 

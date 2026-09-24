@@ -18,6 +18,11 @@ func PermissionFor(method, pattern string) (permission string, required bool) {
 			return "", false
 		}
 	}
+	for _, prefix := range DeviceAuthPrefixes {
+		if strings.HasPrefix(pattern, prefix) {
+			return "", false
+		}
+	}
 	p, ok := RoutePermissions[key]
 	return p, ok
 }
@@ -45,6 +50,12 @@ func VerifyRoutes(routes []Route) error {
 			}
 			public := false
 			for _, prefix := range PublicPrefixes {
+				if strings.HasPrefix(r.Path, prefix) {
+					public = true
+					break
+				}
+			}
+			for _, prefix := range DeviceAuthPrefixes {
 				if strings.HasPrefix(r.Path, prefix) {
 					public = true
 					break

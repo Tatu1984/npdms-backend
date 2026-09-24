@@ -94,7 +94,11 @@ type Camera struct {
 	Status           string         `json:"status"`
 	DecommissionNote *string        `json:"decommissionNote"`
 	// Health is only ever what a real check measured. "UNCHECKED" when no
-	// check has run, "NO_STREAM" when there is nothing to check.
+	// check has run, "NO_STREAM" when there is nothing to check, and
+	// "NOT_ROUTABLE" when the check failed against a private address this
+	// server has no path to — a camera on a station LAN seen from the hosted
+	// API, which establishes nothing about the camera. Such a camera's real
+	// liveness is the Edge Agent's: ONLINE, CONNECTING or STOPPED.
 	Health        string     `json:"health"`
 	LastCheckedAt *time.Time `json:"lastCheckedAt"`
 	LastSeenAt    *time.Time `json:"lastSeenAt"`
