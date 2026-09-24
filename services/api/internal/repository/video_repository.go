@@ -316,14 +316,17 @@ func (r *VideoRepository) CameraStats(ctx context.Context) (*models.CameraStats,
 			COUNT(*) FILTER (WHERE status = 'ACTIVE'),
 			COUNT(*) FILTER (WHERE status = 'DECOMMISSIONED'),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_check_ok),
-			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NOT NULL AND NOT last_check_ok),
+			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NOT NULL AND NOT last_check_ok
+			                       AND NOT is_private_host(stream_host)),
+			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NOT NULL AND NOT last_check_ok
+			                       AND is_private_host(stream_host)),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type <> 'NONE' AND last_checked_at IS NULL),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND stream_type = 'NONE'),
 			COUNT(*) FILTER (WHERE status = 'ACTIVE' AND ingest_enabled),
 			(SELECT COUNT(*) FROM video_events WHERE status = 'RAISED' AND (retain_until IS NULL OR retain_until > NOW())),
 			(SELECT COUNT(*) FROM video_events WHERE retain_until <= NOW())
 		FROM cameras
-	`).Scan(&s.Total, &s.Active, &s.Decommissioned, &s.Reachable, &s.Unreachable, &s.Unchecked, &s.NoStream, &s.Streaming,
+	`).Scan(&s.Total, &s.Active, &s.Decommissioned, &s.Reachable, &s.Unreachable, &s.NotRoutable, &s.Unchecked, &s.NoStream, &s.Streaming,
 		&s.EventsRaised, &s.EventsExpired)
 	if err != nil {
 		return nil, err

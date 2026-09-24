@@ -138,6 +138,10 @@ type CameraStats struct {
 	Decommissioned int64 `json:"decommissioned"`
 	Reachable      int64 `json:"reachable"`
 	Unreachable    int64 `json:"unreachable"`
+	// NotRoutable counts cameras whose last check failed against a private
+	// address this server has no path to. They are counted apart from
+	// Unreachable because nothing was established about them either way.
+	NotRoutable int64 `json:"notRoutable"`
 	Unchecked      int64 `json:"unchecked"`
 	NoStream       int64 `json:"noStream"`
 	Streaming      int64 `json:"streaming"`
