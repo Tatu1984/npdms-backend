@@ -94,13 +94,31 @@ type Camera struct {
 	Status           string         `json:"status"`
 	DecommissionNote *string        `json:"decommissionNote"`
 	// Health is only ever what a real check measured. "UNCHECKED" when no
-	// check has run, "NO_STREAM" when there is nothing to check.
+	// check has run, "NO_STREAM" when there is nothing to check, and
+	// "NOT_ROUTABLE" when the check failed against a private address this
+	// server has no path to — a camera on a station LAN seen from the hosted
+	// API, which establishes nothing about the camera. Such a camera's real
+	// liveness is the Edge Agent's: ONLINE, CONNECTING or STOPPED.
 	Health        string     `json:"health"`
 	LastCheckedAt *time.Time `json:"lastCheckedAt"`
 	LastSeenAt    *time.Time `json:"lastSeenAt"`
 	OpenEvents    int        `json:"openEvents"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
+
+	// Live streaming through the Edge Agent (migration 000076). The upload token
+	// is never here: it is shown once, in EdgeAgentConfig, and stored hashed.
+	StreamingEnabled   bool       `json:"streamingEnabled"`
+	IngestKey          *string    `json:"ingestKey"`
+	StreamingEnabledAt *time.Time `json:"streamingEnabledAt"`
+	TokenRotatedAt     *time.Time `json:"tokenRotatedAt"`
+	LastSegmentAt      *time.Time `json:"lastSegmentAt"`
+	// LiveStatus is judged from the stored playlist when the camera is read:
+	// ONLINE, CONNECTING, STOPPED or OFFLINE. Never assumed.
+	LiveStatus    LiveStatus `json:"liveStatus"`
+	LiveAvailable bool       `json:"liveAvailable"`
+	LiveURL       *string    `json:"liveUrl"`
+	LiveCheckedAt *time.Time `json:"liveCheckedAt"`
 }
 
 type CameraHealthCheck struct {
@@ -120,8 +138,13 @@ type CameraStats struct {
 	Decommissioned int64 `json:"decommissioned"`
 	Reachable      int64 `json:"reachable"`
 	Unreachable    int64 `json:"unreachable"`
+	// NotRoutable counts cameras whose last check failed against a private
+	// address this server has no path to. They are counted apart from
+	// Unreachable because nothing was established about them either way.
+	NotRoutable int64 `json:"notRoutable"`
 	Unchecked      int64 `json:"unchecked"`
 	NoStream       int64 `json:"noStream"`
+	Streaming      int64 `json:"streaming"`
 	EventsRaised   int64 `json:"eventsRaised"`
 	EventsExpired  int64 `json:"eventsExpired"`
 }
@@ -142,6 +165,8 @@ type CreateCameraRequest struct {
 	CredentialSecret   *string        `json:"credentialSecret"`
 	RetentionClass     RetentionClass `json:"retentionClass"`
 	MaskingRequired    bool           `json:"maskingRequired"`
+	// EnableStreaming issues Edge Agent settings with the registration.
+	EnableStreaming bool `json:"enableStreaming"`
 }
 
 // UpdateCameraRequest replaces the register details. Credentials change only
@@ -271,6 +296,7 @@ type VideoAccessEntry struct {
 	EventID     *uuid.UUID             `json:"eventId"`
 	EventNumber string                 `json:"eventNumber"`
 	ResultCount *int                   `json:"resultCount"`
+	CameraIDs   []uuid.UUID            `json:"cameraIds"`
 	IPAddress   string                 `json:"ipAddress"`
 	AccessedAt  time.Time              `json:"accessedAt"`
 }

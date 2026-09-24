@@ -98,6 +98,19 @@ func validateStream(streamType models.StreamType, host *string, port *int, path 
 	return nil
 }
 
+// isPrivateHost answers whether a stream host is a literal address on a
+// private, loopback or link-local range — the mirror of the database's
+// is_private_host, which the camera register uses for the same judgement. A
+// hostname is treated as routable: telling where it points means resolving it,
+// and a health check is not the place for that.
+func isPrivateHost(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+}
+
 func validateCoordinates(lat, lng *float64) error {
 	if (lat == nil) != (lng == nil) {
 		return invalid("latitude and longitude must be given together")
@@ -294,6 +307,18 @@ func (s *VideoService) CheckHealth(ctx context.Context, id uuid.UUID, actor *uui
 		var netErr net.Error
 		if errors.As(dialErr, &netErr) && netErr.Timeout() {
 			msg = fmt.Sprintf("no response from %s within %s", address, ReachabilityTimeout)
+		}
+		// A camera on a station LAN is not down merely because this server
+		// cannot see it. On the hosted tier there is no route to a private
+		// address at all, and reporting that as "unreachable" says the camera
+		// is broken when what is broken is the path. Say which it was; the
+		// register shows such a camera as NOT_ROUTABLE and takes its liveness
+		// from the Edge Agent's segments instead.
+		if isPrivateHost(*cam.StreamHost) {
+			msg = fmt.Sprintf(
+				"%s is on a private network this server has no route to, so nothing was established about the camera. "+
+					"A camera on a station LAN is checked by the Edge Agent publishing its video, not from here.",
+				address)
 		}
 		checkErr = &msg
 	}
