@@ -560,7 +560,10 @@ ALERTS = [
     ("BOLO", "STATION", "BOLO: grey scooter WB-02-AK-7719", "Scooter used in the Bhowanipore Metro courier robbery. Stop and inform Bhowanipore PS.", 1, 30, "BHW", "sho"),
     ("URGENT", "DISTRICT", "Chain snatching pattern, South Division", "Three chain snatchings by two men on a scooter between 20:00 and 22:00 near Hazra and Kalighat.", 2, 14, "BHW", "dsp"),
     ("NOTICE", "STATION", "Durga Puja crowd management briefing", "All beat staff to attend the pandal traffic briefing at Park Street PS at 16:00.", 3, 10, "PKS", "oc.pks"),
-    ("FLASH", "STATE", "Missing minor girl, Jadavpur", "Minor girl, 14, last seen near Jadavpur University gate 4 in navy school uniform. See lookout register.", 1, 20, "JDP", "oc.jdp"),
+    # State-wide, so it is issued from headquarters: MinimumRankForScope puts a
+    # STATE alert at DIG and above, and the station-house officer who lodged the
+    # report cannot broadcast to the whole state on his own say-so.
+    ("FLASH", "STATE", "Missing minor girl, Jadavpur", "Minor girl, 14, last seen near Jadavpur University gate 4 in navy school uniform. See lookout register.", 1, 20, "JDP", "admin"),
     ("NOTICE", "DISTRICT", "Cyber fraud advisory: fake investment apps", "Rise in complaints about investment apps promising daily returns. Register on NCRP and freeze beneficiary accounts promptly.", 3, 60, "KSB", "dsp"),
 ]
 for i, (atype, scope, title, desc, prio, days_valid, stn, user) in enumerate(ALERTS):
