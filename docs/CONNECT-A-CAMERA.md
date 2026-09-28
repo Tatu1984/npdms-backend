@@ -18,6 +18,52 @@ CCTV camera ──RTSP──▶ Edge Agent ──HTTPS PUT (outbound only)──
    - (Publish URL — what the agent builds from the two above: `<Ingest URL>/api/edge/ingest/<Camera ID>/index.m3u8`.)
 3. Lost the token? **Rotate token** issues a new one and revokes the old immediately. **Turn off live streaming** revokes it, ends viewing sessions and deletes the stored feed.
 
+## 1b. A DVR, rather than one camera
+
+A recorder is one box with many channels, and each channel is a camera in the
+register with its own ingest key. Registering sixteen of those by hand means
+repeating the same form sixteen times and copying a token that is shown once,
+so there is a script:
+
+```
+DVR_PASSWORD=... NPDMS_TOKEN=<an SHO's token> \
+python3 scripts/register-dvr-channels.py \
+    --api https://npdms-api.example.in/api/v1 \
+    --host 192.168.100.64 --brand dahua --channels 1-16 \
+    --username npdms-ro --station-code BHW --prefix GARIAHAT \
+    --latitude 22.5186 --longitude 88.3665 \
+    --out ~/edge-agent-config.yaml
+```
+
+It registers each channel, turns streaming on, and writes the agent's
+`config.yaml` with the tokens already in it (mode 600 — that file holds the
+ingest tokens and the DVR password, and belongs in no repository). `--dry-run`
+shows what it would register without writing anything. Give `--name` and
+`--location` once per channel, in order, for the ones you can name; the rest
+fall back to "<prefix> channel N".
+
+How each maker spells a channel:
+
+| | Main stream | Sub stream |
+|---|---|---|
+| Dahua (XVR/NVR, e.g. DH-XVR4816) | `/cam/realmonitor?channel=N&subtype=0` | `subtype=1` |
+| Hikvision | `/Streaming/Channels/N01` | `/Streaming/Channels/N02` |
+
+Three things about a recorder that decide whether this works:
+
+- **Set the channels to H.264, not H.265.** The agent copies an H.264 stream
+  straight through; H.265 has to be transcoded for browsers, which is the
+  largest CPU cost in the whole chain and the thing that limits how many
+  channels one site machine can carry.
+- **Plates need the main stream.** `--sub-stream` is cheaper and fine for
+  watching, but a plate wants roughly 150px of width, which a sub stream
+  rarely gives. Face matching is happier on the sub stream.
+- **A recorder allows only so many simultaneous RTSP pulls.** The agent takes
+  one per channel and the portal fans out from stored video, so watchers cost
+  the DVR nothing — but anything else pulling from it (a spare analytics
+  process, someone's phone app) competes for the same slots. Give the platform
+  its own read-only account so you can see what it is using.
+
 ## 2. On the site machine — the Edge Agent
 
 Download: `Smart-Parking/edge-agent`, branch **`live-feed-only`** (the multi-camera agent with Portal Connection; `main` still carries the older single-camera agent). Build with `make build` (headless worker), `make macos` / `make windows` (desktop app). ffmpeg and ffprobe must be installed.
