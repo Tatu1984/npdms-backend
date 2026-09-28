@@ -93,7 +93,9 @@ DATABASE_URL=… ./scripts/bootstrap-db.sh --with-demo-data
 DEMO_SEED_CONFIRM=yes DATABASE_URL=… API_URL=https://…/api/v1 python3 scripts/seed-kolkata-demo.py
 ```
 
-The seed needs `psql` and Python 3 only. It backs off on rate limiting (a fresh run against a rate-limited API takes about five minutes) and a second run creates nothing. Not included yet: knowledge documents (Phase 11), case files (Phase 12) and body-worn camera records (Phase 13).
+The seed needs `psql` and Python 3 only. It backs off on rate limiting (a fresh run against a rate-limited API takes about five minutes) and a second run creates nothing. It now covers knowledge documents, case files and body-worn camera records too, and was run end to end against an empty database on 2026-09-28.
+
+**Resuming a half-finished seed is not reliable.** The ledger records a step the moment it succeeds, so a run that dies between creating a record and its follow-up leaves the follow-up to fail on the next run — an evidence item whose file was never uploaded refuses custody verification, a vehicle already committed to an incident refuses a second assignment. Both are the platform enforcing its own rules correctly. Seed a fresh database rather than resuming one.
 
 ### Deployed environments
 
@@ -107,7 +109,7 @@ Two tiers, deliberately different. The architecture decisions above are unchange
 | Frontend | `https://npdms.infinititechpartners.com` (project `npdms`) | — |
 | Evidence files | **Do not persist** — see below | MinIO or local disk |
 
-Verified on the staging tier: `GET /health` returns `200 healthy`, `GET /ready` reports `database: healthy`, and the CORS preflight for `POST /api/v1/auth/login` returns `204` advertising `X-CSRF-Token`. **A real login has not been exercised** — no seeded credentials to hand. The database holds 99 tables, 9 users and 0 cases.
+Verified on the staging tier, 2026-09-28: `GET /health` returns `200 healthy`, `GET /ready` reports `database: healthy`, and **a real login now works** — `admin` signs in and reads the registers. The database holds 200 tables, 36 users and the Kolkata demo records. A browser run of 8 checks against `https://npdms.infinititechpartners.com` signed in and loaded fourteen screens with no failed request, no script error and no error text, on the desktop and on a phone.
 
 Environment variables, staging API (Vercel project `api`):
 
@@ -977,7 +979,7 @@ Hardware note: the ML services need real memory and, for video, a GPU. Sizing ag
 - **Legal review of SFace training data** (above).
 - **Asynchronous footage jobs** and **camera streams**, both of which need access.
 - **Real-footage measurement and demographic evaluation.**
-- **Neon.** Neon does not yet have `000072`/`000073`. Applying them is harmless without the service: every screen says not connected.
+- ~~Neon does not yet have `000072`/`000073`.~~ It has them; this line was stale. Checked 2026-09-28.
 
 ### Blockchain anchoring · `PLANNED`
 
@@ -993,6 +995,7 @@ Newest first. One line per completed task.
 
 | Date | What |
 |---|---|
+| 2026-09-28 | **Live CCTV streaming deployed, and the platform driven end to end.** Migrations `000081` and `000099`–`000101` applied to Neon (Neon was also missing `000081`); both Vercel projects deployed from `main`. The live API serves the new `/video/live/*` routes and says plainly that live video storage is not configured, naming the R2 variables it needs. Verified from zero: the full migration chain applies to an empty database (195 tables) and the Kolkata demo seed then runs to completion through the API. Three defects fixed — the navigation rail was a fixed 256px with no responsive class, so every screen scrolled sideways by 259px on a phone; the login page's two labels carried no `htmlFor`, so a screen reader announced unnamed boxes on the front door; and the demo seed could not load at all, because it had a station-house officer issuing a STATE alert that `MinimumRankForScope` rightly refuses. The e2e suite, which could not run and asserted a pre-repivot title, mock tokens and removed demo-data fallbacks, was rewritten: 18 of 18 pass. |
 | 2026-09-24 | **Live CCTV streaming rebased onto the permission model and merged.** The branch predated RBAC by thirty-nine commits: its seven live routes were guarded by `RequireRole`, which no longer guards anything, so they name permissions in migration `000100` at the Phase 03 floors (any officer sees which cameras stream, ASI watches under a purpose, SHO issues and revokes ingest tokens). The Edge Agent ingest plane names none — a camera presents its own token — so the authz catalogue gained a device-authenticated category rather than being called public. Migration `000076` collided with the AI gateway's and is `000099`. New in `000101`: a camera on a private address the server cannot route to reads NOT_ROUTABLE instead of UNREACHABLE, counted apart in the tiles. Re-verified after the rebase: API probe 19/19, browser 12/12 against a real HLS stream published with the Edge Agent's own ffmpeg arguments — 1280×720 decoding on the wall under a stated purpose, a short purpose refused, one purpose-log row for twelve segment fetches. |
 | 2026-09-16 | **Live CCTV streaming through the Edge Agent** (branch `feat/cctv-streaming`). Migration `000076`. The Live Feed Portal / KMCP push-ingest design on the Phase 03 register: one-time ingest token (hashed), `/api/edge/ingest` outside `/api/v1` and the rate limiter, separate `MEDIA_BACKEND` (R2; fs refused on Vercel, database refused), playlist-judged liveness with staleness, purpose-logged live viewing sessions (ASI; SHO for masked cameras), live wall, sheet and map players. Unmodified Edge Agent publishes into it. Probe 95/95, browser 35/35. Guide: `docs/CONNECT-A-CAMERA.md`. |
 | 2026-09-15 | **Vehicle detection and ANPR** (branch `feat/anpr`, AI layer A4). YOLOX-s and PaddleOCR PP-OCRv4 (Apache-2.0) in a stateless CPU service on the edge server; migrations `000074`/`000075`; `/api/v1/anpr` with purpose-logged submission and search, a watchlist that includes stolen-vehicle lookouts, operator-confirmed hits raising alerts and sightings, camera snapshot CLI and ANPR reads in the traffic plate-read register; `/vehicle-detection` screen in English and Bengali. Measured 97.5% on synthetic WB plate crops, 83.8% on synthetic plates in real scenes, detection precision 97.8%. Shows "not connected" wherever the ML service is absent, including Vercel. |
